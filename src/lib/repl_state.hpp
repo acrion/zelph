@@ -28,6 +28,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include <map>
 #include <memory>
 #include <string>
+#include <vector>
 
 namespace zelph::console
 {
@@ -152,11 +153,18 @@ namespace zelph::console
         // from the subsequent line.
         bool reading_session_script{false};
 
-        // Import guard ("import once"): maps every registered module ID to
-        // the default ID (lowercase filename stem) of the script that
-        // registered it. A script registers its default ID plus all IDs it
-        // declares via .provides. Cleared by .new.
+        // Import guard ("import once"): associates each registered module
+        // ID with the default ID (the lowercase filename stem) of the
+        // script that registered it. A script registers its default ID
+        // along with every ID it specifies through .provides. Cleared by
+        // .new, and by a load operation that replaces the graph except for
+        // the scripts listed in modules_importing.
         std::map<std::string, std::string> imported_module_ids;
+
+        // The default IDs of the .zph scripts currently being imported,
+        // with the innermost one listed last. Managed strictly by RAII
+        // within the CommandExecutor::import_file function.
+        std::vector<std::string> modules_importing;
 
         // Depth of quiet processing scopes (the '?' result-query pre-pass):
         // while > 0, the input echo is suppressed like inside imports.

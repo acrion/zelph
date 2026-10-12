@@ -159,9 +159,11 @@ namespace zelph
                                                                                                     "The filename must end with '.bin'. Main thread only, and refused while a rule is being built.");
 
         janet_def(_janet_env, "zelph/load", wrap((JanetCFunction)&guarded<&janet_cfun_zelph_load>), "(zelph/load file)\nLoad a saved network (.bin) or import a Wikidata JSON dump "
-                                                                                                    "(.json/.json.bz2, creates a .bin cache next to it), like the .load command. "
-                                                                                                    "A network file, and a dump whose .bin cache is used, replaces the graph: every node, name, rule and cluster of the session goes. "
-                                                                                                    "A dump imported without a cache is added to the graph. The Janet environment is kept; a node a Janet value held "
+                                                                                                    "(.json/.json.bz2), like the .load command. "
+                                                                                                    "A network file replaces the graph: every node, name, rule and cluster of the session goes, and with them the display "
+                                                                                                    "registrations, the handles of compiled nets and the import registry. A dump is read from the .bin cache next to it when "
+                                                                                                    "the graph is empty, which replaces the graph in the same way; otherwise the dump is added to the graph, and only an "
+                                                                                                    "import into an empty graph writes the cache. The Janet environment is kept; a node a Janet value held "
                                                                                                     "names whatever has that id in the loaded graph, or nothing. Main thread only, and refused while a rule is being built.");
 
         janet_def(_janet_env, "zelph/run", wrap((JanetCFunction)&guarded<&janet_cfun_zelph_run>), "(zelph/run)\nRun forward chaining to a fixed point, like the .run command. "

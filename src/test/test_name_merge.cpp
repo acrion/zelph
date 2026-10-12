@@ -541,6 +541,48 @@ a p b
         CHECK(answers_contain(collector, "x s y")); });
 }
 
+// Across languages, `.name` merges two nodes that hold the respective names,
+// and two variables are no exception: the merge persists, just as it does for
+// any pair of nodes. Without a warning, its effect on variables is invisible.
+// A variable belongs to the statement that quantifies it, so the second rule
+// proceeds using the variable from the first rule and prints
+// `(X r B) => (X s B)`. That same request within a single language is refused
+// for this reason (refer to the earlier explanation); this instance merely
+// states "Merging them", offering no alert, since the warning about a merge
+// was omitted whenever the vanishing node was a variable. The library's
+// cross-language overload took the same course without comment.
+TEST_CASE("name merge: two variables merged across languages are announced as one variable two statements share")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+(X p Y) => (X q Y)
+.lang en
+(A r B) => (A s B)
+.lang zelph
+)");
+
+        SUBCASE("through .name")
+        {
+            collector.clear();
+            interactive.process(".name X en A");
+            CHECK(any_event_contains(collector, "Warning: (B) Merging variable node"));
+            CHECK(any_event_contains(collector, "the statements that used these two now share one variable"));
+            CHECK(any_output_contains(collector, "Merging them"));
+
+            collector.clear();
+            interactive.process(".list-rules");
+            CHECK(any_output_contains(collector, "(X r B) => (X s B)"));
+        }
+        SUBCASE("through the library")
+        {
+            collector.clear();
+            interactive.graph()->set_name("X", "A", "en");
+            CHECK(any_event_contains(collector, "Warning: (C) Merging variable node"));
+            CHECK(any_event_contains(collector, "the statements that used these two now share one variable"));
+        } });
+}
+
 // The new name is a NAME. Previously, it was processed just like the node
 // argument, meaning "14" referred to node 14 whenever no node bore the name
 // "14" -- which blocked the rename with "already in use by node 14", and

@@ -430,6 +430,13 @@ void ScriptEngine::clear_scoped_variables()
     _pImpl->clear_scoped_variables();
 }
 
+void ScriptEngine::discard_compiled_nets()
+{
+    std::lock_guard<std::mutex> lock(_pImpl->_state_mutex);
+    for (auto& net : _pImpl->_neural_nets)
+        net.reset();
+}
+
 void ScriptEngine::set_import_handler(ImportHandler handler)
 {
     _pImpl->_import_handler = std::move(handler);

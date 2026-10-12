@@ -34,22 +34,27 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include <cstddef>
 #include <cstdint>
 #include <exception>
+#include <memory>
 #include <mutex>
+#include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
 
 namespace zelph
 {
-    network::NeuralNet* ScriptEngine::Impl::get_net(int32_t handle)
+    // Null for a handle that refers to no net, or to one that a load has
+    // discarded. The caller maintains a reference to the net, meaning that a
+    // load on the main thread might free the entry even while another Janet
+    // thread is still evaluating it. A function holding the reference signals
+    // an error by throwing (guarded turns it into a panic), not by using
+    // janet_panicf: the longjmp would skip the share's release and
+    // permanently keep the net alive.
+    std::shared_ptr<network::NeuralNet> ScriptEngine::Impl::get_net(int32_t handle)
     {
-        // The returned pointer stays valid after unlocking: the vector owns
-        // the nets via unique_ptr and entries are never removed during a
-        // session, so only the vector itself needs protection (push_back may
-        // reallocate the vector's buffer concurrently).
         std::lock_guard<std::mutex> lock(_state_mutex);
         if (handle < 0 || static_cast<size_t>(handle) >= _neural_nets.size()) return nullptr;
-        return _neural_nets[static_cast<size_t>(handle)].get();
+        return _neural_nets[static_cast<size_t>(handle)];
     }
 
     // Read a Janet array/tuple of numbers into a vector<double>.
@@ -202,12 +207,13 @@ namespace zelph
         janet_fixarity(argc, 2);
         if (!s_instance) return janet_wrap_nil();
 
-        network::NeuralNet* net = s_instance->get_net(janet_getinteger(argv, 0));
-        if (!net) janet_panicf("zelph/nn-nodes: invalid network handle");
-
         const int32_t layer = janet_getinteger(argv, 1);
+
+        const auto net = s_instance->get_net(janet_getinteger(argv, 0));
+        if (!net) throw std::runtime_error("zelph/nn-nodes: invalid network handle");
+
         if (layer < 0 || static_cast<size_t>(layer) >= net->layer_count())
-            janet_panicf("zelph/nn-nodes: layer index out of range");
+            throw std::runtime_error("zelph/nn-nodes: layer index out of range");
 
         const auto& nodes  = net->layer_nodes(static_cast<size_t>(layer));
         JanetArray* result = janet_array(static_cast<int32_t>(nodes.size()));
@@ -224,10 +230,10 @@ namespace zelph
         janet_fixarity(argc, 2);
         if (!s_instance) return janet_wrap_nil();
 
-        network::NeuralNet* net = s_instance->get_net(janet_getinteger(argv, 0));
-        if (!net) janet_panicf("zelph/nn-eval: invalid network handle");
-
         std::vector<double> in = janet_number_vector(argv[1], "zelph/nn-eval");
+
+        const auto net = s_instance->get_net(janet_getinteger(argv, 0));
+        if (!net) throw std::runtime_error("zelph/nn-eval: invalid network handle");
 
         std::string err;
         try
@@ -244,8 +250,7 @@ namespace zelph
         {
             err = e.what();
         }
-        janet_panicf("zelph/nn-eval: %s", err.c_str());
-        return janet_wrap_nil(); // unreachable
+        throw std::runtime_error("zelph/nn-eval: " + err);
     }
 
     // One SGD step on a single sample; returns the loss before the update.
@@ -254,12 +259,12 @@ namespace zelph
         janet_arity(argc, 3, 4);
         if (!s_instance) return janet_wrap_nil();
 
-        network::NeuralNet* net = s_instance->get_net(janet_getinteger(argv, 0));
-        if (!net) janet_panicf("zelph/nn-train: invalid network handle");
-
         std::vector<double> in  = janet_number_vector(argv[1], "zelph/nn-train");
         std::vector<double> tgt = janet_number_vector(argv[2], "zelph/nn-train");
         const double        lr  = argc >= 4 ? janet_getnumber(argv, 3) : 0.01;
+
+        const auto net = s_instance->get_net(janet_getinteger(argv, 0));
+        if (!net) throw std::runtime_error("zelph/nn-train: invalid network handle");
 
         std::string err;
         try
@@ -270,8 +275,7 @@ namespace zelph
         {
             err = e.what();
         }
-        janet_panicf("zelph/nn-train: %s", err.c_str());
-        return janet_wrap_nil(); // unreachable
+        throw std::runtime_error("zelph/nn-train: " + err);
     }
 
     // Copy the compiled net's weights out, as an array of arrays of numbers.
@@ -280,8 +284,8 @@ namespace zelph
         janet_fixarity(argc, 1);
         if (!s_instance) return janet_wrap_nil();
 
-        network::NeuralNet* net = s_instance->get_net(janet_getinteger(argv, 0));
-        if (!net) janet_panicf("zelph/nn-snapshot: invalid network handle");
+        const auto net = s_instance->get_net(janet_getinteger(argv, 0));
+        if (!net) throw std::runtime_error("zelph/nn-snapshot: invalid network handle");
 
         const auto& w     = net->weights();
         JanetArray* outer = janet_array(static_cast<int32_t>(w.size()));
@@ -303,9 +307,6 @@ namespace zelph
         janet_fixarity(argc, 2);
         if (!s_instance) return janet_wrap_nil();
 
-        network::NeuralNet* net = s_instance->get_net(janet_getinteger(argv, 0));
-        if (!net) janet_panicf("zelph/nn-restore: invalid network handle");
-
         const Janet* outer;
         int32_t      outer_len;
         if (!janet_indexed_view(argv[1], &outer, &outer_len))
@@ -318,6 +319,9 @@ namespace zelph
             w.push_back(janet_number_vector(outer[k], "zelph/nn-restore"));
         }
 
+        const auto net = s_instance->get_net(janet_getinteger(argv, 0));
+        if (!net) throw std::runtime_error("zelph/nn-restore: invalid network handle");
+
         std::string err;
         try
         {
@@ -328,8 +332,7 @@ namespace zelph
         {
             err = e.what();
         }
-        janet_panicf("zelph/nn-restore: %s", err.c_str());
-        return janet_wrap_nil(); // unreachable
+        throw std::runtime_error("zelph/nn-restore: " + err);
     }
 
     // Write trained weights back into the graph's edge-weight store.
@@ -345,8 +348,8 @@ namespace zelph
         janet_fixarity(argc, 1);
         if (!s_instance) return janet_wrap_nil();
 
-        network::NeuralNet* net = s_instance->get_net(janet_getinteger(argv, 0));
-        if (!net) janet_panicf("zelph/nn-write-back: invalid network handle");
+        const auto net = s_instance->get_net(janet_getinteger(argv, 0));
+        if (!net) throw std::runtime_error("zelph/nn-write-back: invalid network handle");
 
         net->write_back(*s_instance->_n);
         return janet_wrap_nil();
@@ -427,12 +430,12 @@ namespace zelph
         janet_arity(argc, 3, 4);
         if (!s_instance) return janet_wrap_nil();
 
-        network::NeuralNet* net = s_instance->get_net(janet_getinteger(argv, 0));
-        if (!net) janet_panicf("zelph/nn-train-nodes: invalid network handle");
-
         auto         in  = janet_node_activations(argv[1], "zelph/nn-train-nodes");
         auto         tgt = janet_node_activations(argv[2], "zelph/nn-train-nodes");
         const double lr  = argc >= 4 ? janet_getnumber(argv, 3) : 0.01;
+
+        const auto net = s_instance->get_net(janet_getinteger(argv, 0));
+        if (!net) throw std::runtime_error("zelph/nn-train-nodes: invalid network handle");
 
         std::string err;
         try
@@ -443,8 +446,7 @@ namespace zelph
         {
             err = e.what();
         }
-        janet_panicf("zelph/nn-train-nodes: %s", err.c_str());
-        return janet_wrap_nil(); // unreachable
+        throw std::runtime_error("zelph/nn-train-nodes: " + err);
     }
 
     // Forward pass with node-addressed input; returns scored output nodes.
@@ -453,11 +455,11 @@ namespace zelph
         janet_arity(argc, 2, 3);
         if (!s_instance) return janet_wrap_nil();
 
-        network::NeuralNet* net = s_instance->get_net(janet_getinteger(argv, 0));
-        if (!net) janet_panicf("zelph/nn-eval-nodes: invalid network handle");
-
         auto          in    = janet_node_activations(argv[1], "zelph/nn-eval-nodes");
         const int32_t top_k = argc >= 3 ? janet_getinteger(argv, 2) : -1;
+
+        const auto net = s_instance->get_net(janet_getinteger(argv, 0));
+        if (!net) throw std::runtime_error("zelph/nn-eval-nodes: invalid network handle");
 
         std::string err;
         try
@@ -481,7 +483,6 @@ namespace zelph
         {
             err = e.what();
         }
-        janet_panicf("zelph/nn-eval-nodes: %s", err.c_str());
-        return janet_wrap_nil(); // unreachable
+        throw std::runtime_error("zelph/nn-eval-nodes: " + err);
     }
 }

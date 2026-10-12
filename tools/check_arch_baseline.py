@@ -33,6 +33,10 @@ shown that it decodes EVEX: otherwise (bad) may be an instruction it does not
 know, and it counts as before. A table entry that happens to decode as a valid
 instruction is still counted.
 
+--strict counts such a sequence in every case. It is for a build that keeps
+data out of its code section: MSVC does so for x64 under /jumptablerdata, which
+the project sets, and then an undecodable sequence there is no table entry.
+
 Exit codes: 0 the artefact fits, 1 it does not, 2 the question could not be put.
 """
 
@@ -170,6 +174,8 @@ def main():
     parser.add_argument("--floor", default="x86-64-v3", choices=sorted(FLOORS))
     parser.add_argument("--objdump", default=None)
     parser.add_argument("--max-report", type=int, default=10)
+    parser.add_argument("--strict", action="store_true",
+                        help="count undecodable sequences as instructions even when the disassembler decodes EVEX")
     args = parser.parse_args()
 
     objdump = find_objdump(args.objdump)
@@ -181,7 +187,7 @@ def main():
         fail(f"{args.binary} is not an x86-64 object, so the {args.floor} floor says nothing about it")
 
     found, undecodable = violations(run(objdump, "-d", args.binary), FLOORS[args.floor], args.floor,
-                                    decodes_evex(objdump))
+                                    not args.strict and decodes_evex(objdump))
     if undecodable:
         print(f"{args.binary}: {undecodable} undecodable byte sequence(s) with a VEX or EVEX prefix, "
               f"taken for data in the code section")

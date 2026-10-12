@@ -74,7 +74,7 @@ Because neurons are ordinary nodes, _anything_ can be a neuron: an entity, a pre
 
 The graph is deliberately not evaluated edge-by-edge during a forward pass — that would be far too slow. Instead, **`(zelph/nn-compile layers)`** takes an array of layer nodes (input first, output last) and compiles a dense snapshot: weight matrices plus a _mask_ recording which synapses actually exist in the graph. It returns an integer handle for subsequent calls.
 
-The philosophy mirrors zelph's predicate index (`.pidx` files): **the graph is the single source of truth, and the compiled network is a discardable cache.** Handles are session-scoped and vanish on `.new`. Three consequences:
+The philosophy mirrors zelph's predicate index (`.pidx` files): **the graph is the single source of truth, and the compiled network is a discardable cache.** Handles are scoped to sessions and vanish upon `.new` invocation or when a load operation supersedes the graph. Three consequences:
 
 1. **Sparsity is preserved.** Only synapses present in the graph are trainable; training can never create a connection that the graph does not contain. Absent synapses stay absent.
 2. **Training happens on the cache.** `zelph/nn-train` and `zelph/nn-train-nodes` update the compiled matrices, not the graph.

@@ -106,6 +106,22 @@ namespace
           << "'. Merging the two nodes is impossible because both are core nodes, and a core node never disappears.";
         return s.str();
     }
+
+    // Using `.name`, two variables merge exclusively across distinct languages:
+    // it refuses them within a single language. A variable belongs to the
+    // statement that quantifies it, hence the merge produces a single
+    // variable common to two statements -- a rule written in one language and
+    // another rule expressed in a different language, both then print the same
+    // variable. The merge is the action that the cross-language `.name` performs
+    // for any pair of nodes; this specifies its meaning within this context.
+    std::string variable_merge_warning(const char* step, const zelph::network::Node from, const zelph::network::Node into, const std::string& name, const std::string& lang)
+    {
+        std::stringstream s;
+        s << "Warning: (" << step << ") Merging variable node " << from << " into variable node " << into
+          << " due to name conflict '" << name << "' in language '" << lang
+          << "'. A variable belongs to the statement that quantifies it; the statements that used these two now share one variable.";
+        return s.str();
+    }
 }
 
 using namespace zelph::network;
@@ -255,6 +271,10 @@ void Zelph::set_name(const Node         node,
                              << " due to name conflict '" << name
                              << "' in language '" << lang << "'."
                              << std::endl;
+            }
+            else
+            {
+                out_stream() << variable_merge_warning("B", from, into, name, lang) << std::endl;
             }
 
             invalidate_fact_structures_cache();
@@ -553,6 +573,10 @@ Node Zelph::set_name(const std::string& name_in_current_lang,
                          << " due to name conflict '" << name_in_current_lang
                          << "' in language '" << _lang << "'."
                          << std::endl;
+        }
+        else
+        {
+            out_stream() << variable_merge_warning("C", from, into, name_in_current_lang, _lang) << std::endl;
         }
 
         invalidate_fact_structures_cache();
@@ -1411,10 +1435,14 @@ void Zelph::Impl::settle_labels_locked(const std::string& lang, const std::vecto
 // whose name → node entry corresponds to a variable's display name gets the
 // carrier that ranks first, just as the removal of the holder would have
 // granted, and just as an atom takes a name from a variable.
-void Zelph::Impl::rebuild_label_index_locked()
+//
+// Returns the count of labels that received a holder in this way.
+size_t Zelph::Impl::rebuild_label_index_locked()
 {
     _label_index.clear();
-    if (_names_loaded_partially.load(std::memory_order_relaxed)) return;
+    if (_names_loaded_partially.load(std::memory_order_relaxed)) return 0;
+
+    size_t elected = 0;
 
     for (const auto& [lang, fwd] : _name_of_node)
     {
@@ -1455,6 +1483,7 @@ void Zelph::Impl::rebuild_label_index_locked()
                     rev_it->second = holder;
                 else
                     rev.emplace(label, holder);
+                ++elected;
             }
 
             if (nodes.size() == 1 && nodes.front() == holder)
@@ -1470,17 +1499,32 @@ void Zelph::Impl::rebuild_label_index_locked()
 
         if (!carriers.empty()) _label_index.emplace(lang, std::move(carriers));
     }
+    return elected;
 }
 
+// A holder elected here is one the file does not store, meaning the
+// loaded network differs from the one the file holds. This engine writes
+// each holder, in a slice as well (saveToFile), and the note says when a
+// file from another source did not.
 void Zelph::Impl::rebuild_label_index()
 {
-    std::unique_lock lock_node(_mtx_node_of_name);
-    std::unique_lock lock_name(_mtx_name_of_node);
+    size_t elected = 0;
+    {
+        std::unique_lock lock_node(_mtx_node_of_name);
+        std::unique_lock lock_name(_mtx_name_of_node);
 
-    ExclusiveNameAccessScope scope_node(node_of_name_exclusive_depth);
-    ExclusiveNameAccessScope scope_name(name_of_node_exclusive_depth);
+        ExclusiveNameAccessScope scope_node(node_of_name_exclusive_depth);
+        ExclusiveNameAccessScope scope_name(name_of_node_exclusive_depth);
 
-    rebuild_label_index_locked();
+        elected = rebuild_label_index_locked();
+    }
+
+    if (elected == 0) return;
+    io::OutputStream(_output, io::OutputChannel::Out, true)
+        << "Note: " << elected << (elected == 1 ? " label in this file is carried by nodes but resolves" : " labels in this file are carried by nodes but resolve")
+        << " to none of them, as in a slice or a pruned network from an engine that did not hand a removed holder's labels on. "
+        << (elected == 1 ? "It now resolves" : "Each now resolves")
+        << " to the carrier ranked first (see .help .load); the file does not record that, a .save of the network does.";
 }
 
 std::optional<std::vector<Node>> Zelph::nodes_named(const std::string& name, std::string lang) const

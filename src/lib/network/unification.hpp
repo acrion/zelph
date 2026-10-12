@@ -65,6 +65,13 @@ namespace zelph::network
 
     ZELPH_EXPORT PatternInfo build_pattern_info(const Zelph* n, Node condition, int log_depth);
 
+    // Whether the pattern node `node` holds, at any level of nesting, a rule
+    // whose conditions constitute a set. Unification matches that set by its
+    // members, meaning the pattern matches more than just the facts naming its
+    // own nodes: it does not serve as an anchor, and an instance identified by
+    // a lookup is not the fact from which a match was originally read.
+    bool holds_condition_set(const Zelph* n, Node node);
+
     // A node within a pattern that represents what a firing builds in its
     // place (Reasoning::firing_stand_ins): the `term` contained in a bucket,
     // which constitutes a single node, or -- `term` 0 -- any term a firing
@@ -252,6 +259,8 @@ namespace zelph::network
         Node                       _subject_grounded{}; // concrete fact node the subject pattern
                                                         // resolves to under current bindings
                                                         // (bound-pattern grounding); 0 = not groundable
+
+        bool _conditions_by_members{false}; // see the constructor
 
         // // Partial-pattern anchoring (see unification.cpp): candidate facts
         // precomputed by climbing from a concrete inner node of a partially

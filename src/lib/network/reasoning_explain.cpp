@@ -106,6 +106,7 @@ namespace zelph::network
             Node              object{0};
             Node              relation{0};
             std::vector<Node> variables;
+            bool              by_members{false}; // holds_condition_set: not confirmed through lookup
         };
 
         // A consequence, whether it is itself a rule, and its predicate when
@@ -1013,6 +1014,15 @@ namespace zelph::network
                     for (const auto& [k, v] : *match)
                         joined[k] = v;
                     charge(_ctx, 1);
+                    // When the condition matches by the members of a set, the
+                    // instance indicated by the bindings does not represent the
+                    // fact that was matched; instead, that fact serves as the
+                    // premise.
+                    if (_r.shapes[l.conditions[l.chosen]].by_members)
+                    {
+                        if (fact != 0 && premise_holds(_ctx.z, fact)) return fact;
+                        continue;
+                    }
                     if (const Node premise = enumerated_premise(_ctx, condition, joined, fact); premise != 0) return premise;
                 }
             }
@@ -1099,9 +1109,12 @@ namespace zelph::network
                 }
 
                 // 1. Favour a fully ground condition: O(1) verification, and it
-                //    binds nothing.
+                //    binds nothing. A condition holding a rule whose
+                //    conditions form a set matches more than its instance,
+                //    and is enumerated.
                 for (std::size_t k = 0; k < l.conditions.size(); ++k)
                 {
+                    if (_r.shapes[l.conditions[k]].by_members) continue;
                     Node          premise = 0;
                     const Resolve r       = resolve_premise(_ctx, _r.positive[l.conditions[k]], l.bindings, premise);
                     if (r == Resolve::Unbound) continue;
@@ -3282,6 +3295,7 @@ namespace zelph::network
                     std::vector<Node>        history;
                     collect_variables(self, condition, variables, 0, history);
                     shape.variables.assign(variables.begin(), variables.end());
+                    shape.by_members = holds_condition_set(self, condition);
                     r.shapes.push_back(std::move(shape));
                 }
                 source.rule = fresh->rules.size();

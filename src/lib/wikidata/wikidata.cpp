@@ -118,6 +118,7 @@ public:
     bool                  _logging{true};
     std::filesystem::path _bin_path;
     bool                  _cache_save_failed{false};
+    bool                  _cache_read_incomplete{false};
 };
 
 Wikidata::Wikidata(network::Zelph* n, const std::filesystem::path& input_path)
@@ -154,10 +155,16 @@ bool Wikidata::cache_save_failed() const
     return _pImpl->_cache_save_failed;
 }
 
+bool Wikidata::cache_read_incomplete() const
+{
+    return _pImpl->_cache_read_incomplete;
+}
+
 void Wikidata::import_all(const std::string& constraints_dir)
 {
-    const bool export_constraints = !constraints_dir.empty();
-    _pImpl->_cache_save_failed    = false;
+    const bool export_constraints  = !constraints_dir.empty();
+    _pImpl->_cache_save_failed     = false;
+    _pImpl->_cache_read_incomplete = false;
 
     if (!export_constraints)
     {
@@ -167,11 +174,18 @@ void Wikidata::import_all(const std::string& constraints_dir)
     std::filesystem::path cache_file = _pImpl->_bin_path;
 
     bool cache_loaded = false;
-    // Attempt to load from cache if we are not just exporting constraints
+    // The cache corresponds to the outcome of importing this dump into an
+    // empty graph, thus serving as a substitute for the import exclusively
+    // when the import starts from an empty graph; when targeting any other
+    // graph, the dump is brought in and added. A .bin file specified by the
+    // user functions as a network file, and it replaces the graph regardless
+    // of what the graph currently holds.
     if (!export_constraints)
     {
-        if (std::filesystem::exists(cache_file))
+        if (std::filesystem::exists(cache_file)
+            && (_input_path.extension() == ".bin" || _pImpl->_n->holds_only_core()))
         {
+            const std::uint64_t epoch = _pImpl->_n->graph_epoch();
             try
             {
                 _pImpl->_n->diagnostic("Loading network from " + cache_file.string() + "...", true);
@@ -181,7 +195,22 @@ void Wikidata::import_all(const std::string& constraints_dir)
             }
             catch (std::exception& ex)
             {
-                _pImpl->_n->diagnostic("Failed to load cache: "s + ex.what(), true);
+                // A malfunction following the file's header results in
+                // residual cache within the graph, and the dump below is
+                // imported into it.
+                if (_pImpl->_n->graph_epoch() == epoch)
+                {
+                    _pImpl->_n->diagnostic("Failed to load cache: "s + ex.what(), true);
+                }
+                else
+                {
+                    _pImpl->_cache_read_incomplete = true;
+                    _pImpl->_n->error("WARNING: the cache " + cache_file.string() + " could not be read completely: " + ex.what()
+                                          + "\n  The graph now holds the part of the cache that was read, and the dump is imported into it."
+                                            "\n  For a clean graph: .new, delete "
+                                          + cache_file.string() + ", and .load " + _pImpl->_original_source_path.string() + " again.",
+                                      true);
+                }
             }
         }
     }
@@ -197,6 +226,11 @@ void Wikidata::import_all(const std::string& constraints_dir)
         }
 
         const std::string additional_language_to_import = "en";
+
+        // Only an import commencing with an empty graph stores data into
+        // the cache, which a later .load operation into an empty graph
+        // retrieves instead.
+        const bool writes_cache = !export_constraints && _pImpl->_n->holds_only_core();
 
         if (export_constraints)
         {
@@ -411,16 +445,27 @@ void Wikidata::import_all(const std::string& constraints_dir)
                 _pImpl->_n->diagnostic_stream() << "Import completed successfully (" << _pImpl->_n->count() << " nodes)." << std::endl;
                 _pImpl->_n->end_bulk_import();
 
-                try
+                if (writes_cache)
                 {
-                    _pImpl->_n->diagnostic("Saving network to cache " + cache_file.string() + "...", true);
-                    _pImpl->_n->save_to_file(_pImpl->_bin_path.string());
-                    _pImpl->_n->diagnostic("Cache saved.", true);
+                    try
+                    {
+                        _pImpl->_n->diagnostic("Saving network to cache " + cache_file.string() + "...", true);
+                        _pImpl->_n->save_to_file(_pImpl->_bin_path.string());
+                        _pImpl->_n->diagnostic("Cache saved.", true);
+                    }
+                    catch (std::exception& ex)
+                    {
+                        _pImpl->_cache_save_failed = true;
+                        _pImpl->_n->error("Failed to save cache: "s + ex.what(), true);
+                    }
                 }
-                catch (std::exception& ex)
+                else
                 {
-                    _pImpl->_cache_save_failed = true;
-                    _pImpl->_n->error("Failed to save cache: "s + ex.what(), true);
+                    _pImpl->_n->out("The graph was not empty, so the dump was added to it and "
+                                        + (std::filesystem::exists(cache_file) ? "the cache " + cache_file.string() + " was left as it is"
+                                                                               : "no cache was written"s)
+                                        + ". Use .save <file.bin> to persist the combined network.",
+                                    true);
                 }
             }
         }

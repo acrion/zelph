@@ -160,7 +160,7 @@ namespace zelph::network
         void                     trim_label_locked(const std::string& lang, std::string_view label);
         void                     release_label_locked(const std::string& lang, Node node, std::string_view label);
         void                     settle_labels_locked(const std::string& lang, const std::vector<std::string_view>& labels, const std::function<bool(Node)>& gone);
-        void                     rebuild_label_index_locked();
+        size_t                   rebuild_label_index_locked();
         void                     rebuild_label_index();
 
         // --- Implemented in zelph_index.cpp ---
@@ -436,6 +436,11 @@ namespace zelph::network
         // subsequent save sets the field to false, ensuring the next load of
         // the file will say so again. Cleared via clear_loaded_state.
         bool _older_negations{false};
+
+        // The nodes produced by the Zelph constructor, the core nodes and
+        // the facts declaring the core relations: what
+        // Zelph::holds_only_core compares the graph against.
+        std::vector<Node> _core_graph;
 
         int               _max_log_depth{0};
         bool              _logging{false};

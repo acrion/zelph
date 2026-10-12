@@ -278,9 +278,12 @@ TEST_CASE("bin inspection: a file that is not a network leaves the session's gra
 // how a session reaches it.
 TEST_CASE("load: a network file replaces the session's graph")
 {
-    const fs::path plain = fs::temp_directory_path() / "zelph_load_replaces.bin";
-    const fs::path rules = fs::temp_directory_path() / "zelph_load_replaces_rules.bin";
-    const auto     save  = [](const fs::path& file, const std::string& lines)
+    const fs::path plain     = fs::temp_directory_path() / "zelph_load_replaces.bin";
+    const fs::path rules     = fs::temp_directory_path() / "zelph_load_replaces_rules.bin";
+    const fs::path self_fact = fs::temp_directory_path() / "zelph_load_replaces_self_fact.bin";
+    const fs::path list      = fs::temp_directory_path() / "zelph_load_replaces_list.bin";
+    const fs::path term      = fs::temp_directory_path() / "zelph_load_replaces_term.bin";
+    const auto     save      = [](const fs::path& file, const std::string& lines)
     {
         zelph::io::OutputCollector  collector;
         zelph::console::Interactive interactive(collector.sink());
@@ -291,6 +294,11 @@ TEST_CASE("load: a network file replaces the session's graph")
     // A rule, and a fact that remains unapplied: auto-run is off upon the
     // arrival of `john ~ man`, meaning the file holds no `john ~ mortal`.
     save(rules, "(X ~ man) => (X ~ mortal)\n.auto-run\njohn ~ man");
+    // Three files in which the nodes take the ids of nodes registered by a
+    // subcase for display, each built in the same order as the session's.
+    save(self_fact, "x likes x");
+    save(list, "x has <a b>");
+    save(term, "(a andthen b) unless c");
 
     zelph::io::OutputCollector  collector;
     zelph::console::Interactive interactive(collector.sink());
@@ -419,6 +427,55 @@ p3 q3 r3
         interactive.process(".lang");
         CHECK(any_output_contains(collector, "The current language is 'en'"));
     }
+    SUBCASE("a self-fact whose predicate shares an id with a verbose one is sugar")
+    {
+        // zelph/no-selffact-sugar records a predicate via its identifier. The
+        // session's `loves` and the file's `likes` are built in identical
+        // sequence and share it, and the registration kept through the load
+        // printed the file's self-fact entirely, as though `likes` functioned
+        // as a term-forming operator.
+        process_lines(interactive, "y loves y\n%(zelph/no-selffact-sugar \"loves\")");
+        interactive.process(".load \"" + self_fact.string() + "\"");
+
+        collector.clear();
+        interactive.process("X likes Y");
+        CHECK(collect_answers(collector) == std::vector<std::string>{":likes x"});
+    }
+    SUBCASE("a list of nodes that share ids with the digits is a list")
+    {
+        // zelph/set-number-digits records the digits indexed by id, and a list
+        // composed solely of these digits outputs as a numeric value. The
+        // file's `a` and `b` take the ids corresponding to the session's
+        // digits `c` and `d`, and the file's list printed as &2.
+        process_lines(interactive, "y owns <c d>\n%(zelph/set-number-digits [\"c\" \"d\"])");
+        interactive.process(".load \"" + list.string() + "\"");
+
+        collector.clear();
+        interactive.process("X has Y");
+        CHECK(collect_answers(collector) == std::vector<std::string>{"x has <a b>"});
+    }
+    SUBCASE("a display scheme goes with the operators it claimed")
+    {
+        // The scheme claims `r` and `s` by identifier, the file's `andthen`
+        // and `unless` take those ids, and the file's term printed in the
+        // scheme's notation. The claim kept through the load additionally
+        // rejected the module's own registration of `andthen` upon subsequent
+        // module execution ("already registered in scheme 'policy'"); the
+        // scheme is likewise discarded, enabling the module to register it
+        // anew.
+        process_lines(interactive, "(p r q) s w\n"
+                                   "%(do (zelph/register-display-scheme \"policy\" \"[[\" \"]]\" "
+                                   "{:name-first \"abcdefghijklmnopqrstuvwxyz\" :name-chars \"abcdefghijklmnopqrstuvwxyz\"}) "
+                                   "(zelph/set-infix-display \"policy\" [[\"r\" 20 :left] [\"s\" 10 :left]]))");
+        interactive.process(".load \"" + term.string() + "\"");
+
+        collector.clear();
+        interactive.process("(A andthen B) unless C");
+        CHECK(collect_answers(collector) == std::vector<std::string>{"(a andthen b) unless c"});
+        CHECK_THROWS_WITH_AS(interactive.process(R"(%(zelph/set-infix-display "policy" [["andthen" 20 :left]]))"),
+                             doctest::Contains("unknown display scheme 'policy'"),
+                             std::runtime_error);
+    }
     SUBCASE("the next run-delta is a full pass")
     {
         // The session has run, thus its delta record is valid, and the session
@@ -448,6 +505,9 @@ p3 q3 r3
 
     fs::remove(plain);
     fs::remove(rules);
+    fs::remove(self_fact);
+    fs::remove(list);
+    fs::remove(term);
 }
 
 TEST_CASE("bin inspection: a mistyped chunk selector leaves the session alone")

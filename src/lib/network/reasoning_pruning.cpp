@@ -73,6 +73,31 @@ void zelph::network::Reasoning::collect_prune_targets(const Node condition, cons
     const Node    subject_pattern  = parse_fact(condition, objects, parent);
     const Node    relation_pattern = parse_relation(condition);
 
+    // A condition that contains a rule whose conditions form a set
+    // matches facts that are not its instance (holds_condition_set): the
+    // facts are those which the condition matches given the bindings.
+    const auto known = _prune_by_members.try_emplace(condition, false);
+    if (known.second) known.first->second = holds_condition_set(this, condition);
+    if (known.first->second)
+    {
+        Unification u(this, condition, parent, std::make_shared<Variables>(bindings), std::make_shared<Variables>(), nullptr, 1, nullptr);
+        while (u.Next())
+        {
+            const Node fact = u.matched_fact();
+            if (fact == 0) continue;
+            _facts_to_prune.insert(fact);
+            if (!_prune_nodes_mode) continue;
+
+            adjacency_set fact_objects;
+            const Node    fact_subject = parse_fact(fact, fact_objects);
+            if (Zelph::Impl::is_var(subject_pattern))
+                _nodes_to_prune.insert(fact_subject);
+            else if (fact_objects.size() == 1)
+                _nodes_to_prune.insert(*fact_objects.begin());
+        }
+        return;
+    }
+
     std::vector<Node> history;
     Node              subject  = 0;
     Node              relation = 0;
@@ -444,6 +469,7 @@ void Reasoning::prune_facts(Node pattern, size_t& removed_count)
     _prune_nodes_mode = false;
     _facts_to_prune.clear();
     _nodes_to_prune.clear();
+    _prune_by_members.clear();
 
     apply_rule(0, pattern);
 
@@ -521,6 +547,7 @@ void Reasoning::prune_nodes(Node pattern, const Node target_var, size_t& removed
     _prune_target_var = target_var;
     _facts_to_prune.clear();
     _nodes_to_prune.clear();
+    _prune_by_members.clear();
 
     apply_rule(0, pattern);
 

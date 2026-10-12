@@ -359,7 +359,10 @@ jobs:
               status=1
               continue
             fi
-            python3 tools/check_arch_baseline.py "$binary" --floor "$floor" || status=1
+            # --strict: during the build, jump tables are relocated from the
+            # code section (/jumptablerdata, CMakeLists.txt), ensuring that
+            # nothing remains there for the check to interpret as data.
+            python3 tools/check_arch_baseline.py "$binary" --floor "$floor" --strict || status=1
           done
           exit $status
 

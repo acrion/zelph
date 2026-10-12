@@ -70,11 +70,13 @@ struct zelph_engine
     // times.
     std::map<std::string, zelph::network::Node> variables;
 
-    // Guards the handle table only. The nets themselves are internally
-    // synchronised (see NeuralNet), so a lookup taken shared is all an
-    // evaluating thread needs.
+    // Guards solely the handle table. The networks themselves are internally
+    // synchronized (see NeuralNet), meaning a shared lookup suffices for an
+    // evaluating thread. A lookup hands out a share of the net: a load that
+    // replaces the graph empties all entries, preserving the slots so no
+    // handle is repurposed, even as another thread continues evaluating.
     mutable std::shared_mutex                               nets_mutex;
-    std::vector<std::unique_ptr<zelph::network::NeuralNet>> nets;
+    std::vector<std::shared_ptr<zelph::network::NeuralNet>> nets;
 
     zelph_engine(const zelph_engine&)            = delete;
     zelph_engine& operator=(const zelph_engine&) = delete;
@@ -156,12 +158,12 @@ namespace
                                             "(zelph_engine_create), and this call came from another thread.");
     }
 
-    zelph::network::NeuralNet* find_net(zelph_engine* engine, const zelph_net handle)
+    std::shared_ptr<zelph::network::NeuralNet> find_net(zelph_engine* engine, const zelph_net handle)
     {
         std::shared_lock<std::shared_mutex> lock(engine->nets_mutex);
         if (handle < 0 || static_cast<size_t>(handle) >= engine->nets.size())
             return nullptr;
-        return engine->nets[static_cast<size_t>(handle)].get();
+        return engine->nets[static_cast<size_t>(handle)];
     }
 
     // The output of a forward pass, in the order zelph/nn-eval-nodes
@@ -481,16 +483,26 @@ int32_t zelph_load(zelph_engine* engine, const char* path)
     if (const int32_t refused = require_owner(engine, "zelph_load"); refused != ZELPH_OK) return refused;
 
     // A network file replaces the graph, and the identifier of a variable
-    // remembered by name subsequently belongs to the graph that was loaded:
-    // the variable counter from the file reassigns it, causing two names to
-    // reference the same variable. A dump imported without a cache extends the
-    // graph, so only a load that advanced the epoch forgets them.
+    // remembered by name afterwards belongs to the graph that was loaded:
+    // the variable counter from the file reassigns it, resulting in two
+    // names pointing to the same variable. The neurons of a compiled net
+    // are node identifiers from the old graph as well, and its write-back
+    // would set weights between whatever nodes carry them afterwards, so
+    // its handle is rejected from that point forward. A dump imported
+    // instead of retrieved from its cache extends the graph, so only a load
+    // that advanced the epoch forgets them.
     const std::uint64_t epoch  = engine->interactive.graph()->graph_epoch();
     const int32_t       status = guarded([&]
                                          {
         engine->interactive.execute_command({".load", path});
         return succeed(); });
-    if (engine->interactive.graph()->graph_epoch() != epoch) engine->variables.clear();
+    if (engine->interactive.graph()->graph_epoch() != epoch)
+    {
+        engine->variables.clear();
+        std::unique_lock<std::shared_mutex> lock(engine->nets_mutex);
+        for (auto& net : engine->nets)
+            net.reset();
+    }
     return status;
 }
 
@@ -574,7 +586,7 @@ int32_t zelph_nn_eval_nodes(zelph_engine*     engine,
     if (!engine || !count) return fail(ZELPH_INVALID_ARGUMENT, "engine and count are required");
     if (input_count > 0 && !input_nodes) return fail(ZELPH_INVALID_ARGUMENT, "input_nodes is null");
 
-    zelph::network::NeuralNet* net = find_net(engine, handle);
+    const auto net = find_net(engine, handle);
     if (!net)
     {
         *count = 0;
@@ -597,7 +609,7 @@ int32_t zelph_nn_layer_nodes(zelph_engine*   engine,
 {
     if (!engine || !count) return fail(ZELPH_INVALID_ARGUMENT, "engine and count are required");
 
-    zelph::network::NeuralNet* net = find_net(engine, handle);
+    const auto net = find_net(engine, handle);
     if (!net)
     {
         *count = 0;
@@ -628,7 +640,7 @@ int32_t zelph_nn_eval_slots(zelph_engine*   engine,
     if (!engine || !count) return fail(ZELPH_INVALID_ARGUMENT, "engine and count are required");
     if (input_count > 0 && !input_slots) return fail(ZELPH_INVALID_ARGUMENT, "input_slots is null");
 
-    zelph::network::NeuralNet* net = find_net(engine, handle);
+    const auto net = find_net(engine, handle);
     if (!net)
     {
         *count = 0;
@@ -658,7 +670,7 @@ int32_t zelph_nn_train_nodes(zelph_engine*     engine,
     if (input_count > 0 && !input_nodes) return fail(ZELPH_INVALID_ARGUMENT, "input_nodes is null");
     if (target_count > 0 && !target_nodes) return fail(ZELPH_INVALID_ARGUMENT, "target_nodes is null");
 
-    zelph::network::NeuralNet* net = find_net(engine, handle);
+    const auto net = find_net(engine, handle);
     if (!net) return fail(ZELPH_INVALID_ARGUMENT, "invalid network handle");
 
     return guarded([&]
@@ -685,7 +697,7 @@ int32_t zelph_nn_train_slots(zelph_engine*     engine,
     if (input_count > 0 && !input_slots) return fail(ZELPH_INVALID_ARGUMENT, "input_slots is null");
     if (target_count > 0 && !target_nodes) return fail(ZELPH_INVALID_ARGUMENT, "target_nodes is null");
 
-    zelph::network::NeuralNet* net = find_net(engine, handle);
+    const auto net = find_net(engine, handle);
     if (!net) return fail(ZELPH_INVALID_ARGUMENT, "invalid network handle");
 
     return guarded([&]
@@ -701,7 +713,7 @@ int32_t zelph_nn_accumulator_size(zelph_engine* engine, const zelph_net handle, 
 {
     if (!engine || !out_size) return fail(ZELPH_INVALID_ARGUMENT, "engine and out_size are required");
 
-    zelph::network::NeuralNet* net = find_net(engine, handle);
+    const auto net = find_net(engine, handle);
     if (!net) return fail(ZELPH_INVALID_ARGUMENT, "invalid network handle");
 
     return guarded([&]
@@ -721,7 +733,7 @@ int32_t zelph_nn_accumulator_set(zelph_engine*   engine,
     if (!engine || !accumulator) return fail(ZELPH_INVALID_ARGUMENT, "engine and accumulator are required");
     if (count > 0 && !slots) return fail(ZELPH_INVALID_ARGUMENT, "slots is null");
 
-    zelph::network::NeuralNet* net = find_net(engine, handle);
+    const auto net = find_net(engine, handle);
     if (!net) return fail(ZELPH_INVALID_ARGUMENT, "invalid network handle");
 
     return guarded([&]
@@ -745,7 +757,7 @@ int32_t zelph_nn_accumulator_update(zelph_engine*   engine,
     if (added_count > 0 && !added) return fail(ZELPH_INVALID_ARGUMENT, "added is null");
     if (removed_count > 0 && !removed) return fail(ZELPH_INVALID_ARGUMENT, "removed is null");
 
-    zelph::network::NeuralNet* net = find_net(engine, handle);
+    const auto net = find_net(engine, handle);
     if (!net) return fail(ZELPH_INVALID_ARGUMENT, "invalid network handle");
 
     return guarded([&]
@@ -768,7 +780,7 @@ int32_t zelph_nn_accumulator_eval(zelph_engine*   engine,
     if (!engine || !count) return fail(ZELPH_INVALID_ARGUMENT, "engine and count are required");
     if (!accumulator) return fail(ZELPH_INVALID_ARGUMENT, "accumulator is null");
 
-    zelph::network::NeuralNet* net = find_net(engine, handle);
+    const auto net = find_net(engine, handle);
     if (!net)
     {
         *count = 0;
@@ -787,7 +799,7 @@ int32_t zelph_nn_write_back(zelph_engine* engine, const zelph_net handle)
 {
     if (!engine) return fail(ZELPH_INVALID_ARGUMENT, "engine is required");
 
-    zelph::network::NeuralNet* net = find_net(engine, handle);
+    const auto net = find_net(engine, handle);
     if (!net) return fail(ZELPH_INVALID_ARGUMENT, "invalid network handle");
 
     return guarded([&]
@@ -800,7 +812,7 @@ int32_t zelph_nn_snapshot_shape(zelph_engine* engine, const zelph_net handle, si
 {
     if (!engine || !count) return fail(ZELPH_INVALID_ARGUMENT, "engine and count are required");
 
-    zelph::network::NeuralNet* net = find_net(engine, handle);
+    const auto net = find_net(engine, handle);
     if (!net)
     {
         *count = 0;
@@ -822,7 +834,7 @@ int32_t zelph_nn_snapshot(zelph_engine* engine, const zelph_net handle, double* 
 {
     if (!engine || !count) return fail(ZELPH_INVALID_ARGUMENT, "engine and count are required");
 
-    zelph::network::NeuralNet* net = find_net(engine, handle);
+    const auto net = find_net(engine, handle);
     if (!net)
     {
         *count = 0;
@@ -849,7 +861,7 @@ int32_t zelph_nn_restore(zelph_engine*   engine,
     if (!engine || !sizes) return fail(ZELPH_INVALID_ARGUMENT, "engine and sizes are required");
     if (weight_count > 0 && !weights) return fail(ZELPH_INVALID_ARGUMENT, "weights is null");
 
-    zelph::network::NeuralNet* net = find_net(engine, handle);
+    const auto net = find_net(engine, handle);
     if (!net) return fail(ZELPH_INVALID_ARGUMENT, "invalid network handle");
 
     size_t total = 0;

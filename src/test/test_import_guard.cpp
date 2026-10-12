@@ -26,6 +26,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include <doctest/doctest.h>
 
 #include "test_helpers.hpp"
+#include "wikidata_dump.hpp"
 
 #include <filesystem>
 #include <fstream>
@@ -183,6 +184,179 @@ gamma ~ beta
     CHECK(answers_contain(collector, "gamma ~ beta"));
 
     fs::remove(script);
+}
+
+// A load that replaces the graph discards what a module wrote into it -- its
+// rules and facts -- while the registry continued to identify the module as
+// already imported, causing subsequent .import operations on it to be
+// bypassed and the session to proceed without access to what the module
+// defines; only .new restored access. The load clears the registry. Each
+// subcase arrives at the load through a distinct path a session may follow.
+TEST_CASE("import: a load that replaces the graph lets a module be imported again")
+{
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+
+    const auto network = write_network(interactive, "replaced");
+    interactive.process(".new");
+
+    const auto writer     = write_script("replaced_writer", R"(.provides import-guard-replaced-writer
+alpha ~ beta
+)");
+    const auto janet_only = write_script("replaced_janet", R"(.provides import-guard-replaced-janet
+%(def import-guard-replaced-janet true)
+)");
+
+    const auto imported_again = [&](const fs::path& script)
+    {
+        collector.clear();
+        interactive.process(".import \"" + script.string() + "\"");
+        return !any_event_contains(collector, "Skipping already imported");
+    };
+
+    SUBCASE("a network file")
+    {
+        interactive.process(".import \"" + writer.string() + "\"");
+        interactive.process(".load \"" + network.string() + "\"");
+        CHECK(imported_again(writer));
+
+        collector.clear();
+        interactive.process("X ~ beta");
+        CHECK(answers_contain(collector, "alpha ~ beta"));
+    }
+    SUBCASE("zelph/load")
+    {
+        interactive.process(".import \"" + writer.string() + "\"");
+        interactive.process("%(zelph/load \"" + network.generic_string() + "\")");
+        CHECK(imported_again(writer));
+    }
+    SUBCASE("a partial load")
+    {
+        interactive.process(".import \"" + writer.string() + "\"");
+        interactive.process(".load-partial \"" + network.string() + "\"");
+        CHECK(imported_again(writer));
+    }
+    SUBCASE("a manifest")
+    {
+        // Only a header, thus the view holds no node whatsoever, and the
+        // module defines nothing other than Janet code. The binPath is
+        // written in the generic form: a native Windows path within a JSON
+        // string does not qualify as one.
+        const auto manifest = fs::temp_directory_path() / "zelph_import_guard_replaced.json";
+        std::ofstream(manifest) << "{\"source\": {\"binPath\": \"" << network.generic_string() << "\"}, \"sections\": {"
+                                << "\"left\": {\"chunks\": []}, \"right\": {\"chunks\": []}, "
+                                << "\"nameOfNode\": {\"chunks\": []}, \"nodeOfName\": {\"chunks\": []}}}\n";
+
+        interactive.process(".import \"" + janet_only.string() + "\"");
+        interactive.process(".load-partial \"" + manifest.string() + "\" meta-only");
+        CHECK(imported_again(janet_only));
+
+        fs::remove(manifest);
+    }
+    SUBCASE("a dump's cache")
+    {
+        // A cache is read exclusively into an empty graph, which a module
+        // that specifies nothing beyond Janet code leaves empty.
+        using namespace wikidata_dump;
+        const auto dump = write_lines("zelph_import_guard_dump", {entity("Q1", text("en", "one"))});
+        interactive.process(".load \"" + dump.string() + "\"");
+        interactive.process(".new");
+
+        interactive.process(".import \"" + janet_only.string() + "\"");
+        collector.clear();
+        interactive.process(".load \"" + dump.string() + "\"");
+        REQUIRE(any_event_contains(collector, "Cache loaded successfully"));
+        CHECK(imported_again(janet_only));
+
+        remove_dump(dump);
+    }
+    SUBCASE("a claim made with .provides")
+    {
+        // Typed at the prompt, .provides claims an identifier for no
+        // module whatsoever, and a load takes the claim along with the
+        // rest.
+        interactive.process(".provides import-guard-replaced-writer");
+        interactive.process(".load \"" + network.string() + "\"");
+        collector.clear();
+        interactive.process(".import \"" + writer.string() + "\"");
+        CHECK_FALSE(any_event_contains(collector, "already provided"));
+        CHECK_FALSE(interactive.had_failure());
+    }
+    SUBCASE("a module that loads a network itself stays imported")
+    {
+        // After the module's load, its lines are integrated into the loaded
+        // graph, meaning everything the module performs is present; its
+        // claim also terminates an import cycle that runs through it. Only
+        // the modules that were imported earlier and have finished are
+        // forgotten.
+        const auto loader = write_script("replaced_loader", ".provides import-guard-replaced-loader\n.import \"" + writer.string() + "\"\n.load \"" + network.string() + "\"\nomega ~ beta\n");
+        interactive.process(".import \"" + loader.string() + "\"");
+
+        collector.clear();
+        interactive.process(".import \"" + loader.string() + "\"");
+        CHECK(any_event_contains(collector, "Skipping already imported"));
+        CHECK(imported_again(writer));
+
+        fs::remove(loader);
+    }
+
+    fs::remove(network);
+    fs::remove(writer);
+    fs::remove(janet_only);
+}
+
+// When a module is loaded, it registers additional elements beyond its
+// rules -- a block keyword, an inline keyword, a display scheme along with
+// its operators, a digit alphabet, and verbose self-fact predicates --
+// which are re-registered upon a subsequent import after a load. No
+// component of these may be denied during the second registration: display
+// registrations, which name nodes by their id, are discarded with the
+// load, and any keyword re-registered supersedes its prior handler.
+TEST_CASE("import: a module imported again after a load registers what it registered before")
+{
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+
+    const auto network = write_network(interactive, "registers");
+    interactive.process(".new");
+
+    SUBCASE("an arithmetic module: rules, a digit alphabet, verbose self-facts")
+    {
+        interactive.process(".import decimal-arithmetic");
+        interactive.process(".load \"" + network.string() + "\"");
+        CHECK_NOTHROW(interactive.process(".import decimal-arithmetic"));
+
+        collector.clear();
+        interactive.process("(&17 / &5) = X");
+        interactive.run(true, false, false);
+        CHECK(any_output_contains(collector, "((&17 / &5) = &3)"));
+    }
+    SUBCASE("math-syntax: a display scheme, its operators, an inline keyword")
+    {
+        interactive.process(".import math-syntax");
+        interactive.process(".load \"" + network.string() + "\"");
+        CHECK_NOTHROW(interactive.process(".import math-syntax"));
+
+        collector.clear();
+        interactive.process("$( 1 - x*x ) marker r1");
+        CHECK(any_output_contains(collector, "$( &1 - x * x ) marker r1"));
+    }
+    SUBCASE("sparql: a block keyword")
+    {
+        interactive.process(".import sparql");
+        interactive.process(".load \"" + network.string() + "\"");
+        collector.clear();
+        CHECK_NOTHROW(interactive.process(".import sparql"));
+        CHECK(any_event_contains(collector, "SPARQL subset loaded"));
+
+        collector.clear();
+        interactive.process("sparql");
+        interactive.process("SELECT ?x WHERE { wd:Q10 wdt:P279 ?x . }");
+        interactive.process("");
+        CHECK(any_output_contains(collector, "-- 2 result(s) --"));
+    }
+
+    fs::remove(network);
 }
 
 TEST_CASE("import: a successful import is still imported only once")

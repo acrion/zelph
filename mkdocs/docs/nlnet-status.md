@@ -45,6 +45,10 @@ Since 8 August 2026, the proof reconstruction behind `.explain` has been extende
 - 2026-09-04 · [`8ea77f7`](https://github.com/acrion/zelph/commit/8ea77f76f0d7eb053b8a32df1f7d697f41628168) · Pin the instruction set floor and the install-time test selection
 - 2026-09-05 · [`ac7f7ca`](https://github.com/acrion/zelph/commit/ac7f7ca98971f195e5103b68d5014b45f90f326d) · Run a command-line script as a session, and report what went wrong
 - 2026-10-10 · [`c9144a3`](https://github.com/acrion/zelph/commit/c9144a32f5642c0c003782b55162948b6a73f9a9) · Prepare 1.0.2: negation levels, recipe ids, sound simplifier, tabled .explain
+- 2026-10-11 · [`7e15931`](https://github.com/acrion/zelph/commit/7e15931e0d9b59a89a32601a6a940a45a07db842) · Prepare 1.1.0: nested claims, writes on the main thread, sound matching
+- 2026-10-12 · [`91fd444`](https://github.com/acrion/zelph/commit/91fd4445fb459c566a1c5cfcca0b27988ce2bfdf) · Write Mermaid pages under UTF-8 paths; compute a test’s platform-specific pin
+- 2026-10-12 · [`5cc755a`](https://github.com/acrion/zelph/commit/5cc755a587da94324f2acb56bf8832defe6d8322) · Make a negated condition into a node and a query into a single condition list
+- 2026-10-12 · [`461e2ab`](https://github.com/acrion/zelph/commit/461e2ab5df59f45365212a7982eeb73fbcf7d765) · Key negation levels by pattern, replace the graph upon loading, keep labels
 
 - **2a** (open): A serialiser for the proof graph, with stable identity per record, so that the steps of a derivation join into the chain they came from instead of having to be matched by rendered text.
 - **2b** (open): The rule that fired and the bindings that matched, recorded in the export. The proposal promises both; neither is emitted today.
@@ -56,6 +60,11 @@ Since 8 August 2026, the proof reconstruction behind `.explain` has been extende
 - **2h** (open): A published corpus of proofs as Linked Data, drawn from the Wikidata consistency run, with the documentation a consumer needs to read it.
 
 ### 3. Constraint rule library
+
+As of 12 October 2026, a negated condition functions as an independent node, with negation levels operating on patterns instead of predicates. Neither mechanism supports negation across a group of conditions, so 3f remains open; the work is documented because 3f builds on it: a negated group must be deferred on these levels.
+
+- 2026-10-12 · [`5cc755a`](https://github.com/acrion/zelph/commit/5cc755a587da94324f2acb56bf8832defe6d8322) · Make a negated condition into a node and a query into a single condition list
+- 2026-10-12 · [`461e2ab`](https://github.com/acrion/zelph/commit/461e2ab5df59f45365212a7982eeb73fbcf7d765) · Key negation levels by pattern, replace the graph upon loading, keep labels
 
 - **3a** (open): A reusable constraint module in the standard library with neutral vocabulary: symmetry, transitivity, inverse properties, domain and range, sub-property and sub-class, disjointness. Importable, documented, and tested through the module rather than through pasted rules.
 - **3b** (open): Functional properties and cardinality. Both need counting over a set of matches, which the rule engine does not currently do, so this includes the engine work that makes such a condition expressible.

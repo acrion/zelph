@@ -669,9 +669,9 @@ Clusters are session state and are not persisted by `zelph/save`, and a load tha
 
 - **`(zelph/load file)`**  
   Load a previously saved network, or import a dump, in the same manner as the `.load` command:
-  - When `file` has the extension `.bin`, the saved network replaces the graph (rapid): all nodes, names, rules, and clusters are removed, along with anything that refers to them, including negation records and the data that `zelph/run-delta` relies on.
-  - When `file` ends in `.json` or `.json.bz2` (a Wikidata dump), the data is brought in and merged into the graph, and the resulting graph is saved as a `.bin` cache file in the same directory. As long as this cache persists, subsequent loads of the dump will read from the cache, which functions equivalently to a `.bin` file in replacing the graph.  
-    The Janet environment remains unchanged, as do registered keywords and the import registry. A Janet value that referred to a node before the load is not refreshed: it points to whatever entity has the same ID in the newly loaded graph, or to nothing, and a variable previously named by a symbol like `'X` within the same block becomes a new one after the load. In the interactive REPL, loading disables auto-run (large datasets). Inside a module (`.import`) auto-run is already suspended for the duration of the load and restored afterwards. A script named on the command line is a session, so there `.load` disables auto-run exactly as it does in the REPL — see [Scripts and Modules](modules.md). Returns `nil`. Main thread only. Rejected when a rule is currently under construction.
+  - If `file` bears the `.bin` extension, the saved network replaces the graph (rapid): every node, name, rule, and cluster is purged, together with any reference to them, such as negation records, the data upon which `zelph/run-delta` depends, display registrations, the handles of compiled nets, and the import registry.
+  - If `file` concludes with `.json` or `.json.bz2` (a Wikidata dump) and the graph is empty, the `.bin` cache located adjacent to it is read and replaces the graph, operating identically to a `.bin` file; without a cache, the data is ingested, and the resulting graph is saved as that cache. Into a non-empty graph, the data is ingested and merged, and no cache is read or written.  
+    The Janet environment stays the same, as do the registered keywords. A Janet value that referred to a node before the load is not refreshed: it points to whatever entity has the same ID in the newly loaded graph, or to nothing, and a variable previously named by a symbol like `'X` within the same block becomes a new one after the load. In the interactive REPL, loading disables auto-run (large datasets). Inside a module (`.import`) auto-run is already suspended for the duration of the load and restored afterwards. A script named on the command line is a session, so there `.load` disables auto-run exactly as it does in the REPL — see [Scripts and Modules](modules.md). Returns `nil`. Main thread only. Rejected when a rule is currently under construction.
 
 #### Neural network functions
 
@@ -680,7 +680,7 @@ zelph 0.9.7 adds a neural substrate: raw weighted edges act as synapses, layers 
 - **`(zelph/nn-connect from to &opt weight)`** – create a raw weighted edge (synapse); invisible to reasoning. Default weight 1. Main thread only.
 - **`(zelph/weight from to)`** – weight of a directed node pair: the stored value of a synapse or fact probability, 1 for a real graph edge lacking a stored entry, `nil` if neither is present.
 - **`(zelph/set-weight from to w)`** – assign a weight to an existing synapse or edge. Main thread only.
-- **`(zelph/nn-compile layers)`** – compile a feed-forward view of a sub-graph (layer nodes, input first); returns an integer handle. Main thread only.
+- **`(zelph/nn-compile layers)`** – compile a feed-forward view of a sub-graph (layer nodes, input first); returns an integer handle that becomes invalid upon a subsequent load that replaces the graph. Main thread only.
 - **`(zelph/nn-nodes handle layer)`** – neurons within a compiled layer, ordered by index.
 - **`(zelph/nn-eval handle inputs)`** – perform a forward pass using plain number vectors.
 - **`(zelph/nn-train handle inputs targets &opt learning-rate)`** – execute one stochastic gradient descent step; returns the loss before the update.
@@ -714,6 +714,9 @@ A script can declare how *its own* notation is written, so that
 precedence, associativity, delimiters, numeral prefix and leaf grammar —
 never a concrete operator. A term is rendered under a scheme only when the
 whole subtree is expressible in it; otherwise the default rendering is used.
+The registrations name predicates by node, so when a graph is replaced during a
+load, they are discarded alongside the schemes; importing the module again
+reestablishes the registrations.
 
 - **`(zelph/register-display-scheme name open close &opt options)`**  
   Declare a scheme. Main thread only. `open`/`close` are the delimiters wrapped around a
@@ -772,9 +775,10 @@ whole subtree is expressible in it; otherwise the default rendering is used.
   verbose. Registered predicates always render as `S P S`. The registration
   is **additive** across calls, so stacked modules can each register their
   own operators; it affects display only — `:+ &1` remains valid _input_ —
-  and is session state like the digit alphabet (cleared by `.new`, not
-  persisted). The arithmetic modules register their operators (`+`, `-`,
-  `d+`, ...), `stdlib/eml.zph` registers `eml`. Main thread only.
+  and is session state like the digit alphabet (cleared by `.new` and by a
+  load that replaces the graph, not persisted). The arithmetic modules
+  register their operators (`+`, `-`, `d+`, ...), `stdlib/eml.zph` registers
+  `eml`. Main thread only.
 
 ## Referencing Janet Variables in zelph: Unquote `,`
 

@@ -221,6 +221,8 @@ When the inference engine scans for rules, it looks for all facts involving the 
 
 This means that **a rule is completely represented by standard subject-predicate-object triples**, with `=>` serving as a standard predicate.
 
+Unlike a fact, the set `S` is not defined by its content: every statement that writes a comma list creates a distinct set, meaning that two statements mentioning the same rule with multiple conditions result in two separate nodes. A rule over rules that names a rule with several conditions thus compares the sets by their members (see [Mentioning a Rule Is Not Asserting It](logic.md#mentioning-a-rule-is-not-asserting-it)).
+
 ## Facts and Rules in One Network: Unique Identification via Topological Semantics
 
 A distinctive aspect of **zelph** is that **facts and rules live in the same semantic network**. That raises a natural question: how does the unification engine avoid confusing ordinary entities with statement nodes, and how does it keep rule matching unambiguous?

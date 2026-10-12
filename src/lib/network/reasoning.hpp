@@ -880,6 +880,7 @@ namespace zelph::network
         Node                                     _prune_target_var{0};
         std::unordered_set<Node>                 _facts_to_prune;
         std::unordered_set<Node>                 _nodes_to_prune;
+        std::unordered_map<Node, bool>           _prune_by_members; // per prune: holds_condition_set for each condition read
         std::vector<std::shared_ptr<Variables>>* _query_results{nullptr};
         ReasoningProfiler                        _prof;
         std::unordered_set<Node>                 _input_captured; // raw fact nodes materialized while parsing input

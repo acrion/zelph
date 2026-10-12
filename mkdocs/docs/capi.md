@@ -25,7 +25,7 @@ int32_t zelph_engine_create(zelph_output_fn output, void* user_data, zelph_engin
 void    zelph_engine_destroy(zelph_engine* engine);
 ```
 
-One engine per process. The Janet script engine keeps a process-wide instance pointer for its C functions, so a second engine would silently redirect the first one's calls; `zelph_engine_create` refuses with `ZELPH_RUNTIME_ERROR` while another engine is alive. Destroying the engine invalidates every network handle taken from it.
+One engine per process. The Janet script engine keeps a process-wide instance pointer for its C functions, so a second engine would silently redirect the first one's calls; `zelph_engine_create` refuses with `ZELPH_RUNTIME_ERROR` while another engine is alive. Destroying the engine invalidates every network handle taken from it, as does a load operation that replaces the graph.
 
 `output` may be null, in which case the engine writes to the process's standard streams as the `zelph` binary does. Otherwise every line the engine emits is handed to the callback with its channel (`ZELPH_CHANNEL_OUT`, `ZELPH_CHANNEL_ERROR`, `ZELPH_CHANNEL_DIAGNOSTIC`, `ZELPH_CHANNEL_PROMPT`) — which is what a host with its own protocol on stdout, such as a game engine speaking to a GUI, needs.
 
@@ -44,7 +44,7 @@ One engine per process. The Janet script engine keeps a process-wide instance po
 | `zelph_list_elements(engine, list, out_nodes, count)` | The elements of a cons list, in order – the inverse of `zelph_list`. `nil` has none; a node that is not a list is an error, not an empty answer. |
 | `zelph_name(engine, node, lang, out_name)` | The node's name, or null when it has none — an answer, not an error. Free with `zelph_string_free`. |
 | `zelph_sources(engine, predicate, target, out_nodes, count)` | Every subject of a fact `(X predicate target)`. Directional: `(target predicate X)` does not contribute. |
-| `zelph_load(engine, path)` | As with the `.load` command, including format detection: a saved network replaces the graph, and a dump is incorporated into it. The overwritten graph takes the variables `zelph_variable` associated by name along with it; a node or net handle the caller kept names whatever carries the same identifier afterwards, or else nothing. |
+| `zelph_load(engine, path)` | As with the `.load` command, format detection is included: a saved network replaces the graph, while a dump is incorporated into it, or read from its `.bin` cache if the graph is empty. A load operation that replaces the graph discards the variables `zelph_variable` associated by name and invalidates all net handles; a node handle retained by the caller continues to reference whatever carries the identical identifier afterwards, or else refers to nothing. |
 | `zelph_save(engine, path)` | As the `.save` command. The path must end in `.bin`. |
 
 Structural identity is the property to build on: `zelph_list` over the same nodes returns the same node, because the graph interns structurally identical subgraphs. Two callers that describe the same structure arrive at the same identifier without agreeing on one.

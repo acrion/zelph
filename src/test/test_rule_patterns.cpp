@@ -1168,6 +1168,163 @@ c q d
         CHECK(collect_answers(collector) == std::vector<std::string>{"e r f"}); });
 }
 
+TEST_CASE("rule patterns: a rule held as an argument matches a ground rule with a comma list by its conditions")
+{
+    // Every statement constructs its own set from a comma list, meaning the
+    // rule that the rule over rules holds and the rule a given statement
+    // proposes are distinct nodes. Compared by identity, as a rule with a
+    // single condition is compared (hash-consing makes those a single node),
+    // the rule over rules never fired. The sets are compared based on their
+    // members: a rule differing in any condition, in the number of its
+    // conditions, or in its consequence constitutes a different rule.
+    // `.explain` and `.prune-facts` searched for the pattern's own instance,
+    // which no statement holds, and found nothing; the anchors took the held
+    // rule as a node that the candidates must contain.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        SUBCASE("anchors on") {}
+        SUBCASE("anchors off") { interactive.process(".anchors off"); }
+
+        const auto answered = [&](const std::string& query)
+        {
+            collector.clear();
+            interactive.process(query);
+            auto result = collect_answers(collector);
+            std::ranges::sort(result);
+            return result;
+        };
+
+        process_lines(interactive, R"(
+(P proposed ((a p b, c q d) => (alarm is on))) => (P flagged k)
+x proposed ((c q d, a p b) => (alarm is on))
+y proposed ((a p b, c r d) => (alarm is on))
+z proposed ((a p b, c q d, e r f) => (alarm is on))
+w proposed ((a p b) => (alarm is on))
+v proposed ((a p b, c q d) => (alarm is off))
+)");
+        interactive.run(true, false, false);
+        CHECK(answered("S flagged O") == std::vector<std::string>{"x flagged k"});
+
+        collector.clear();
+        interactive.process(".explain (x flagged k)");
+        CHECK(any_output_contains(collector, "└─ x proposed"));
+        CHECK(any_output_contains(collector, "[axiom]"));
+        CHECK_FALSE(any_output_contains(collector, "no derivation found"));
+
+        CHECK(answered("S proposed ((a p b, c q d) => (alarm is on))").size() == 1);
+        collector.clear();
+        interactive.process(".prune-facts S proposed ((a p b, c q d) => (alarm is on))");
+        CHECK(any_output_contains(collector, "Pruned 1 matching facts."));
+        CHECK(answered("S proposed O").size() == 4); });
+}
+
+TEST_CASE("rule patterns: the conditions of a held rule pair with a stored rule's in every way that fits")
+{
+    // A variable of the rule over rules, located inside the held rule, binds a
+    // part of the stored rule, just as it does in a held rule featuring a
+    // single condition: the held `(X p Y) => (X r Y)` matches the stored
+    // `(a p b) => (a r b)`. With a comma list, which condition pairs with which
+    // is a decision too, and the rest can hold for only one pairing. Inside the
+    // held rule, the consequence decides; outside it, a guard or another
+    // condition does, and because the engine does not backtrack into a match,
+    // each pairing is offered as a match of its own, much like extract_bindings
+    // offers each pairing of a fact's objects. A stored rule that shares a
+    // variable differently, or positions its parts in a different arrangement,
+    // constitutes a different rule.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        const auto answered = [&](const std::string& query)
+        {
+            collector.clear();
+            interactive.process(query);
+            auto result = collect_answers(collector);
+            std::ranges::sort(result);
+            return result;
+        };
+
+        // For each shape there are two statements or two rules, needing one
+        // pairing and the other: the order in which the pairings appear is
+        // determined by the node ids, and each pairing comes second for one of
+        // the two. A guard is read after the conditions, thus it cannot decide
+        // the pairing beforehand.
+        process_lines(interactive, R"(
+(Z says ((X p Y, X p W) => (X r Y))) => (Z fine Y)
+(Z says ((X p Y, X p W) => (X r k)), Y != b) => (Z ok Y)
+(Z says ((X p Y, X p W) => (X r k)), Y != c) => (Z yes Y)
+(Z says ((X p Y, X q Y) => (X r Y))) => (Z shares X)
+bob says ((a p b, a p c) => (a r c))
+gus says ((a p c, a p b) => (a r b))
+carl says ((a p b, a p c) => (a r k))
+dan says ((a p b, a q b) => (a r b))
+eve says ((a p b, c q b) => (a r b))
+fay says ((a p b, a q b) => (b r a))
+)");
+        interactive.run(true, false, false);
+        CHECK(answered("S fine O") == std::vector<std::string>{"bob fine c", "gus fine b"});
+        CHECK(answered("S ok O") == std::vector<std::string>{"carl ok c"});
+        CHECK(answered("S yes O") == std::vector<std::string>{"carl yes b"});
+        CHECK(answered("S shares O") == std::vector<std::string>{"dan shares a"}); });
+}
+
+TEST_CASE("rule patterns: a rule over rules whose condition is a rule with a comma list reads each rule with these conditions")
+{
+    // `(G => H) => (G seen H)` reads each rule; a condition that names the rule
+    // reads the rules it names, whether typed or mentioned, in the same manner
+    // as a ground rule with a single condition does via its node. The rule
+    // containing the comma list got its own set and found only itself. The
+    // statement in which a rule is typed evaluates it as a query too, and in
+    // that context keeps naming its own conditions.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("((a p b, c q d) => (alarm is on)) => (k seen yes)");
+        SUBCASE("a typed rule")
+        {
+            interactive.process("(c q d, a p b) => (alarm is on)");
+        }
+        SUBCASE("a mentioned rule")
+        {
+            interactive.process("x proposed ((c q d, a p b) => (alarm is on))");
+        }
+        interactive.process("(a p b, c r d) => (alarm is on)");
+        interactive.run(true, false, false);
+
+        collector.clear();
+        interactive.process("S seen O");
+        CHECK(collect_answers(collector) == std::vector<std::string>{"k seen yes"});
+
+        collector.clear();
+        interactive.process(".explain (k seen yes)");
+        CHECK(any_output_contains(collector, "=> (alarm is on)  [axiom]")); });
+}
+
+TEST_CASE("rule patterns: a variable bound to a rule with a comma list stands for that node")
+{
+    // Matching by the members of a set applies to a rule that the pattern
+    // holds. A variable stands for the node it is bound to, and the anchors
+    // read the candidates located at that node: two statements that each write
+    // the rule using a comma list hold two nodes, which
+    // `(bob says V, carl says V)` does not join, in either anchor mode. A rule
+    // containing a single condition corresponds to one node, and the join
+    // operation finds it.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        SUBCASE("anchors on") {}
+        SUBCASE("anchors off") { interactive.process(".anchors off"); }
+
+        process_lines(interactive, R"(
+(bob says V, carl says V) => (V agreed k)
+bob says ((a p b, c q d) => (alarm is on))
+carl says ((c q d, a p b) => (alarm is on))
+bob says ((a p b) => (alarm is off))
+carl says ((a p b) => (alarm is off))
+)");
+        interactive.run(true, false, false);
+
+        collector.clear();
+        interactive.process("S agreed O");
+        CHECK(collect_answers(collector) == std::vector<std::string>{"((a p b) => (alarm is off)) agreed k"}); });
+}
+
 TEST_CASE("rule patterns: the parts of a mention nested deeper or in a set are patterns")
 {
     // The parser generates a mention for every `=>` found within another

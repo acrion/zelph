@@ -115,10 +115,10 @@ add_executable(zelph_tests
 )
 target_link_libraries(zelph_tests PRIVATE zelph_lib doctest_with_main unordered_dense::unordered_dense)
 
-# Networks saved by an engine before template IDs, which test_recipe_ids.cpp
-# loads as a user would. They are compiled into the test binary instead of
-# being loaded from the source tree, ensuring those cases run wherever the
-# binary is executed, also where a package installs it.
+# Networks saved by prior engine versions, which the tests load as a user
+# would. They are compiled into the test binary instead of being loaded from
+# the source tree, ensuring those cases run wherever the binary is executed,
+# also where a package installs it.
 file(GLOB ZELPH_OLDER_NETWORKS CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/older_networks/*.bin)
 set(ZELPH_OLDER_NETWORKS_SOURCE ${CMAKE_CURRENT_BINARY_DIR}/older_networks.cpp)
 add_custom_command(
@@ -285,6 +285,15 @@ if (ZELPH_TARGET_IS_X86_64 AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
             zelph_add_check_test(arch_baseline_takes_undecodable_bytes_for_data "${ZELPH_ARCH_CHECK}"
                     "$<TARGET_FILE:zelph_arch_probe_code_section_data> --floor ${ZELPH_X86_BASELINE}" 0
                     "taken for data")
+
+            # Under --strict, the same bytes are read in the mode for a build
+            # that keeps data out of its code section, just as the Windows
+            # build does by placing jump tables in .rdata: an undecodable
+            # sequence there is no table entry, and the check includes it in
+            # its count.
+            zelph_add_check_test(arch_baseline_refuses_undecodable_bytes_when_strict "${ZELPH_ARCH_CHECK}"
+                    "$<TARGET_FILE:zelph_arch_probe_code_section_data> --floor ${ZELPH_X86_BASELINE} --strict" 1
+                    "EVEX encoded")
 
             # The identical bytes, read by a disassembler that has not shown
             # it knows EVEX, where (bad) could be an instruction too new for

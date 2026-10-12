@@ -58,15 +58,16 @@ its lowercase file name without extension (`binary-arithmetic` for
 `binary-arithmetic.zph`). A script whose ID is already registered is skipped,
 much like `#pragma once` in C++. Scripts can therefore declare their
 prerequisites with plain `.import` lines at the top; shared dependencies are
-never loaded twice, and import cycles terminate. `.new` clears the registry.
-Janet scripts are exempt: they are runnable programs and may be executed
-repeatedly, e.g. with different arguments.
+never loaded twice, and import cycles terminate. The command `.new` clears the
+registry, as does any load operation that replaces the current network (refer
+to the section below). Janet scripts are exempt: they are runnable programs
+and may be executed repeatedly, e.g. with different arguments.
 
 The registry is session state and is deliberately **not** part of a `.save`
 file — see [Rules Say Themselves Only Once](#rules-say-themselves-only-once)
 for why re-importing a module after `.load` is both necessary and free.
 
-A `.load` keeps the registry, whereas the network it supersedes takes along what a module stored within it – its rules and facts – and the module’s Janet component remains intact. A module brought in before a `.load` therefore continues to be regarded as imported, so attempting to import it once more is bypassed. To work with such a module in conjunction with a saved network, begin with `.new`, followed by loading the network and importing the module.
+When a load supersedes a network, it also purges the registry: the network being replaced carries with it whatever a module had stored inside it – its rules and facts – and the display registrations of its Janet code, which refer to nodes within that network. Consequently, the subsequent `.import` of that module triggers its execution once again, causing the module to re-register its keywords, display schemes, and digit alphabet; its Janet definitions are merely re-established. A module that loads a network itself maintains its own entry, since its lines after the load execute on the loaded network.
 
 ### Rules Say Themselves Only Once
 

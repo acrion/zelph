@@ -36,11 +36,13 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include "string/string_utils.hpp"
 #include "versions.hpp"
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <limits>
+#include <map>
 #include <optional>
 #include <ostream>
 #include <sstream>
@@ -354,14 +356,26 @@ namespace zelph::console
         // imported" and did nothing: the only way out was .new. What is left
         // behind now is what the lines before the error did, and the next
         // attempt runs.
+        //
+        // During the execution of the import, the default ID is listed as
+        // under way, which a load that replaces the graph reads (see
+        // load_into_session).
         struct ModuleIdClaim
         {
             ReplState&                      state;
             const std::vector<std::string>& ids;
             bool                            committed = false;
 
+            ModuleIdClaim(ReplState& s, const std::vector<std::string>& i)
+                : state(s)
+                , ids(i)
+            {
+                if (!ids.empty()) state.modules_importing.push_back(ids.front());
+            }
+
             ~ModuleIdClaim()
             {
+                if (!ids.empty()) state.modules_importing.pop_back();
                 if (committed) return;
                 for (const auto& id : ids)
                     state.imported_module_ids.erase(id);
@@ -523,13 +537,20 @@ namespace zelph::console
     }
 
 #ifndef __EMSCRIPTEN__
-    // Runs a load operation, and upon replacing the graph -- also partially,
-    // before a failure -- loses track of what the session layer retains
-    // regarding the old graph: the variables currently named by the Janet
-    // block, whose ids the loaded graph may assign to other nodes, which a
-    // later symbol might then claim, and the node that was most recently
-    // printed, to which .node and .explain revert. A dump imported without a
-    // cache extends the graph and leaves both alone.
+    // Runs a load operation, and when substituting the graph -- also
+    // partially, before a failure -- fails to maintain awareness of what the
+    // session layer preserves from the old graph: the variables currently
+    // named by the Janet block, whose ids the newly loaded graph might
+    // reassign to different nodes, which a later symbol could then claim;
+    // the compiled nets, whose constituent neurons are identified by node
+    // IDs; the node that was last printed, to which .node and .explain
+    // revert; and the import registry, whose modules had written into the
+    // vanished graph, causing the next .import to execute them again. A
+    // module currently undergoing import retains its claim: its lines
+    // following the load are integrated into the loaded graph, and the claim
+    // serves to terminate an import cycle. A dump imported instead of being
+    // read from the cache extends the graph and leaves all of this
+    // alone.
     void CommandExecutor::Impl::load_into_session(const std::function<void()>& load)
     {
         const std::uint64_t epoch      = _n->graph_epoch();
@@ -537,7 +558,12 @@ namespace zelph::console
         {
             if (_n->graph_epoch() == epoch) return;
             _script_engine->clear_scoped_variables();
+            _script_engine->discard_compiled_nets();
             string::reset_last_node();
+
+            const auto& importing = _repl_state->modules_importing;
+            std::erase_if(_repl_state->imported_module_ids, [&importing](const auto& entry)
+                          { return std::find(importing.begin(), importing.end(), entry.second) == importing.end(); });
         };
 
         try
@@ -582,6 +608,12 @@ namespace zelph::console
             // whose target is that file -- received 0 even though the file was
             // never written.
             if (_data_manager->cache_save_failed()) _repl_state->failed = true;
+
+            // A cache that failed after its header left a portion of itself in
+            // the graph, with the dump subsequently integrated into the
+            // remaining segment: the session continues with a graph that is
+            // neither the original cache nor the imported dump.
+            if (_data_manager->cache_read_incomplete()) _repl_state->failed = true;
 
             watch.stop();
             _n->diagnostic(" Time needed for loading/importing: " + watch.format(), true);

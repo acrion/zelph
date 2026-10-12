@@ -954,6 +954,45 @@ TEST_CASE("capi: a load that replaces the graph forgets the variables remembered
     fs::remove(path);
 }
 
+// The neurons in a compiled net are node ids, which a loaded graph gives to
+// other nodes or leaves unassigned: an evaluation answered with whatever
+// carried them, and a write-back operation set weights between them. A
+// handle taken before the load is refused, and no later compile can reclaim
+// its number.
+TEST_CASE("capi: a load that replaces the graph refuses the net handles taken before it")
+{
+    const auto path = fs::temp_directory_path() / "zelph_capi_load_nets.bin";
+    fs::remove(path);
+
+    Engine engine;
+    engine.member_of("i1", "In");
+    engine.member_of("o1", "Out");
+    const zelph_node layers[2] = {engine.node("In"), engine.node("Out")};
+    REQUIRE(zelph_nn_connect_layers(engine, layers[0], layers[1], 0.0, 1, nullptr) == ZELPH_OK);
+    zelph_net before = -1;
+    REQUIRE(zelph_nn_compile(engine, layers, 2, ZELPH_ACTIVATION_RELU, &before) == ZELPH_OK);
+    REQUIRE(zelph_save(engine, path.string().c_str()) == ZELPH_OK);
+    REQUIRE(zelph_load(engine, path.string().c_str()) == ZELPH_OK);
+
+    const zelph_node i1    = engine.node("i1");
+    zelph_node       top   = 0;
+    double           score = 0;
+    size_t           count = 1;
+    CHECK(zelph_nn_eval_nodes(engine, before, &i1, nullptr, 1, 1, &top, &score, &count) == ZELPH_INVALID_ARGUMENT);
+    CHECK(std::string(zelph_last_error()).find("invalid network handle") != std::string::npos);
+    CHECK(zelph_nn_write_back(engine, before) == ZELPH_INVALID_ARGUMENT);
+
+    const zelph_node again_layers[2] = {engine.node("In"), engine.node("Out")};
+    zelph_net        again           = -1;
+    REQUIRE(zelph_nn_compile(engine, again_layers, 2, ZELPH_ACTIVATION_RELU, &again) == ZELPH_OK);
+    CHECK(again != before);
+    count = 1;
+    CHECK(zelph_nn_eval_nodes(engine, again, &i1, nullptr, 1, 1, &top, &score, &count) == ZELPH_OK);
+    CHECK(top == engine.node("o1"));
+
+    fs::remove(path);
+}
+
 TEST_CASE("capi: failures come back as a status and a message, never as an exception")
 {
     Engine engine;

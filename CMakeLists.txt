@@ -119,6 +119,27 @@ if(MSVC)
         /W4 /wd4251 /wd4275 /utf-8
         $<$<CONFIG:Debug>:-D_DEBUG>
     )
+
+    # MSVC places the jump tables of a switch within the code section on x64
+    # architecture, using four-byte offsets that a disassembler sweeping the
+    # section reads as instructions. An entry with its least significant byte
+    # equal to 0x62 resembles an EVEX prefix, forcing the instruction set
+    # check to take what it cannot decode as data, and making it impossible
+    # to distinguish an entry that accidentally decodes as a valid
+    # instruction from an actual one. The /jumptablerdata flag relocates
+    # these tables to .rdata. It is set for every target defined from here
+    # on, the dependencies built with the project included, as the check
+    # examines the entire binary.
+    if(CMAKE_CXX_COMPILER_ARCHITECTURE_ID STREQUAL "x64")
+        include(CheckCXXCompilerFlag)
+        check_cxx_compiler_flag("/jumptablerdata" ZELPH_MSVC_JUMPTABLERDATA)
+        if(ZELPH_MSVC_JUMPTABLERDATA)
+            add_compile_options(/jumptablerdata)
+        else()
+            message(STATUS "This MSVC has no /jumptablerdata (Visual Studio 2022 17.7 and later have it): "
+                           "jump tables stay in the code section")
+        endif()
+    endif()
 else()
     if(EMSCRIPTEN)
         # Wasm exception handling: must be enabled at compile AND link time.

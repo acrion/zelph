@@ -325,12 +325,15 @@ impl Engine {
         Ok(nodes)
     }
 
-    /// Load a saved graph (`.bin`) or import a data dump, as the `.load`
-    /// command does. When a saved graph is loaded, it takes the place of the
-    /// engine’s graph, and the [`Engine::variable`] variables, tracked by
-    /// name, are discarded with it; a dump is incorporated into the graph.
-    /// Any [`Node`] or [`Net`] preserved through the load names whatever
-    /// carries the same id afterwards, or nothing.
+    /// Load a previously stored graph (`.bin`) or bring in a data dump, just
+    /// as the `.load` command does. Upon loading a saved graph, it takes the
+    /// place of the engine’s graph: all [`Engine::variable`] variables,
+    /// tracked by name, are discarded alongside it, and every [`Net`]
+    /// compiled before this point becomes invalid from that moment onward. A
+    /// dump is incorporated into the graph, or read from its `.bin` cache if
+    /// the graph is empty, thereby replacing the graph in the same way. Any
+    /// [`Node`] preserved through the load names whatever carries the same id
+    /// afterwards, or nothing.
     pub fn load(&self, path: impl AsRef<Path>) -> Result<()> {
         let path = path_arg(path.as_ref())?;
         check(unsafe { zelph_sys::zelph_load(self.raw, path.as_ptr()) })

@@ -61,6 +61,13 @@ namespace zelph::io
         // whether this constitutes a session failure.
         virtual bool cache_save_failed() const { return false; }
 
+        // Whether the latest invocation of load() read a portion of a .bin
+        // cache and subsequently encountered an error, so the source was
+        // imported into whatever the cache had left: load() issues a
+        // warning and returns as normal, leaving it to the caller to
+        // determine whether this constitutes a session failure.
+        virtual bool cache_read_incomplete() const { return false; }
+
         // Optional: Set logging verbosity
         virtual void set_logging(bool do_log) {}
 

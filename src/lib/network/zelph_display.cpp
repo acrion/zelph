@@ -183,8 +183,9 @@ void Zelph::set_application_display(const std::size_t scheme, const std::vector<
 // ADDITIVE across calls (unlike the replace-the-set semantics of
 // set_number_digits): modules stack (arithmetic -> symbolic-core -> eml),
 // and a later module must not clobber an earlier module's registrations.
-// Display-only session state, cleared by .new and not persisted --
-// like the digit alphabet, the graph topology is unaffected.
+// Display-only session state, cleared by .new and by a load that replaces
+// the graph, and not persisted -- like the digit alphabet, the graph
+// topology is unaffected.
 void Zelph::add_verbose_selffact_predicates(const std::vector<Node>& preds)
 {
     std::unique_lock lock(_smtx_verbose_selffact_preds);
@@ -198,4 +199,25 @@ bool Zelph::selffact_sugar_suppressed(const Node pred) const
 {
     std::shared_lock lock(_smtx_verbose_selffact_preds);
     return _verbose_selffact_preds.contains(pred);
+}
+
+// In the graph a load brings, the identifiers stored in these registrations
+// belong to other nodes or to none: a predicate that only shared an
+// identifier with a registered operator rendered according to the
+// operator's scheme, and a list of nodes that shared ids with the digits
+// rendered as a number. The module that made them re-registers them upon
+// being imported again, and a load that replaces the graph also clears the
+// import registry that would otherwise skip it.
+void Zelph::forget_display_registrations() const
+{
+    {
+        std::unique_lock lock(_smtx_display_tables);
+        _display_tables.reset();
+    }
+    {
+        std::unique_lock lock(_smtx_number_digits);
+        _number_digits.reset();
+    }
+    std::unique_lock lock(_smtx_verbose_selffact_preds);
+    _verbose_selffact_preds.clear();
 }

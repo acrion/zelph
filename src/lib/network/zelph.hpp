@@ -354,11 +354,17 @@ namespace zelph::network
         // `outgoing`, when given, is scope.right(rule) already fetched by the
         // caller -- the removal cascade has it and used to pay a second probe
         // for it here.
-        Node         parse_relation_scoped(const Network::ReadScope&                 scope,
-                                           const ankerl::unordered_dense::set<Node>& rel_types,
-                                           Node                                      rule,
-                                           const adjacency_set*                      outgoing = nullptr) const;
-        Node         count() const;
+        Node parse_relation_scoped(const Network::ReadScope&                 scope,
+                                   const ankerl::unordered_dense::set<Node>& rel_types,
+                                   Node                                      rule,
+                                   const adjacency_set*                      outgoing = nullptr) const;
+        Node count() const;
+        // Whether the graph contains precisely the initial elements a new
+        // engine starts with: the core nodes and the facts that establish
+        // the core relations, lacking any name in any language and devoid of
+        // a weight. A module that solely specifies Janet code preserves it
+        // in that state; a statement or query that names a node does not.
+        bool         holds_only_core() const;
         AllNodeView  get_all_nodes_view() const;
         LangNodeView get_lang_nodes_view(const std::string& lang) const;
         bool         try_get_fact_structures_cached(Node fact, FactStructurePtr& out) const;
@@ -657,7 +663,8 @@ namespace zelph::network
         // Script-defined, like the digit alphabet: C++ makes no assumptions
         // about which predicates are term-forming operators -- the module
         // that defines an operator declares its display. Input sugar is
-        // unaffected. Session state (cleared by .new, not persisted).
+        // unaffected. Session state (cleared by .new and by a load that
+        // replaces the graph, not persisted).
         void add_verbose_selffact_predicates(const std::vector<Node>& preds);
         bool selffact_sugar_suppressed(Node pred) const;
 
@@ -1092,30 +1099,32 @@ namespace zelph::network
         } core;
 
     protected:
-        std::string                                               _lang{"en"};
-        std::unordered_map<network::Node, std::string>            _core_names_by_node;
-        std::unordered_map<std::string, network::Node>            _core_names_by_name;
-        bool                                                      _use_parallel{true};
-        bool                                                      _use_anchors{true};
-        mutable std::atomic<bool>                                 _fs_cache_suspended{false};
-        mutable std::atomic<uint64_t>                             _fs_cache_hits{0};
-        mutable std::atomic<uint64_t>                             _fs_cache_misses{0};
-        mutable std::atomic<uint64_t>                             _fs_cache_full_clears{0};
-        mutable std::atomic<uint64_t>                             _fs_cache_stale_erased{0};
-        mutable std::atomic<uint64_t>                             _var_flag_queries{0};
-        mutable std::atomic<uint64_t>                             _var_flag_fallbacks{0};
-        mutable std::atomic<uint64_t>                             _genuine_hits{0};
-        mutable std::atomic<uint64_t>                             _genuine_walks{0};
-        mutable std::atomic<uint64_t>                             _tvars_hits{0};
-        mutable std::atomic<uint64_t>                             _tvars_walks{0};
-        mutable std::atomic<uint64_t>                             _rules_fingerprinted{0};
-        std::shared_ptr<const std::unordered_map<Node, uint32_t>> _number_digits;
-        mutable std::shared_mutex                                 _smtx_number_digits;
-        std::shared_ptr<const DisplayTables>                      _display_tables;
-        mutable std::shared_mutex                                 _smtx_display_tables;
-        std::unordered_set<Node>                                  _verbose_selffact_preds;
-        mutable std::shared_mutex                                 _smtx_verbose_selffact_preds;
-        FactCreationObserver                                      _on_fact_created;
+        std::string                                    _lang{"en"};
+        std::unordered_map<network::Node, std::string> _core_names_by_node;
+        std::unordered_map<std::string, network::Node> _core_names_by_name;
+        bool                                           _use_parallel{true};
+        bool                                           _use_anchors{true};
+        mutable std::atomic<bool>                      _fs_cache_suspended{false};
+        mutable std::atomic<uint64_t>                  _fs_cache_hits{0};
+        mutable std::atomic<uint64_t>                  _fs_cache_misses{0};
+        mutable std::atomic<uint64_t>                  _fs_cache_full_clears{0};
+        mutable std::atomic<uint64_t>                  _fs_cache_stale_erased{0};
+        mutable std::atomic<uint64_t>                  _var_flag_queries{0};
+        mutable std::atomic<uint64_t>                  _var_flag_fallbacks{0};
+        mutable std::atomic<uint64_t>                  _genuine_hits{0};
+        mutable std::atomic<uint64_t>                  _genuine_walks{0};
+        mutable std::atomic<uint64_t>                  _tvars_hits{0};
+        mutable std::atomic<uint64_t>                  _tvars_walks{0};
+        mutable std::atomic<uint64_t>                  _rules_fingerprinted{0};
+        // The display registrations are mutable since a load, which is
+        // declared as const, forgets them (forget_display_registrations).
+        mutable std::shared_ptr<const std::unordered_map<Node, uint32_t>> _number_digits;
+        mutable std::shared_mutex                                         _smtx_number_digits;
+        mutable std::shared_ptr<const DisplayTables>                      _display_tables;
+        mutable std::shared_mutex                                         _smtx_display_tables;
+        mutable std::unordered_set<Node>                                  _verbose_selffact_preds;
+        mutable std::shared_mutex                                         _smtx_verbose_selffact_preds;
+        FactCreationObserver                                              _on_fact_created;
 
         // Triggered following a load operation that replaced the graph, as
         // well as after one that halted midway. Reasoning sets it to disregard
@@ -1129,10 +1138,15 @@ namespace zelph::network
         void invalidate_relation_type_set() const;
 
     private:
-        // Following a load: once it advanced the epoch past `epoch_before`,
-        // rebuilds the indexes read from the graph and calls
-        // _on_graph_replaced.
+        // After a load: once it has progressed the epoch past
+        // `epoch_before`, rebuilds the indexes read from the graph, forgets
+        // the display registrations, and calls _on_graph_replaced.
         void adopt_loaded_graph(std::uint64_t epoch_before) const;
+
+        // Drop the scheme tables, the digit alphabet, and the
+        // verbose self-fact predicates, all of which identify nodes
+        // through their unique identifiers.
+        void forget_display_registrations() const;
 
         // The ground facts a construction brought into existence, reached
         // from `pending`: the walk underlying mark_rule_parts and

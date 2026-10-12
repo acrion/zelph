@@ -143,6 +143,9 @@ Zelph::Zelph(const io::OutputHandler& output)
     fact(core.Causes, core.IsA, {core.RelationTypeCategory});
     fact(core.Cons, core.IsA, {core.RelationTypeCategory});
     fact(core.PartOf, core.IsA, {core.RelationTypeCategory});
+
+    for (const auto& entry : _pImpl->_left)
+        _pImpl->_core_graph.push_back(entry.first);
 }
 
 Zelph::~Zelph()
@@ -1849,6 +1852,25 @@ Node Zelph::parse_relation_scoped(const Network::ReadScope&                 scop
 Node Zelph::count() const
 {
     return _pImpl->count();
+}
+
+bool Zelph::holds_only_core() const
+{
+    if (count() != _pImpl->_core_graph.size()) return false;
+    for (const Node n : _pImpl->_core_graph)
+        if (!_pImpl->exists(n)) return false;
+
+    {
+        std::shared_lock lock_node(_pImpl->_mtx_node_of_name);
+        std::shared_lock lock_name(_pImpl->_mtx_name_of_node);
+        for (const auto& [language, names] : _pImpl->_node_of_name)
+            if (!names.empty()) return false;
+        for (const auto& [language, nodes] : _pImpl->_name_of_node)
+            if (!nodes.empty()) return false;
+    }
+
+    std::shared_lock lock(_pImpl->_mtx_weights);
+    return _pImpl->_weights.empty();
 }
 
 Zelph::AllNodeView Zelph::get_all_nodes_view() const

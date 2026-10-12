@@ -204,8 +204,8 @@ zelph allows you to save the current network state to a binary file and load it 
 
 The `.load` command is general-purpose:
 
-- When the file ends with `.bin`, the saved network **replaces** the session's network (quickly). All nodes, names, rules, and clusters within the session are discarded, along with anything that references them: the entries in `.negation-records`, the input focus of `.deductions`, and the facts that `.run-delta` seeds from, ensuring the next `.run-delta` performs a full pass.
-- When the file ends with `.json` or `.json.bz2` (a Wikidata dump), the data is imported and **added** to the session's network, and the resulting network is saved as a `.bin` cache file next to the dump. As long as this cache exists, a `.load` of the dump reads the cache instead, and the cache **replaces** the session's network in the same manner as a `.bin` file does.
+- If the file ends with `.bin`, the saved network **replaces** the session’s network (in a swift manner). All nodes, names, rules, and clusters present in the session are removed, together with anything that refers to them: the entries in `.negation-records`, the input focus within `.deductions`, the facts that `.run-delta` seeds from (thus ensuring the next `.run-delta` performs a full pass), the display registrations of modules, the handles of compiled nets, and the import registry.
+- If the file ends with `.json` or `.json.bz2` (a Wikidata dump), the behaviour hinges on whether the session’s network is empty, meaning it contains only the core nodes, as occurs post-startup or after `.new`. Into an empty network, a `.bin` cache next to the dump is loaded, if available, and it **replaces** the network in the same way a `.bin` file does; without a cache, the dump is imported and the result is saved as such a cache. Into any non-empty network, the dump is imported and **added**, and no cache is read or written.
 
 ```
 zelph> john ~ man
@@ -219,7 +219,7 @@ zelph-> X ~ man
 Answer: john ~ man
 ```
 
-What remains outside the network stays: Janet definitions and registered keywords, the import registry, `.lang` and the other configurations. The `.load` command switches auto-run off, indicated by the `-` symbol in the prompt. A Janet value containing a node refers to whatever entity shares the same identifier within the loaded network, or to nothing at all. A module imported before the load is still considered imported, even though its contributions to the network have been erased; refer to [Import once](modules.md#import-once).
+What remains outside the network stays: Janet definitions and registered keywords, `.lang` and the other configurations. The `.load` command switches auto-run off, indicated by the `-` symbol in the prompt. A Janet value containing a node refers to whatever entity shares the same identifier within the loaded network, or to nothing at all. A module brought in before loading gets re-imported by the next `.import`, which also registers its display schemes and digit alphabet; see [Import once](modules.md#import-once).
 
 ## Data Cleanup Commands
 
@@ -265,7 +265,7 @@ Type `.help` inside the interactive session for a complete overview, or `.help <
 
 - `.import <script> [args...]` – Load and execute a zelph (.zph, optional) or Janet (.janet) script; falls back to the standard library
 - `.provides <id> [id2 ...]` – Claim module IDs in the import registry
-- `.load <file>` – Replace the network by a saved one (.bin), or add a Wikidata JSON dump (creates .bin cache)
+- `.load <file>` – Replace the network by a saved one (.bin), or import a Wikidata JSON dump (read from its .bin cache when the network is empty)
 - `.load-partial <file|manifest> [...]` – Load selected chunks as a read-only partial view (see `.help .load-partial`)
 - `.save <file.bin>` – Save the current network to a binary file
 - `.save-predicates <file.bin> <predicate> [...]` – Save only the facts of the given predicates (a slice; see [Publishing a Predicate Slice](publishing-slices.md))
@@ -279,7 +279,7 @@ Type `.help` inside the interactive session for a complete overview, or `.help <
 - `.name <node|id> <lang> <new_name>` – Set name in specific language
 - `.delname <node|id> [lang]` – Delete name in current language (or specified language)
 
-Assigning a node a name that another node already holds in that language **merges the two**, accompanied by a warning naming both – this is how one indicates, post hoc, that a manually created node and an imported entity are the same thing. A node *is* the hash of its constituent parts, so any structure depending on the vanished node is re-created under the identifier provided by its new components, and folds into an equal fact where the graph already holds one. Core nodes never vanish during this operation, hence two core nodes cannot be merged, and the spelling of a core node, like `~` or `in`, denotes it in every language and is never given to any other node. A variable cannot be merged with a non-variable, nor can a collection of a rule’s text be merged with any other node.
+Assigning a node a name that another node already holds in that language **merges the two**, accompanied by a warning naming both – this is how one indicates, post hoc, that a manually created node and an imported entity are the same thing. A node *is* the hash of its constituent parts, so any structure depending on the vanished node is re-created under the identifier provided by its new components, and folds into an equal fact where the graph already holds one. Core nodes never vanish during this operation, hence two core nodes cannot be merged, and the spelling of a core node, like `~` or `in`, denotes it in every language and is never given to any other node. A variable cannot be merged with a non-variable, nor can a collection of a rule’s text be merged with any other node. Two variables merge exclusively across languages, and with a warning: a variable is tied to the statement that quantifies it, so the two statements then use the same variable. Within a single language, the request is refused.
 
 ### Exploring the Network
 

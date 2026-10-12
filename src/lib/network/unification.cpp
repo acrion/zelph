@@ -73,7 +73,53 @@ static std::string u_node_str(const Zelph* z, Node n)
 
 // --- Helper Functions ---
 
+static bool unify_condition(
+    const Zelph* const                  _n,
+    Node                                rule_node,
+    Node                                graph_node,
+    Variables&                          local_bindings,
+    const Variables&                    global_bindings,
+    std::vector<std::pair<Node, Node>>& history,
+    int                                 depth,
+    ReasoningProfiler* const            _prof,
+    const StandIns* const               stand_ins,
+    std::vector<Variables>* const       forks,
+    bool                                bound);
+
+// Whether `node`, the condition associated with a `=>` fact,
+// constitutes a set of conditions instead of a single one: a
+// collection, or a set constant in which the conditions were written
+// as a single unit.
+static bool is_condition_set_node(const Zelph* const n, const Node node)
+{
+    return node != 0 && !Zelph::Impl::is_var(node) && n->is_condition_set(node);
+}
+
+static bool condition_set_below(const Zelph* const n, const Node node, std::unordered_set<Node>& seen)
+{
+    if (!Zelph::Impl::is_hash(node) || Zelph::Impl::is_var(node) || !seen.insert(node).second) return false;
+    const auto structures = get_fact_structures(n, node, 1); // held: the cache might not be
+    for (const auto& fs : *structures)
+    {
+        if (fs.predicate == n->core.Causes && is_condition_set_node(n, fs.subject)) return true;
+        if (condition_set_below(n, fs.subject, seen) || condition_set_below(n, fs.predicate, seen)) return true;
+        for (const Node o : fs.objects)
+            if (condition_set_below(n, o, seen)) return true;
+    }
+    return false;
+}
+
+bool zelph::network::holds_condition_set(const Zelph* const n, const Node node)
+{
+    std::unordered_set<Node> seen;
+    return condition_set_below(n, node, seen);
+}
+
 // Recursive Unification Algorithm with Cycle Detection
+//
+// `forks` gathers the alternative pairings of a set of conditions
+// (unify_condition); `bound` holds true when `rule_node` represents the value a
+// variable is bound to, rather than a node within the pattern.
 static bool unify_nodes(
     const Zelph* const                  _n,
     Node                                rule_node,
@@ -83,7 +129,9 @@ static bool unify_nodes(
     std::vector<std::pair<Node, Node>>& history,
     int                                 depth,
     ReasoningProfiler* const            _prof,
-    const StandIns* const               stand_ins)
+    const StandIns* const               stand_ins,
+    std::vector<Variables>* const       forks,
+    const bool                          bound)
 {
     if (_prof && _n->logging_active())
     {
@@ -145,7 +193,7 @@ static bool unify_nodes(
                     PROF(unify_var_local_recurse.fetch_add(1, std::memory_order_relaxed));
                     U_LOG(depth, "  Var local bound -> recursing");
                 }
-                result = unify_nodes(_n, local_bindings[rule_node], graph_node, local_bindings, global_bindings, history, depth + 1, _prof, stand_ins);
+                result = unify_nodes(_n, local_bindings[rule_node], graph_node, local_bindings, global_bindings, history, depth + 1, _prof, stand_ins, forks, true);
                 break;
             }
             if (global_bindings.count(rule_node))
@@ -153,15 +201,15 @@ static bool unify_nodes(
                 if (_n->logging_active())
                     PROF(unify_var_global_recurse.fetch_add(1, std::memory_order_relaxed));
 
-                Node bound = zelph::string::get(global_bindings, rule_node, Node{0});
-                if (bound == graph_node)
+                Node value = zelph::string::get(global_bindings, rule_node, Node{0});
+                if (value == graph_node)
                 {
                     U_LOG(depth, "  -> Var global bound, identical to graph node");
                     result = true;
                     break;
                 }
-                U_LOG(depth, "  Var global bound to " + U_NODE(bound) + " (id=" + std::to_string(bound) + ") -> recursing with graph_node " + U_NODE(graph_node) + " (id=" + std::to_string(graph_node) + ")");
-                result = unify_nodes(_n, bound, graph_node, local_bindings, global_bindings, history, depth + 1, _prof, stand_ins);
+                U_LOG(depth, "  Var global bound to " + U_NODE(value) + " (id=" + std::to_string(value) + ") -> recursing with graph_node " + U_NODE(graph_node) + " (id=" + std::to_string(graph_node) + ")");
+                result = unify_nodes(_n, value, graph_node, local_bindings, global_bindings, history, depth + 1, _prof, stand_ins, forks, true);
                 if (_n->should_log(depth) && !result)
                 {
                     u_log(_n, depth, "  DIAGNOSTIC DUMP: rule_node=" + std::to_string(rule_node) + " global_bindings has " + std::to_string(global_bindings.size()) + " entries:");
@@ -222,10 +270,12 @@ static bool unify_nodes(
                 Variables attempt = local_bindings;
 
                 // A. Predicate
-                if (!unify_nodes(_n, rs.predicate, gs.predicate, attempt, global_bindings, history, depth + 1, _prof, stand_ins)) continue;
+                if (!unify_nodes(_n, rs.predicate, gs.predicate, attempt, global_bindings, history, depth + 1, _prof, stand_ins, forks, bound)) continue;
 
-                // B. Subject
-                if (!unify_nodes(_n, rs.subject, gs.subject, attempt, global_bindings, history, depth + 1, _prof, stand_ins)) continue;
+                // B. Subject, which serves as a condition where the fact is a rule
+                if (gs.predicate == _n->core.Causes
+                        ? !unify_condition(_n, rs.subject, gs.subject, attempt, global_bindings, history, depth + 1, _prof, stand_ins, forks, bound)
+                        : !unify_nodes(_n, rs.subject, gs.subject, attempt, global_bindings, history, depth + 1, _prof, stand_ins, forks, bound)) continue;
 
                 // C. Objects
                 if (rs.objects.empty() != gs.objects.empty()) continue;
@@ -243,7 +293,7 @@ static bool unify_nodes(
                     for (Node g_obj : gs.objects)
                     {
                         Variables try_obj = obj_bindings; // allow backtracking per object choice
-                        if (unify_nodes(_n, r_obj, g_obj, try_obj, global_bindings, history, depth + 1, _prof, stand_ins))
+                        if (unify_nodes(_n, r_obj, g_obj, try_obj, global_bindings, history, depth + 1, _prof, stand_ins, forks, bound))
                         {
                             obj_bindings = std::move(try_obj);
                             found        = true;
@@ -276,6 +326,73 @@ static bool unify_nodes(
 
     history.pop_back();
     return result;
+}
+
+// The condition of a rule that the pattern holds as an argument, against the
+// condition of a rule within the graph. A comma list of conditions constitutes
+// a set, and each statement that writes a rule builds a distinct set: the rule
+// in `(P proposed ((a p b, c q d) => (alarm is on)))` and the one proposed by a
+// statement are separate nodes, and compared by identity, as unify_nodes
+// compares atoms, they never matched. Two sets are compared based on their
+// members, with each member of the pattern paired with a distinct member of the
+// graph.
+//
+// Several pairings may fit, `(X p Y, X p Z)` against `(a p b, a p c)`, and the
+// rest of the pattern could apply solely to one of these. The first is taken,
+// while every other one is handed to `forks` as the bindings it reaches,
+// enabling `extract_bindings` to resume from that point. A value a variable is
+// bound to represents itself (`bound`), just as in all other contexts: the
+// anchors take it as that node.
+static bool unify_condition(
+    const Zelph* const                  _n,
+    Node                                rule_node,
+    Node                                graph_node,
+    Variables&                          local_bindings,
+    const Variables&                    global_bindings,
+    std::vector<std::pair<Node, Node>>& history,
+    int                                 depth,
+    ReasoningProfiler* const            _prof,
+    const StandIns* const               stand_ins,
+    std::vector<Variables>* const       forks,
+    const bool                          bound)
+{
+    adjacency_set rule_members;
+    adjacency_set graph_members;
+    if (bound || rule_node == graph_node || Zelph::Impl::is_var(rule_node) || Zelph::Impl::is_var(graph_node)
+        || !_n->condition_set_members(rule_node, rule_members) || !_n->condition_set_members(graph_node, graph_members))
+        return unify_nodes(_n, rule_node, graph_node, local_bindings, global_bindings, history, depth, _prof, stand_ins, forks, bound);
+
+    U_LOG(depth, "Comparing the conditions " + U_NODE(rule_node) + " vs " + U_NODE(graph_node) + " by their members");
+    if (rule_members.size() != graph_members.size()) return false;
+
+    const std::vector<Node> pattern(rule_members.begin(), rule_members.end());
+    const std::vector<Node> graph(graph_members.begin(), graph_members.end());
+    std::vector<bool>       used(graph.size(), false);
+    std::vector<Variables>  pairings;
+
+    const auto pair = [&](const auto& self, const std::size_t i, const Variables& bindings) -> void
+    {
+        if (i == pattern.size())
+        {
+            if (std::find(pairings.begin(), pairings.end(), bindings) == pairings.end()) pairings.push_back(bindings);
+            return;
+        }
+        for (std::size_t g = 0; g < graph.size(); ++g)
+        {
+            if (used[g]) continue;
+            Variables attempt = bindings;
+            if (!unify_nodes(_n, pattern[i], graph[g], attempt, global_bindings, history, depth + 1, _prof, stand_ins, forks, false)) continue;
+            used[g] = true;
+            self(self, i + 1, attempt);
+            used[g] = false;
+        }
+    };
+    pair(pair, 0, local_bindings);
+
+    if (pairings.empty()) return false;
+    if (forks != nullptr) forks->insert(forks->end(), std::next(pairings.begin()), pairings.end());
+    local_bindings = std::move(pairings.front());
+    return true;
 }
 
 // --- Bound-pattern grounding -------------------------------------------------
@@ -340,6 +457,15 @@ static GroundResult ground_pattern(Zelph* n, Node pattern, const Variables& vars
     history.push_back(pattern);
 
     FactStructure fs = get_preferred_structure(n, pattern, depth);
+
+    // A rule whose conditions form a set denotes every rule possessing these
+    // members (unify_condition), not one individual node.
+    if (fs.predicate == n->core.Causes && is_condition_set_node(n, fs.subject))
+    {
+        history.pop_back();
+        return GroundResult::Unbound;
+    }
+
     if (fs.predicate == 0)
     {
         history.pop_back();
@@ -488,7 +614,7 @@ static void collect_partial_anchors(
 
     if (!n->var_in_closure(pattern))
     {
-        if (pattern != parent_rule)
+        if (pattern != parent_rule && !holds_condition_set(n, pattern))
             out.push_back({pattern, chain}); // fully concrete subterm
         return;
     }
@@ -509,7 +635,10 @@ static void collect_partial_anchors(
         const Node p = Zelph::Impl::is_var(fs.predicate) || n->var_in_closure(fs.predicate) ? Node{0} : fs.predicate;
 
         chain.insert(chain.begin(), p);
-        collect_partial_anchors(n, fs.subject, parent_rule, vars, chain, visited, depth_left - 1, log_depth, out, stand_ins);
+        // The conditions of a rule held here, when they form a set, match other
+        // sets than this one (unify_condition).
+        if (fs.predicate != n->core.Causes || !is_condition_set_node(n, fs.subject))
+            collect_partial_anchors(n, fs.subject, parent_rule, vars, chain, visited, depth_left - 1, log_depth, out, stand_ins);
         for (Node o : fs.objects)
             collect_partial_anchors(n, o, parent_rule, vars, chain, visited, depth_left - 1, log_depth, out, stand_ins);
         chain.erase(chain.begin());
@@ -687,6 +816,13 @@ Unification::Unification(
 
         if (_n->logging_active() && !Zelph::Impl::is_var(relation))
             _current_rel_ctx = relation;
+
+        // A rule that functions as a condition, where its own conditions form a
+        // set -- `((a p b, c q d) => (alarm is on))` within a rule over rules
+        // -- matches rules sharing identical members (unify_condition). This
+        // does not hold for a rule in force, which the statement that writes it
+        // also evaluates as a query: its own conditions are those it names.
+        _conditions_by_members = relation == _n->core.Causes && is_condition_set_node(_n, _subject) && _n->is_mentioned(pattern.condition);
 
         U_LOG(_log_depth, "Init Unification: " + U_NODE(pattern.condition));
 
@@ -1136,7 +1272,13 @@ bool Unification::yields_nothing(const Node fact) const
 {
     if (_n->is_rule_pattern(fact) || _n->is_refuted_fact(fact)) return true;
     if (!_n->var_in_closure(fact, _candidates)) return false;
-    for (const auto& fs : *get_fact_structures(_n, fact, _log_depth))
+    // The pointer is held for the whole loop: a range-for iteration over
+    // the dereferenced temporary establishes a reference solely to the list,
+    // the temporary pointer is destroyed before the first iteration, and the
+    // list is destroyed alongside it whenever the cache does not also hold
+    // it.
+    const auto structures = get_fact_structures(_n, fact, _log_depth);
+    for (const auto& fs : *structures)
     {
         if (fs.predicate != *_relation_index) continue;
         if (is_rule_text(_n, fact, fs, _candidates)) continue;
@@ -1255,7 +1397,14 @@ bool Unification::increment_fact_index()
                 // Template fact nodes that still end up in the candidate
                 // snapshot are rejected later by extract_bindings via
                 // contains_variable_shallow, exactly as in the full-scan path.
-                auto is_concrete_lookup_node = [&](Node nd) -> bool
+                //
+                // A node within the pattern that holds the conditions of a rule
+                // as a set matches the rules with the same members, not merely
+                // itself (unify_condition), and does not serve as an anchor; a
+                // bound value stands for the node it is. `own`: the node
+                // belongs to the pattern, `by_members`: it is a set of
+                // conditions that is matched by its members.
+                auto is_concrete_lookup_node = [&](Node nd, const bool own, const bool by_members) -> bool
                 {
                     if (nd == 0 || matches_any(nd)) return false;
 
@@ -1271,6 +1420,9 @@ bool Unification::increment_fact_index()
                             u_log(_n, _log_depth, "is_concrete_lookup_node: REJECT (template) " + U_NODE(nd));
                         return false;
                     }
+
+                    if (own && (by_members || holds_condition_set(_n, nd)))
+                        return false;
 
                     return true;
                 };
@@ -1300,7 +1452,7 @@ bool Unification::increment_fact_index()
                 Node s = _subject;
                 if (Zelph::Impl::is_var(s)) s = string::get(*_variables, s, s);
                 if (_subject_grounded != 0) s = _subject_grounded; // anchor on the grounded pattern node
-                if (is_concrete_lookup_node(s))
+                if (is_concrete_lookup_node(s, s == _subject, _conditions_by_members))
                 {
                     // Strategy: Subject Driven
                     // One lock scope filters the anchor's adjacency straight
@@ -1320,7 +1472,7 @@ bool Unification::increment_fact_index()
                     Node o = *_objects.begin();
                     if (Zelph::Impl::is_var(o)) o = string::get(*_variables, o, o);
 
-                    if (is_concrete_lookup_node(o))
+                    if (is_concrete_lookup_node(o, o == *_objects.begin(), false))
                     {
                         // Strategy: Object Driven
                         // One lock scope filters the anchor's adjacency straight
@@ -1582,6 +1734,7 @@ std::vector<std::shared_ptr<Variables>> Unification::extract_bindings(
 
     Variables                          base_result;
     std::vector<std::pair<Node, Node>> history;
+    std::vector<Variables>             forks; // see unify_condition
 
     // A predicate variable is bound to the candidate's relation before any
     // other unification, ensuring that every further occurrence -- R in
@@ -1604,34 +1757,49 @@ std::vector<std::shared_ptr<Variables>> Unification::extract_bindings(
     }
 
     // --- Subject unification ---
-    if (!unify_nodes(_n, _subject, subject, base_result, *_variables, history, _log_depth, _prof, _stand_ins))
+    // A rule serving as a condition may match by its members (see the
+    // constructor).
+    const auto unify_subject = [&](Variables& bindings)
+    {
+        history.clear();
+        return _conditions_by_members
+                 ? unify_condition(_n, _subject, subject, bindings, *_variables, history, _log_depth, _prof, _stand_ins, &forks, false)
+                 : unify_nodes(_n, _subject, subject, bindings, *_variables, history, _log_depth, _prof, _stand_ins, &forks, false);
+    };
+    bool matched = unify_subject(base_result);
+    if (!matched)
     {
         if (_n->logging_active())
         {
             U_LOG(depth, "  -> Subject Failed");
             PROF(extract_fail_subject.fetch_add(1, std::memory_order_relaxed));
         }
-        return results;
+        if (forks.empty()) return results;
     }
 
     // --- Predicate unification ---
     // Only for a composite predicate carrying a variable; a fixed one is
     // already the relation this candidate was reached through, and a
     // predicate VARIABLE was previously bound above, before the subject.
+    const auto unify_predicate = [&](Variables& bindings)
+    {
+        history.clear();
+        return _relation_pattern == 0 || unify_nodes(_n, _relation_pattern, relation, bindings, *_variables, history, _log_depth, _prof, _stand_ins, &forks, false);
+    };
     if (_relation_pattern != 0)
     {
         if (Zelph::Impl::is_var(relation) || _n->var_in_closure(relation, _candidates))
             return results; // the candidate's predicate is itself a template
 
-        history.clear();
-        if (!unify_nodes(_n, _relation_pattern, relation, base_result, *_variables, history, _log_depth, _prof, _stand_ins))
+        if (matched && !unify_predicate(base_result))
         {
             if (_n->logging_active())
             {
                 U_LOG(depth, "  -> Predicate pattern failed");
                 PROF(extract_fail_subject.fetch_add(1, std::memory_order_relaxed));
             }
-            return results;
+            if (forks.empty()) return results;
+            matched = false;
         }
     }
 
@@ -1726,7 +1894,7 @@ std::vector<std::shared_ptr<Variables>> Unification::extract_bindings(
 
             Variables try_b = bindings;
             history.clear();
-            if (unify_nodes(_n, rule_obj_vec[idx], fact_obj_vec[fi], try_b, *_variables, history, _log_depth, _prof, _stand_ins))
+            if (unify_nodes(_n, rule_obj_vec[idx], fact_obj_vec[fi], try_b, *_variables, history, _log_depth, _prof, _stand_ins, &forks, false))
             {
                 used[fi] = true;
                 enumerate(idx + 1, std::move(try_b));
@@ -1735,15 +1903,35 @@ std::vector<std::shared_ptr<Variables>> Unification::extract_bindings(
         }
     };
 
-    enumerate(0, base_result);
-
-    if (results.empty() && _n->logging_active())
+    if (matched)
     {
-        PROF(extract_fail_object.fetch_add(1, std::memory_order_relaxed));
-        U_LOG(depth, "extract_bindings FAIL: no object permutation matched");
+        enumerate(0, base_result);
+
+        if (results.empty() && _n->logging_active())
+        {
+            PROF(extract_fail_object.fetch_add(1, std::memory_order_relaxed));
+            U_LOG(depth, "extract_bindings FAIL: no object permutation matched");
+        }
     }
 
-    return results;
+    // The remaining pairings that a set of conditions offered (unify_condition)
+    // are resumed from the bindings they attained, the rest of this candidate
+    // is matched under them, and a pairing met in turn is added. Each
+    // constitutes a distinct set of bindings, and their number is finite.
+    if (forks.empty()) return results;
+    for (std::size_t f = 0; f < forks.size(); ++f)
+    {
+        if (std::find(forks.begin(), forks.begin() + static_cast<std::ptrdiff_t>(f), forks[f]) != forks.begin() + static_cast<std::ptrdiff_t>(f)) continue;
+        Variables resumed = forks[f];
+        if (unify_subject(resumed) && unify_predicate(resumed)) enumerate(0, std::move(resumed));
+    }
+
+    std::vector<std::shared_ptr<Variables>> distinct;
+    for (auto& r : results)
+        if (std::none_of(distinct.begin(), distinct.end(), [&](const auto& d)
+                         { return *d == *r; }))
+            distinct.push_back(std::move(r));
+    return distinct;
 }
 
 std::shared_ptr<Variables> Unification::Unequals()

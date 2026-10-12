@@ -407,6 +407,28 @@ alarm is on  [rule pattern; not asserted]
 
 When the user types the identical `(rust is bad) seen (alarm is on)`, it writes both parts and claims them.
 
+A rule over rules may additionally specify the rule it seeks. A rule held as an argument within a condition matches every rule sharing identical conditions and the same consequence, regardless of which statement wrote it. A comma list of conditions is compared as a set, irrespective of sequence, and a rule that differs in any single condition, in the number of its conditions, or in its consequence constitutes a distinct rule:
+
+```
+zelph> (P proposed ((a p b, c q d) => (alarm is on))) => (P flagged k)
+zelph> x proposed ((c q d, a p b) => (alarm is on))
+(x flagged k) ⇐ (x proposed (((c q d), (a p b)) => (alarm is on)))
+zelph> y proposed ((a p b, c r d) => (alarm is on))
+zelph> S flagged O
+Answer: x flagged k
+```
+
+A variable of the outer rule inside the held rule binds the corresponding part of the stored rule, and when conditions can pair up in multiple ways, every possible pairing is tried. What the held rule matches is a rule lacking variables of its own. A rule that a statement mentions with variables constitutes rule text, which no condition can match (refer to [Relation Nodes and Self-Reference](#relation-nodes-and-self-reference)), and attempting to locate it via naming in the outer rule also fails to retrieve it:
+
+```
+zelph> bob says ((X p Y) => (X r Y))
+zelph> (Z says ((X p Y) => (X r Y))) => (Z ok k)
+zelph> S ok O
+zelph>
+```
+
+Matching such a mention up to a renaming of its variables remains an [open direction](about.md#where-the-logic-goes-next). A variable in the outer rule that binds an entire rule refers to that node, just as it does for any other value: two statements that each write `(a p b, c q d) => (alarm is on)` hold two distinct rules, which `(bob says V, carl says V)` does not join, whereas two mentions of a ground rule with a single condition constitute one node.
+
 A mentioned rule features the same slots as any other rule: a condition operator must reside at the top of one of its conditions, just as in a typed rule, and is disallowed elsewhere, particularly within the consequence. What follows beneath the operator, as written in the mention, constitutes a pattern, as the other components of the rule do, whether in a statement or in a query:
 
 ```
@@ -435,6 +457,17 @@ zelph> S about O
 zelph> S near O
 zelph>
 ```
+
+A mentioned rule that features a single condition has a distinct structure: its condition takes the form of a fact instead of a set, and a firing substitutes within it just as it does in any other part of the consequence. A variable appearing exclusively within the mentioned rule is therefore a fresh variable relative to the outer rule, and the firing makes a witness for it. What it writes is a rule concerning the witnesses, not a rule involving variables:
+
+```
+zelph> (A p B) => (y about ((X p Y) => (X r Y)))
+zelph> a p b
+zelph+> S about O
+Answer: y about ((?? p ??) => (?? r ??))
+```
+
+Writing a mention that incorporates its own variables constitutes an [open direction](about.md#where-the-logic-goes-next) as well.
 
 The distinction is decidable from the graph alone, and cheaply.
 Building a rule in order to talk about it creates the same nodes and the same edges as asserting it, so the rule node itself cannot say which happened — but its surroundings can: an **asserted** rule is a part of nothing, while a **mentioned** one is the subject, the predicate or an object of the statement that mentions it.

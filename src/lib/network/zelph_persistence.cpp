@@ -1005,6 +1005,54 @@ void Zelph::Impl::saveToFile(const std::string& filename, const ankerl::unordere
 
     const bool filtering = keep != nullptr;
 
+    // A label whose name → node entry names a node the filter drops, while
+    // the filter keeps other nodes carrying it, is written with the kept
+    // carrier that label_precedes ranks first -- the one a prune of the
+    // dropped node elects (release_label_locked). Absent this, the file
+    // held carriers but no node the label resolves to, and the load elected
+    // one: the loaded network was not the one written. Per language: label
+    // → that carrier.
+    using handed_on_map = ankerl::unordered_dense::map<std::string_view, Node>;
+    std::unordered_map<std::string, handed_on_map> handedOn;
+    if (filtering)
+    {
+        std::shared_lock lock_node(_mtx_node_of_name);
+        std::shared_lock lock_name(_mtx_name_of_node);
+
+        for (const auto& [lang, fwd] : _name_of_node)
+        {
+            const auto rev_outer_it = _node_of_name.find(lang);
+            if (rev_outer_it == _node_of_name.end()) continue;
+
+            for (const auto& [node, label] : fwd)
+            {
+                if (!kept(node) || !may_carry_label(node)) continue;
+                const auto rev_it = rev_outer_it->second.find(label);
+                if (rev_it == rev_outer_it->second.end() || kept(rev_it->second)) continue;
+
+                const auto [it, inserted] = handedOn[lang].try_emplace(label, node);
+                if (!inserted && label_precedes_locked(node, it->second)) it->second = node;
+            }
+        }
+    }
+
+    const auto handed_on_in = [&handedOn](const std::string& lang) -> const handed_on_map*
+    {
+        const auto it = handedOn.find(lang);
+        return it == handedOn.end() ? nullptr : &it->second;
+    };
+
+    // The node a name → node entry is written with: its own if kept,
+    // otherwise the carrier to which its label is handed on, otherwise
+    // none (0).
+    const auto holder_written = [&kept](const handed_on_map* const handed, const std::string_view label, const Node holder) -> Node
+    {
+        if (kept(holder)) return holder;
+        if (handed == nullptr) return 0;
+        const auto it = handed->find(label);
+        return it == handed->end() ? 0 : it->second;
+    };
+
     // Per-language entry counts under the filter; needed twice (chunk
     // counts in the header, chunk sizes below), so computed once.
     std::unordered_map<std::string, size_t> nameOfNodeKept;
@@ -1027,10 +1075,11 @@ void Zelph::Impl::saveToFile(const std::string& filename, const ankerl::unordere
         size_t mapSize = langMap.second.size();
         if (filtering)
         {
-            mapSize = 0;
+            mapSize                           = 0;
+            const handed_on_map* const handed = handed_on_in(langMap.first);
             for (const auto& entry : langMap.second)
             {
-                if (kept(entry.second)) ++mapSize;
+                if (holder_written(handed, entry.first, entry.second) != 0) ++mapSize;
             }
         }
         nodeOfNameKept[langMap.first] = mapSize;
@@ -1164,9 +1213,10 @@ void Zelph::Impl::saveToFile(const std::string& filename, const ankerl::unordere
         const auto&                                    map  = langMap.second;
         std::vector<std::pair<std::string_view, Node>> sorted;
         sorted.reserve(nodeOfNameKept[lang]);
+        const handed_on_map* const handed = handed_on_in(lang);
         for (const auto& entry : map)
         {
-            if (kept(entry.second)) sorted.emplace_back(entry.first, entry.second);
+            if (const Node holder = holder_written(handed, entry.first, entry.second); holder != 0) sorted.emplace_back(entry.first, holder);
         }
         std::sort(sorted.begin(), sorted.end(), [](const auto& a, const auto& b)
                   { return a.first < b.first; });

@@ -1177,6 +1177,40 @@ TEST_CASE("neural: a load that replaces the graph says it again")
     std::filesystem::remove(file);
 }
 
+TEST_CASE("neural: a load that replaces the graph refuses the handles compiled before it")
+{
+    // The node ids in a compiled net represent its neurons. In the graph a
+    // load brings, those ids name other nodes or none, so an evaluation
+    // answered with whatever carried them, and a write-back set weights
+    // between them. A handle requested before the load is refused, even if
+    // the loaded graph is the one the net was compiled from, and a net
+    // compiled after the load gets a handle distinct from the original.
+    const auto file = std::filesystem::temp_directory_path() / "zelph_nn_handles.bin";
+    run_both_modes([&file](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+x1 in Lin
+y1 in Lout
+%(zelph/nn-connect "x1" "y1" 0.5)
+%(def net (zelph/nn-compile [(zelph/resolve "Lin") (zelph/resolve "Lout")]))
+)");
+        interactive.process(".save \"" + file.string() + "\"");
+        interactive.process(".load \"" + file.string() + "\"");
+
+        CHECK_THROWS_WITH_AS(interactive.process("%(zelph/nn-eval net [1])"),
+                             doctest::Contains("zelph/nn-eval: invalid network handle"),
+                             std::runtime_error);
+        CHECK_THROWS_WITH_AS(interactive.process("%(zelph/nn-write-back net)"),
+                             doctest::Contains("zelph/nn-write-back: invalid network handle"),
+                             std::runtime_error);
+
+        interactive.process(R"(%(def again (zelph/nn-compile [(zelph/resolve "Lin") (zelph/resolve "Lout")])))");
+        collector.clear();
+        interactive.process(R"(%(string "distinct=" (not= net again) " eval=" (get (zelph/nn-eval again [1]) 0)))");
+        CHECK(any_output_contains(collector, "distinct=true eval=0.5")); });
+    std::filesystem::remove(file);
+}
+
 TEST_CASE("neural: a malformed net definition is named as such, not as a missing one")
 {
     // Telling a user who wrote `net nn-layers something` that there is no

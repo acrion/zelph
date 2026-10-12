@@ -212,13 +212,15 @@ To import a Wikidata JSON dump or a zelph bin file, use the `.load` command:
 .load download/wikidata-20250127-all.json.bz2
 ```
 
-or directly the resuling bin file:
+or directly the resulting bin file:
 
 ```zelph
 .load download/wikidata-20250127-all.bin
 ```
 
-When a dump is imported, the session’s current network gains the data, combining any entity encountered twice through its Wikidata ID, and subsequently stores the whole network as a `.bin` cache. A `.bin` file, including the cache, supersedes the session’s network: after the cache is present, loading the dump via `.load` retrieves it, and the network becomes the one preserved in the cache.
+Upon importing a dump, the session’s current network incorporates the data, combining any entity that appears more than once via its Wikidata ID. Whether a `.bin` cache is involved hinges on whether the network is devoid of content beyond the core nodes, which is the state following startup or a `.new` command; a module that solely specifies Janet code, such as the SPARQL layer, maintains this emptiness. If the import starts with an empty network, the outcome is saved as a `.bin` cache next to the dump, and a later `.load` of the dump into an empty network reads this cache rather than reprocessing the dump – the cache replaces the network exactly as any `.bin` file does. In a network that is not empty, the dump is invariably imported and added, and no cache is accessed or updated, ensuring the cache consistently contains the dump alone.
+
+A cache that terminates prematurely following its header – due to a full disk, a halted transfer – leaves behind a fragment within the network, and the dump subsequently gets imported into that residual segment. zelph prints a cautionary message, and the session is marked as unsuccessful. To restore a clean network state, execute `.new`, delete the cache file, and load the dump once more.
 
 You can download various zelph `.bin` files directly from [Hugging Face](https://huggingface.co/datasets/acrion/zelph).
 
@@ -247,6 +249,8 @@ Answer: "Q709369 - man" "P31 - instance of" "Q7397 - software"
 ```
 
 The term "man" resolved to Q8441, which lacks any "instance of" statement; after the prune removed Q8441, the resolution shifts to Q709369.
+
+A slice adheres to the identical sequence. Upon `.save-predicates` leaving behind the entity a label resolves to while preserving other entities that carry the label, the file records the first one among them, ensuring the label resolves within the slice precisely as it would following a prune. A file that records no entity for such a label – a slice or a pruned network written by an older engine – gets the first carrier assigned upon loading, and the load outputs a message indicating how many labels received this assignment; `.save` subsequently stores these assignments.
 
 The import writes a node titled `wikidata:labels-v2` within the `zelph` language to indicate how its labels were allocated. `.cleanup` retains this node even though no references point to it, and `.save-predicates` takes it into the slice. A network lacking this node was imported by an older version of zelph: in that case, a shared label is assigned to whichever entity the import processed last, leaving the other entities with that label without an English name, and an entity whose sole label resides under `mul` possesses no English name either.
 

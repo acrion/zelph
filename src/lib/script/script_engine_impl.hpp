@@ -239,8 +239,11 @@ namespace zelph
         };
 
         // Compiled neural networks (session-scoped caches, discarded on .new).
-        // Handles handed to Janet are indexes into this vector.
-        std::vector<std::unique_ptr<network::NeuralNet>> _neural_nets;
+        // The handles handed to Janet serve as indices within this vector.
+        // When a load overwrites the graph, all entries are cleared while
+        // preserving the slots, ensuring that a handle acquired before the
+        // replacement never refers to a network compiled afterwards.
+        std::vector<std::shared_ptr<network::NeuralNet>> _neural_nets;
 
         // Track variables used in the current scope/statement
         std::map<std::string, network::Node> _scoped_variables;
@@ -353,7 +356,7 @@ namespace zelph
 
         // --- Implemented in janet_api_neural.cpp ---
 
-        network::NeuralNet*                                  get_net(int32_t handle);
+        std::shared_ptr<network::NeuralNet>                  get_net(int32_t handle);
         static std::vector<double>                           janet_number_vector(Janet v, const char* what);
         static Janet                                         janet_cfun_zelph_nn_connect(int32_t argc, Janet* argv);
         static Janet                                         janet_cfun_zelph_weight(int32_t argc, Janet* argv);

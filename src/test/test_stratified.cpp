@@ -1011,6 +1011,29 @@ e p f
         CHECK(any_output_contains(collector, "No rule has a negated condition")); });
 }
 
+// The identical spelling as a condition within a comma list: the held rule
+// matches the one mentioned and the one a rule writes by their members, with
+// the written-out operator being the member that `¬` builds. Every statement
+// builds its own set, thus the rules over rules matched neither.
+TEST_CASE("negation: the written-out operator in a held rule with a comma list matches a mention with the operator")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+z about ((¬(a q b), e f g) => (c r d))
+(Z about ((((a q b) ~ negation), e f g) => (c r d))) => (Z ok k)
+(A p B) => (x about ((e f g, ((a q b) ~ negation)) => (c r d)))
+e p f
+)");
+        interactive.run(true, false, false);
+
+        collector.clear();
+        interactive.process("S ok O");
+        auto answers = collect_answers(collector);
+        std::sort(answers.begin(), answers.end());
+        CHECK(answers == std::vector<std::string>{"x ok k", "z ok k"}); });
+}
+
 TEST_CASE("negation: a pattern is looked up, not asserted, when a command resolves it")
 {
     run_both_modes([](auto& collector, auto& interactive)

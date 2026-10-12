@@ -1889,10 +1889,11 @@ size_t Zelph::save_predicate_slice(const std::string& filename, const std::vecto
 
 // A load that advanced the epoch has discarded the graph, even if it
 // encountered failure following the file's header: the indexes read from the
-// graph are reconstructed using the data the load left, and the derived engine
-// loses memory of what it had retained regarding the old graph
-// (_on_graph_replaced). A load that encountered failure before interacting
-// with the graph introduces no alterations in this context.
+// graph are reconstructed using the data the load left, the display
+// registrations are forgotten, and the derived engine loses memory of what it
+// had retained regarding the old graph (_on_graph_replaced). A load that
+// encountered failure before interacting with the graph introduces no
+// alterations in this context.
 void Zelph::adopt_loaded_graph(const std::uint64_t epoch_before) const
 {
     if (graph_epoch() == epoch_before) return;
@@ -1901,6 +1902,7 @@ void Zelph::adopt_loaded_graph(const std::uint64_t epoch_before) const
     rebuild_rule_pattern_index();
     rebuild_refuted_index();
     note_rule_text_changed();
+    forget_display_registrations();
     if (_on_graph_replaced) _on_graph_replaced();
 }
 
