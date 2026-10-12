@@ -134,3 +134,13 @@ std::vector<std::filesystem::path> zelph::platform::get_standard_library_paths()
 
     return paths;
 }
+
+std::filesystem::path zelph::platform::path_from_utf8(const std::string& utf8)
+{
+    return std::filesystem::path(std::u8string(utf8.begin(), utf8.end()));
+}
+
+std::string zelph::platform::to_utf8(const std::u8string& text)
+{
+    return std::string(text.begin(), text.end());
+}

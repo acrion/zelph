@@ -28,6 +28,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
+#include <string>
 #include <vector>
 
 namespace zelph::platform
@@ -47,4 +48,14 @@ namespace zelph::platform
     //   4. /usr/local/share/zelph and /usr/share/zelph (non-Windows fallbacks)
     // Existence is NOT checked here; callers probe the entries in order.
     std::vector<std::filesystem::path> get_standard_library_paths();
+
+    // A path made from a UTF-8 string, and the path's text represented in
+    // UTF-8. Names in zelph are encoded in UTF-8, and on Linux and macOS a
+    // narrow string is directly accepted by the file system; on Windows a
+    // std::filesystem::path built from a std::string, and the string it
+    // returns, rely on the ANSI code page instead, so a page named after a
+    // node outside ASCII was written under a name nobody had requested, and
+    // its link did not lead to it.
+    std::filesystem::path path_from_utf8(const std::string& utf8);
+    std::string           to_utf8(const std::u8string& text);
 }

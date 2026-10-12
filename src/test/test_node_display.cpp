@@ -1256,6 +1256,23 @@ TEST_CASE("mermaid: the node is named the way .node names it")
             interactive.process(".mermaid \"«Le Monde»\"");
             CHECK(any_output_contains(collector, "/«Le Monde».html"));
         }
+        SUBCASE("a name outside ASCII names the page that is written")
+        {
+            // A name is encoded in UTF-8. On Windows, a path built from a
+            // narrow string interprets its contents using the ANSI code
+            // page, causing a page whose name lies outside ASCII to be
+            // stored under a different name than the one the link
+            // displayed, resulting in the link pointing nowhere. The page
+            // is looked up here under the UTF-8 name.
+            interactive.process("Zürich rel b");
+            collector.clear();
+            interactive.process(".mermaid Zürich");
+            CHECK(any_output_contains(collector, "/Zürich.html"));
+
+            const std::filesystem::path page = std::filesystem::temp_directory_path() / std::filesystem::path(u8"Zürich.html");
+            CHECK(std::filesystem::exists(page));
+            std::filesystem::remove(page);
+        }
         SUBCASE("a rendering too long for a file name is shortened and the file is written")
         {
             // On Linux and macOS, a file name stores no more than 255

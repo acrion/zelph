@@ -272,11 +272,14 @@ namespace zelph::console
                     cut += cp; });
             safe_name = cut + " (ID " + std::to_string(nd) + ")";
         }
-        std::filesystem::path html_path = temp_dir / (safe_name + ".html");
+        // The name is UTF-8, which a path assumes only outside Windows
+        // (platform::path_from_utf8).
+        std::filesystem::path html_path = temp_dir / platform::path_from_utf8(safe_name + ".html");
+        const std::string     html_file = platform::to_utf8(html_path.u8string());
 
         io::gen_mermaid_html(_n,
                              nd,
-                             html_path.string(),
+                             html_file,
                              depth,
                              max_neighbors,
                              exclude_nodes,
@@ -284,7 +287,7 @@ namespace zelph::console
                              horizontal_layout,
                              use_subgraphs);
 
-        _repl_state->last_graph_html_path = html_path.string();
+        _repl_state->last_graph_html_path = html_file;
 
 #ifndef __EMSCRIPTEN__
         // In a real terminal the OSC 8 link is clickable. In the wasm
@@ -299,7 +302,7 @@ namespace zelph::console
         // RFC 8089 wants the generic form with a leading slash, so the
         // same expression produces file:///C:/Users/.../a.html in that
         // context and the unchanged file:///tmp/a.html here.
-        std::string url_path = std::filesystem::absolute(html_path).generic_string();
+        std::string url_path = platform::to_utf8(std::filesystem::absolute(html_path).generic_u8string());
         if (!url_path.starts_with('/')) url_path.insert(url_path.begin(), '/');
         const std::string file_url = "file://" + url_path;
 

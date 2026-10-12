@@ -38,8 +38,8 @@ namespace zelph::network
 
 namespace zelph::io
 {
-    // When the page cannot be written, it throws a
-    // std::runtime_error.
+    // `file_name` is encoded in UTF-8, just as every name within zelph is. If
+    // the page fails to be written, a std::runtime_error is thrown.
     ZELPH_EXPORT void gen_mermaid_html(const network::Zelph* const              z,
                                        network::Node                            start,
                                        std::string                              file_name,

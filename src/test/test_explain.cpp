@@ -3558,7 +3558,7 @@ TEST_CASE("explain: the tree does not depend on the order in which a parallel ru
 // stops at its second justification.
 TEST_CASE("explain: a join tries its first match without enumerating the others")
 {
-    const auto check = [](const bool marked, const std::string& tree)
+    const auto check = [](const bool marked)
     {
         zelph::io::OutputCollector  collector;
         zelph::console::Interactive interactive(collector.sink());
@@ -3571,6 +3571,24 @@ TEST_CASE("explain: a join tries its first match without enumerating the others"
             if (marked) assert_fact(graph, "g" + std::to_string(i), "mark", "yes");
         }
         assert_fact(graph, "x", "ok", "yes");
+
+        // The proof shows the group for which the (x in g) fact carries the
+        // lowest id. A fact's id is the hash of its parts, and the ids of
+        // those parts depend on the number of nodes the engine created before
+        // them, a count that varies across platforms: the Windows build
+        // showed g1319 while the Linux build reported g129. Thus, the group is
+        // computed here, as it is in the next test case, rather than being
+        // explicitly named.
+        std::string group = "g0";
+        for (int i = 1; i < 2000; ++i)
+            if (const std::string name = "g" + std::to_string(i); fact_node(graph, "x", "in", name) < fact_node(graph, "x", "in", group)) group = name;
+        const std::string tree = "x ok yes  [one of several justifications]\n"
+                                 "   ├─ x in "
+                               + group + "  [axiom]\n"
+                               + (marked ? "   └─ " + group + " flag yes\n"
+                                                              "      └─ "
+                                               + group + " mark yes  [axiom]"
+                                         : "   └─ " + group + " flag yes  [axiom]");
 
         collector.clear();
         interactive.process(".explain (x ok yes) 0");
@@ -3589,9 +3607,7 @@ TEST_CASE("explain: a join tries its first match without enumerating the others"
     };
     SUBCASE("each premise an axiom")
     {
-        check(false, "x ok yes  [one of several justifications]\n"
-                     "   ├─ x in g129  [axiom]\n"
-                     "   └─ g129 flag yes  [axiom]");
+        check(false);
     }
     // Each flag is derived by a rule as well, so the search continues to
     // search it while the join remains idle, and a join that sets its
@@ -3599,10 +3615,7 @@ TEST_CASE("explain: a join tries its first match without enumerating the others"
     // for.
     SUBCASE("a premise searched first")
     {
-        check(true, "x ok yes  [one of several justifications]\n"
-                    "   ├─ x in g1318  [axiom]\n"
-                    "   └─ g1318 flag yes\n"
-                    "      └─ g1318 mark yes  [axiom]");
+        check(true);
     }
 }
 

@@ -27,6 +27,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #include "network/adjacency_set.hpp"
 #include "network/zelph.hpp"
+#include "platform/platform_utils.hpp"
 #include "string/node_to_string.hpp"
 #include "string/string_utils.hpp"
 
@@ -1623,7 +1624,7 @@ void io::gen_mermaid_html(const network::Zelph* const              z,
     // reset first, ensuring that a value carried over from a prior invocation
     // is never reported.
     errno = 0;
-    std::ofstream out_file(file_name);
+    std::ofstream out_file(platform::path_from_utf8(file_name));
     if (!out_file.is_open())
     {
         const int error = errno;
