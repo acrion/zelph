@@ -57,8 +57,8 @@ Combine for intersections.
   Output:
 
   ```
-  {(X "is capital of" Y) (X "is located in" Europe)}
-  Answer: {(Berlin "is capital of" Germany) (Berlin "is located in" Europe)}
+  X "is capital of" Y, X "is located in" Europe
+  Answer: Berlin "is capital of" Germany, Berlin "is located in" Europe
   ```
 
   > Note: In this example we use the comma `,` [syntax sugar for conjunctions](rules.md#syntax-sugar-for-conditions). The fully explicit form is `*{(X "is located in" Europe) (X "is capital of" Y)} ~ conjunction`, which answers identically.
@@ -69,16 +69,16 @@ A query consists of a condition list that undergoes evaluation just once. Every 
 
 ```
 zelph> X "is capital of" Y, ¬(Y "is located in" Asia)
-Answer: {(Berlin "is capital of" Germany) (¬(Germany "is located in" Asia))}
+Answer: Berlin "is capital of" Germany, ¬(Germany "is located in" Asia)
 zelph> X "is located in" Europe, X != Germany
-Answer: {(Berlin != Germany) (Berlin "is located in" Europe)}
+Answer: Berlin != Germany, Berlin "is located in" Europe
 ```
 
 Under a condition operator, a query constructs a pattern, much like a rule: the operand, each fact contained within it, and the operator’s own fact are never asserted. Asking whether Germany is located in Asia does not assert that fact:
 
 ```
 zelph> X "is capital of" Germany, ¬(Germany "is located in" Asia)
-Answer: {(¬(Germany "is located in" Asia)) (Berlin "is capital of" Germany)}
+Answer: ¬(Germany "is located in" Asia), Berlin "is capital of" Germany
 zelph> A "is located in" Asia
 ```
 
@@ -96,6 +96,8 @@ When a variable is present, `¬(…)` appearing alone on a line represents this 
 
 The conditions expressed as the facts they build are the same conditions: `((P) ~ negation)` equates to `¬(P)`, `((S p O) closure one-or-more)` translates to `S p⁺ O`, and `((P) nn net)` corresponds to `≈net(P)`. These are recognised by the nodes their names denote within the current language, meaning that, under `.lang en`, a statement concerning a node named `closure` remains a standard fact.
 
+In any context where a condition appears – within the echo or answers of a query, or inside a rule – it is displayed the way it is typed there: `¬(P)`, `S p⁺ O`, `S p∗ O`, or `≈net(P)`, whichever of the two spellings was used, and a condition list is shown as `A, B`, omitting the outer parentheses that would otherwise classify it as a term. The echo of a query re-enters precisely as the original query. An answer consists of the condition list with its bindings substituted, and when typed back, it reads as any line of its form would: without a condition operator, it asserts its members; with a negation that keeps a variable, since a negation binds none, it remains the same query; and with any other operator, it becomes a statement that asserts, which refuses the operator. When the fact of a condition is not itself a condition, as in `.node`, it is printed as the fact it is.
+
 A line that lacks a variable asserts its content, and a condition operator – `¬`, `≈`, `⁺` or `∗` – carries no significance in that context, regardless of spelling or depth, when located outside a rule that the line mentions; `a != b` within such a line functions as a standard fact. The sole exception is `¬(P)` appearing by itself on a line, which refutes `P`:
 
 ```
@@ -107,7 +109,7 @@ or in a query (a line with a variable). On its own line "¬(a p b)" says that
 the fact does not hold.
 ```
 
-A set or collection literal constitutes data, hence a condition operator among its members, regardless of spelling, is refused wherever the literal appears, whether within a rule or not; a rule contained within the literal keeps its own condition slots. The comma list, when written out, is not such a literal: in `*{…} ~ conjunction`, the focus returns the set that represents the condition list, with its members being conditions. The `?` prefix asserts the statement it queries, and it refuses a condition operator before anything is asserted. `.prune-facts` and `.prune-nodes` refuse a pattern that functions as a condition operator, which matches no fact for removal.
+A set or collection literal constitutes data, hence a condition operator among its members, regardless of spelling, is refused wherever the literal appears, whether within a rule or not; a rule contained within the literal keeps its own condition slots. The comma list, when written out, is not such a literal: in `*{…} ~ conjunction`, the focus returns the set that represents the condition list, with its members being conditions. The `?` prefix asserts the statement it queries, and it refuses a condition operator located outside every rule within it before anything is asserted. `.prune-facts` and `.prune-nodes` refuse a pattern that functions as a condition operator, which matches no fact for removal.
 
 ## Wikidata-Specific Queries
 
@@ -131,8 +133,8 @@ Combine for targeted searches.
 - Synonyms with parent taxon: `X P460 Q14326, X P171 Q2544161` (Apatosaurus synonyms in Diplodocidae)  
   Output:
   ```
-  {(X P171 Q2544161) (X P460 Q14326)}
-  Answer: {(Q3222766 P171 Q2544161) (Q3222766 P460 Q14326)}
+  X P171 Q2544161, X P460 Q14326
+  Answer: Q3222766 P171 Q2544161, Q3222766 P460 Q14326
   ```
   Since `Q3222766` is [Brontosaurus](https://www.wikidata.org/wiki/Q3222766), this answer means "The [parent taxon](https://www.wikidata.org/wiki/Property:P171) (P171) of [Brontosaurus](https://www.wikidata.org/wiki/Q3222766) is [Apatosaurinae](https://www.wikidata.org/wiki/Q2544161) (Q2544161), which is [said to be the same as](https://www.wikidata.org/wiki/Property:P460) [Apatosaurus](https://www.wikidata.org/wiki/Q14326) (Q14326).
 

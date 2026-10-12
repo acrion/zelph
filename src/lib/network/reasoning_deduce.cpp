@@ -1105,7 +1105,7 @@ void Reasoning::deduce(const Variables& variables, const Node parent, const int 
                                                  if (!into && std::find(built_values.begin(), built_values.end(), n) != built_values.end()) return ClaimStep::Enter;
                                                  return ClaimStep::Claim; });
 
-                            if (_seminaive_check)
+                            if (keeps_negation_records())
                                 if (const auto negating = _negating_rules.find(parent); negating != _negating_rules.end())
                                 {
                                     std::lock_guard<std::mutex> lock_records(_mtx_negation_records);

@@ -273,21 +273,24 @@ TEST_CASE("? prefix: a condition operator is refused before anything is asserted
         CHECK(collect_answers(collector).empty()); });
 }
 
-// A rule is a statement that "?" can ask about, and a rule with a condition
-// operator was put in force by the quiet pass, after which the request failed
-// on it as a rule mentioned inside "(...) = _Result". Dismissed before any
-// pass as well, and the message says to write the rule on its separate line,
-// rather than framing it as a query.
-TEST_CASE("? prefix: a rule with a condition operator is refused before it is built")
+// A rule is a statement that "?" may query, with its operators occupying its
+// own condition slots. The quiet pass puts it in force as a typed rule; the
+// subsequent request mentions it within "(...) = _Result", interpreting the
+// mentioned rule's operators as those of a typed rule. It was rejected, with
+// the advice to write it on a separate line, since a mentioned rule could not
+// contain an operator; "? (X go Y) => (X ok Y)" was consistently accepted.
+TEST_CASE("? prefix: a rule with a condition operator is asserted as a typed rule is")
 {
     run_both_modes([](auto& collector, auto& interactive)
                    {
         interactive.process("t go k");
 
-        CHECK_THROWS_WITH(interactive.process("? (X go Y, ¬(X p b)) => (X ok Y)"),
-                          doctest::Contains("Write the rule on a line of its own"));
+        CHECK_NOTHROW(interactive.process("? (X go Y, ¬(X p b)) => (X ok Y)"));
 
         collector.clear();
         interactive.process(".list-rules");
-        CHECK(any_output_contains(collector, "No rules found")); });
+        CHECK_FALSE(any_output_contains(collector, "No rules found"));
+        collector.clear();
+        interactive.process("S ok O");
+        CHECK(collect_answers(collector) == std::vector<std::string>{"t ok k"}); });
 }

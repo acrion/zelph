@@ -96,7 +96,7 @@ namespace zelph::console
             // zelph/fact and the user was handed Janet's own complaint,
             // "arity mismatch, expected at least 3, got 2", naming an
             // internal call they never made.
-            const std::string transformed = ScriptEngine::is_zelph_complete(buffered)
+            const std::string transformed = _script_engine->is_zelph_complete(buffered)
                                               ? _script_engine->parse_zelph_to_janet(buffered)
                                               : std::string{};
 
@@ -272,6 +272,8 @@ namespace zelph::console
         { cmd_fact_stores(c); };
         _command_map[".contradiction-records"] = [this](auto& c)
         { cmd_contradiction_records(c); };
+        _command_map[".negation-records"] = [this](auto& c)
+        { cmd_negation_records(c); };
         _command_map[".explain-budget"] = [this](auto& c)
         { cmd_explain_budget(c); };
         _command_map[".cluster"] = [this](auto& c)

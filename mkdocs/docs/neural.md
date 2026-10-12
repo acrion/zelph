@@ -150,7 +150,7 @@ A net that cannot be consulted fails the condition in _both_ readings. "The net 
 
 ### `≈` in a query
 
-A [query](queries.md#conditions-in-queries) consists of a condition list that is evaluated just once, so `≈` carries the same meaning in a query as it does in a rule. When the object is a variable, `≈net(S P X)` standing alone on a line functions as a query in generator mode, producing the condition’s own fact for each object that the net confirms. Its echo re-enters as the identical query; an answer is ground, and when typed back, it becomes a statement that asserts, in which the operator is refused. A ground pattern under `≈` next to a condition containing a variable constitutes a test, and the query asserts nothing below the operator, hence `S relH O` fails to locate any `s2 relH c1` afterwards:
+A [query](queries.md#conditions-in-queries) consists of a condition list that is evaluated just once, so `≈` carries the same meaning in a query as it does in a rule. When the object is a variable, `≈net(S P X)` standing alone on a line functions as a query in generator mode, producing the condition’s own fact for each object that the net confirms. The echo and the answers output the condition as `≈net(…)`, even if the input was the fact it builds. Its echo re-enters as the identical query; an answer is ground, and when typed back, it becomes a statement that asserts, in which the operator is refused. A ground pattern under `≈` next to a condition containing a variable constitutes a test, and the query asserts nothing below the operator, hence `S relH O` fails to locate any `s2 relH c1` afterwards:
 
 ```
 zelph> s2 in HIn
@@ -160,13 +160,13 @@ zelph> %(zelph/nn-connect "s2" "c1" 0.9)
 zelph> %(zelph/nn-connect "s2" "c2" 0.1)
 zelph> hnet nn-layers <HIn HOut>
 zelph> ≈hnet(s2 relH X)
-(s2 relH X) nn hnet
-Answer: (s2 relH c1) nn hnet
+Answer: ≈hnet(s2 relH c1)
 zelph> (s2 relH X) nn hnet
-Answer: (s2 relH c1) nn hnet
+≈hnet(s2 relH X)
+Answer: ≈hnet(s2 relH c1)
 zelph> s2 marked yes
 zelph> X marked yes, ≈hnet(s2 relH c1)
-Answer: {((s2 relH c1) nn hnet) (s2 marked yes)}
+Answer: ≈hnet(s2 relH c1), s2 marked yes
 zelph> X marked yes, ≈hnet(s2 relH c2)
 zelph> S relH O
 ```
@@ -195,6 +195,21 @@ If the deduced fact already exists, its stored probability is _not_ modified —
 - A condition using `≈` does not function as a standalone `.prune-facts` or `.prune-nodes` pattern: it fails to match any fact for removal, causing the command to reject it. Within a conjunction inside a `.prune-nodes` pattern, it acts as a filter, just as it does within a rule.
 - A fact derived through an `≈` condition cannot be reconstructed by `.explain` (see below).
 
+When no other condition binds the subject or the predicate, the net remains entirely inaccessible for consultation. This state is signalled upon the initial evaluation of the condition, whether within a query or within a rule:
+
+```
+zelph> s2 in HIn
+zelph> c1 in HOut
+zelph> hnet nn-layers <HIn HOut>
+zelph> ≈hnet(X relH c1)
+Error: a ≈ condition needs its subject and predicate bound -- they are what the
+net is given as input. Bind them with a preceding condition.
+zelph> s2 marked yes
+zelph> (A marked yes, ≈hnet(X relH c1)) => (X suggests A)
+Error: a ≈ condition needs its subject and predicate bound -- they are what the
+net is given as input. Bind them with a preceding condition.
+```
+
 If the named net has no `nn-layers` definition — a misspelled name, or a
 definition that comes after the rule — every rule consulting it stays silent.
 That is reported once per net rather than left to `.log`:
@@ -202,7 +217,7 @@ That is reported once per net rather than left to `.log`:
 ```
 zelph> a p b
 zelph> (X p Y, ≈nosuchnet(X p Y)) => (X q Y)
-(((X p Y) nn nosuchnet), (X p Y)) => (X q Y)
+(≈nosuchnet(X p Y), (X p Y)) => (X q Y)
 Neural condition: net 'nosuchnet' has no nn-layers definition, so every rule
 consulting it stays silent.
 ```
@@ -218,7 +233,7 @@ missing one, so the search starts in the right place:
 zelph> a p b
 zelph> badnet nn-layers something
 zelph> (X p Y, ≈badnet(X p Y)) => (X q Y)
-((X p Y), ((X p Y) nn badnet)) => (X q Y)
+((X p Y), ≈badnet(X p Y)) => (X q Y)
 Neural condition: net 'badnet' has an nn-layers definition that is not a list of
 at least two layers -- write `net nn-layers < input hidden output >`.
 ```
@@ -234,7 +249,7 @@ zelph> %(zelph/nn-connect "s" "o" 0.9)
 zelph> knet nn-layers <KIn KOut>
 zelph> s relK o
 zelph> (A relK B, ≈knet(A relK B)) => (A verifiedK B)
-(((A relK B) nn knet), (A relK B)) => (A verifiedK B)
+(≈knet(A relK B), (A relK B)) => (A verifiedK B)
 (s verifiedK o) ⇐ {((s relK o) nn knet) (s relK o)}
 zelph> (A verifiedK B) => (A trustedK B)
 (s trustedK o) ⇐ (s verifiedK o)

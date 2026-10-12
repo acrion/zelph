@@ -524,7 +524,7 @@ void console::Interactive::process(std::string line) const
         // buffer, while one beginning with '.' runs as a command (steps 1
         // and 2), even when located within an open quoted name.
         std::string complete_stmt = zelph::string::strip_comments(state->zelph_buffer);
-        if (!zelph::ScriptEngine::is_zelph_complete(complete_stmt))
+        if (!_pImpl->_script_engine->is_zelph_complete(complete_stmt))
         {
             state->accumulating_zelph = true;
             return;
@@ -581,17 +581,14 @@ void console::Interactive::process(std::string line) const
                 // The request is asserted and subsequently queried for its
                 // value, and a condition operator has neither: "? ¬(a p b)"
                 // refuted `a p b` in pass 1 and only afterwards failed.
-                // Rejected before either pass. A rule employing an operator
-                // was put in force by pass 1, and pass 2 then failed on it
-                // as a rule mentioned within "(...) = _Result".
-                bool rule = false;
-                if (_pImpl->_script_engine->carries_condition_operator(request, &rule))
-                    throw std::runtime_error(rule ? "'?' asserts the rule it asks about and then answers with the rule as a value, "
-                                                    "mentioned inside another statement, and condition operators (¬, ≈, ⁺, ∗) in a "
-                                                    "mentioned rule are not supported. Write the rule on a line of its own, without '?'."
-                                                  : "'?' asserts the statement it asks about and answers with its value, and a "
-                                                    "condition operator (¬, ≈, ⁺, ∗) has neither. To ask a condition, write it in "
-                                                    "a query -- a line with a variable, such as \"X go Y, ¬(X p b)\".");
+                // Rejected before either pass. A rule's operators occupy its
+                // own slots, so a rule is asserted just as a typed one is, and
+                // pass 2 reads it as a rule mentioned within "(...) =
+                // _Result".
+                if (_pImpl->_script_engine->carries_condition_operator(request))
+                    throw std::runtime_error("'?' asserts the statement it asks about and answers with its value, and a "
+                                             "condition operator (¬, ≈, ⁺, ∗) has neither. To ask a condition, write it in "
+                                             "a query -- a line with a variable, such as \"X go Y, ¬(X p b)\".");
 
                 // Idempotent wrapping: "((S P O))" is plain grouping, so
                 // "? (S P O)" and "? S P O" are equivalent.

@@ -801,6 +801,35 @@ void Reasoning::purge_unused_predicates(size_t& removed_facts, size_t& removed_p
         return n == core.IsA || n == core.Causes || n == core.RelationTypeCategory || n == core.Unequal || n == core.Contradiction || n == core.Cons || n == core.Nil || n == core.PartOf || n == core.Conjunction;
     };
 
+    // Removing a node takes every fact it is a part of, meaning a predicate
+    // no fact uses as its relation any more is removed only when nothing else
+    // holds it: no fact besides its own `~ ->` declaration refers to it as
+    // subject, relation, or object. This applies to a rule at every depth --
+    // its conditions, consequences, and operands are parts of its `=>` fact,
+    // of a condition set, or of a tag fact -- and similarly to a rule a
+    // statement refers to, along with data like `p is transitive`. A
+    // statement used as a relation, `(a p b)`, is never removed in this
+    // process: its node is the statement itself, and .cleanup removes a
+    // statement solely when it is broken.
+    auto is_held = [&](const Node pred)
+    {
+        if (Zelph::Impl::is_hash(pred)) return true;
+
+        adjacency_set neighbours = _pImpl->get_right(pred);
+        for (const Node from : _pImpl->get_left(pred))
+            neighbours.insert(from);
+
+        for (const Node whole : neighbours)
+        {
+            if (whole == pred || parse_relation(whole) == 0) continue;
+            if (is_relation_type_declaration(whole)) continue;
+
+            adjacency_set objects;
+            if (parse_fact(whole, objects, 0) == pred || parse_relation(whole) == pred || objects.count(pred) != 0) return true;
+        }
+        return false;
+    };
+
     diagnostic_stream() << "Found " << all_predicates.size() << " predicates. Starting deep scan..." << std::endl;
 
     std::lock_guard<std::mutex> lock(_mtx_network);
@@ -863,6 +892,17 @@ void Reasoning::purge_unused_predicates(size_t& removed_facts, size_t& removed_p
                     }
                 }
 
+                // When a fact has its relation as the subject, specifically
+                // `p p b`, a single pair of edges fulfils both roles, and the
+                // loop above passes over it as the relation. The function
+                // get_preferred_structure tells whether `pred` also serves as
+                // the subject.
+                if (!has_subject && incoming_to_fact.count(pred) == 1)
+                {
+                    const FactStructure fs = get_preferred_structure(this, fact, 1);
+                    has_subject            = fs.predicate == pred && fs.subject == pred;
+                }
+
                 if (has_subject)
                 {
                     for (Node in_node : incoming_to_fact)
@@ -905,7 +945,7 @@ void Reasoning::purge_unused_predicates(size_t& removed_facts, size_t& removed_p
             out_stream() << "   -> Purged " << local_removed << " broken facts." << std::endl;
         }
 
-        if (valid_usage_count == 0)
+        if (valid_usage_count == 0 && !is_held(pred))
         {
             _pImpl->remove(pred);
             removed_predicates++;

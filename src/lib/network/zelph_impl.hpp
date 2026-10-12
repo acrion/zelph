@@ -43,6 +43,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <functional>
 #include <map>
 #include <mutex>
 #include <string>
@@ -148,6 +149,19 @@ namespace zelph::network
         size_t cleanup_dangling_names();
         void   remove_names_of(const adjacency_set& dead);
         void   remove_node_names(Node nd);
+        void   erase_empty_languages_locked();
+        bool   label_precedes_locked(Node a, Node b) const;
+        void   assign_label_ranked_locked(Node node, const std::string& label, const std::string& lang);
+
+        bool                     may_carry_label(Node n) const;
+        std::vector<Node>*       label_carriers_locked(const std::string& lang, std::string_view label);
+        const std::vector<Node>* label_carriers_locked(const std::string& lang, std::string_view label) const;
+        Node                     first_carrier_locked(const std::vector<Node>& carriers) const;
+        void                     trim_label_locked(const std::string& lang, std::string_view label);
+        void                     release_label_locked(const std::string& lang, Node node, std::string_view label);
+        void                     settle_labels_locked(const std::string& lang, const std::vector<std::string_view>& labels, const std::function<bool(Node)>& gone);
+        void                     rebuild_label_index_locked();
+        void                     rebuild_label_index();
 
         // --- Implemented in zelph_index.cpp ---
 
@@ -183,12 +197,51 @@ namespace zelph::network
         mutable std::shared_mutex _mtx_node_of_name;
         mutable std::shared_mutex _mtx_name_of_node;
 
-        // How often `_node_of_name` was walked end to end. It is the only way
-        // to find the reverse entries of a node, and doing it PER NODE is what
-        // made a full-dump prune take two months; a bulk removal owes one walk
-        // per batch. Hardware-independent, so a test can hold the shape
-        // without a quiet machine -- see Impl::remove_names_of.
+        // How frequently the `_node_of_name` traversal was completed from start
+        // to finish. Performing this operation PER NODE is what caused the
+        // full-dump pruning process to last two months. A removal reads a
+        // node's names from `_name_of_node` instead and performs no traversal;
+        // only the fallback following a partial load (below) continues to walk,
+        // once per node or batch. Independent of hardware, allowing a test to
+        // maintain the shape without requiring a quiet machine -- see
+        // Impl::remove_names_of.
         mutable std::atomic<uint64_t> _name_map_scans{0};
+
+        // For each label associated with more than a single node, per
+        // language: label → the nodes where the node → name entry matches
+        // that label, including the one referenced by the name → node
+        // entry. A label carried by only one node lacks an entry, thus a
+        // network with uniquely named entities -- every network except an
+        // imported Wikidata dump -- keeps this empty, and every hook
+        // verifies this condition first. Variables and core nodes never
+        // serve as carriers.
+        //
+        // Purpose: upon a removal that affects the node a label resolves
+        // to, the name -> node entry is transferred to the carrier that
+        // ranks first in the remaining set (label_precedes), ensuring the
+        // label continues to resolve. The publicly available Wikidata
+        // networks are derived through pruning, and the original holder of
+        // a label was frequently among those removed: "Berlin" kept 56
+        // carriers but resolved to none of them.
+        //
+        // Constructed once a load has read both name sections, sustained by
+        // each contributor to the two maps, and guarded by both name locks.
+        using label_carriers = ankerl::unordered_dense::map<std::string_view, std::vector<Node>>;
+        ankerl::unordered_dense::map<std::string, label_carriers> _label_index;
+
+        // The core nodes of the Zelph that owns this, which are not carriers.
+        const std::unordered_map<Node, std::string>* _core_names{nullptr};
+
+        // Set through a load that retrieved only fragments of the name
+        // sections (chunk selectors, a manifest, a route), cleared by
+        // clear_loaded_state. Every other writer maintains the invariant
+        // "node_of_name[l][s] = n implies name_of_node[l][n] = s", enabling
+        // a removal to locate a node's reverse entries via its forward
+        // ones. A partial load reads the two sections independently, so a
+        // reverse entry might be received without its forward counterpart,
+        // and removal proceeds by traversing the reverse map as it has
+        // always done.
+        std::atomic<bool> _names_loaded_partially{false};
 
         // Bulk-import triples where the node was already present but
         // contained a distinct statement (refer to

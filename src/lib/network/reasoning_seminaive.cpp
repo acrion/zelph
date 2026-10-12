@@ -93,6 +93,25 @@ bool Reasoning::seminaive_check() const
     return _seminaive_check;
 }
 
+void Reasoning::record_negations(const bool on)
+{
+    _record_negations = on;
+    // The switch defines the limits of memory, thus disabling it releases the
+    // records -- except those that continue to undergo re-tests in check
+    // mode.
+    if (!keeps_negation_records()) std::vector<NegationRecord>().swap(_negation_records);
+}
+
+bool Reasoning::record_negations() const
+{
+    return _record_negations;
+}
+
+const std::vector<std::pair<Node, Node>>& Reasoning::defeated_negations() const
+{
+    return _defeated_negations;
+}
+
 // Semi-naive (delta-driven) fixpoint evaluation.
 //
 // Iteration 1 is a classic pass over the whole graph: it covers user input,
@@ -299,7 +318,7 @@ uint64_t Reasoning::run_fixpoint_seminaive(bool silent, const std::vector<std::p
     std::mutex                         delta_mtx;
     std::vector<std::pair<Node, Node>> delta; // (fact node, predicate)
 
-    const bool check = _seminaive_check;
+    const bool check = keeps_negation_records();
     set_fact_creation_observer([&delta, &delta_mtx, check, this](Node f, Node p)
                                {
         std::lock_guard<std::mutex> lock(delta_mtx);
@@ -680,7 +699,14 @@ std::vector<Reasoning::NegationRecord> Reasoning::recheck_negations()
         // derive it. The explain() function queries every rule with the same
         // question that the forward pass would pose.
         if (refuted && explain(record.fact, 1)->status == ProofNode::Status::Unfounded)
-            lost.push_back(std::move(record));
+        {
+            // A fact that has been eliminated and subsequently derived again
+            // maintains a record of each derivation, but forfeits its backing
+            // exactly once.
+            if (std::none_of(lost.begin(), lost.end(), [&record](const NegationRecord& l)
+                             { return l.fact == record.fact && l.rule == record.rule; }))
+                lost.push_back(std::move(record));
+        }
         else
             kept.push_back(std::move(record));
     }

@@ -32,6 +32,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include <algorithm>
 #include <atomic>
 #include <cstddef>
+#include <cstdint>
 #include <mutex>
 #include <ostream>
 #include <shared_mutex>
@@ -80,6 +81,31 @@ namespace
           << " is a collection of a rule's text.";
         return s.str();
     }
+
+    // A core node's spelling ("~", "in", "=>", ...) is not a name within any
+    // single language: the parser reads it as the core node across all
+    // languages unless the language gives it to a node of its own. Handing it
+    // to another node merged that node INTO the core node, as core nodes
+    // never disappear, and the merged node's names then re-spelled the core
+    // node: following ".name prep3 en ~" every `~` fact printed as `prep3`.
+    std::string core_name_refusal(const std::string& name, const zelph::network::Node core_node)
+    {
+        std::stringstream s;
+        s << "Requested name '" << name << "' is the spelling of core node " << core_node
+          << ", which it denotes in every language. A core node's name cannot be given away.";
+        return s.str();
+    }
+
+    // It is impossible for two core nodes to merge into a single one:
+    // whichever of them vanished, the engine would lose a node it relies on.
+    std::string core_merge_refusal(const std::string& name, const zelph::network::Node holder, const std::string& lang)
+    {
+        std::stringstream s;
+        s << "Requested name '" << name << "' is already used by node " << holder
+          << " in language '" << lang
+          << "'. Merging the two nodes is impossible because both are core nodes, and a core node never disappears.";
+        return s.str();
+    }
 }
 
 using namespace zelph::network;
@@ -105,71 +131,53 @@ bool Zelph::resolve_name_conflict_locked(const Node         node,
                                          const std::string& name,
                                          const std::string& lang,
                                          Node&              from,
-                                         Node&              into,
-                                         bool&              conflict_is_core) const
+                                         Node&              into) const
 {
     Node conflict_node = 0;
-    conflict_is_core   = false;
 
     // Check regular mapping first
     auto rev_outer_it = _pImpl->_node_of_name.find(lang);
     if (rev_outer_it != _pImpl->_node_of_name.end())
     {
         auto it = rev_outer_it->second.find(name);
-        if (it != rev_outer_it->second.end() && it->second != node)
+        if (it != rev_outer_it->second.end())
         {
             conflict_node = it->second;
         }
     }
 
-    // If not found in regular map, check core names
+    // A spelling that the language does not give to a node of its own
+    // remains the core node's, and it continues to stay the core node's
+    // (core_name_refusal).
     if (conflict_node == 0)
     {
-        Node core_node = get_core_node(name);
-        if (core_node != 0 && core_node != node)
-        {
-            conflict_node    = core_node;
-            conflict_is_core = true;
-        }
+        const Node core_node = get_core_node(name);
+        if (core_node != 0 && core_node != node) throw std::runtime_error(core_name_refusal(name, core_node));
     }
 
-    if (conflict_node == 0) return false;
+    if (conflict_node == 0 || conflict_node == node) return false;
 
-    if (conflict_is_core)
-    {
-        // Core nodes must never be merged away
-        from = node;
-        into = conflict_node;
-    }
-    else
-    {
-        // Default behaviour: merge the conflicting node into the requested node
-        from = conflict_node;
-        into = node;
+    // Default behaviour: merge the conflicting node into the requested node
+    from = conflict_node;
+    into = node;
 
-        // Defensive: if "from" is unexpectedly a core node, preserve it
-        if (!get_core_name(from).empty())
-        {
-            std::swap(from, into);
-        }
+    // A core node that carries the name in this language keeps it, and
+    // the node the name was requested for merges into it rather than the
+    // other way around. Core nodes must never be merged away, hence it is
+    // impossible for two such nodes to merge under any circumstances.
+    if (!get_core_name(from).empty())
+    {
+        if (!get_core_name(into).empty()) throw std::runtime_error(core_merge_refusal(name, conflict_node, lang));
+        std::swap(from, into);
     }
 
     if (Impl::is_var(from) != Impl::is_var(into))
     {
         std::stringstream s;
-        if (conflict_is_core)
-        {
-            s << "Requested name '" << name << "' is already used by core node "
-              << into
-              << ". Merging is impossible because one node is a variable, the other not.";
-        }
-        else
-        {
-            s << "Requested name '" << name << "' is already used by node "
-              << conflict_node
-              << " in language '" << lang
-              << "'. Merging the two nodes is impossible because one node is a variable, the other not.";
-        }
+        s << "Requested name '" << name << "' is already used by node "
+          << conflict_node
+          << " in language '" << lang
+          << "'. Merging the two nodes is impossible because one node is a variable, the other not.";
         throw std::runtime_error(s.str());
     }
 
@@ -200,9 +208,8 @@ void Zelph::set_name(const Node         node,
     // renders nodes, and rendering takes exactly the locks the merge needs.
     // So: decide under the locks, read the recipes without them, merge under
     // them again, repair without them.
-    Node merge_from       = 0;
-    Node merge_into       = 0;
-    bool conflict_is_core = false;
+    Node merge_from = 0;
+    Node merge_into = 0;
 
     if (merge_on_conflict)
     {
@@ -212,7 +219,7 @@ void Zelph::set_name(const Node         node,
         ExclusiveNameAccessScope scope_node(node_of_name_exclusive_depth);
         ExclusiveNameAccessScope scope_name(name_of_node_exclusive_depth);
 
-        resolve_name_conflict_locked(node, name, lang, merge_from, merge_into, conflict_is_core);
+        resolve_name_conflict_locked(node, name, lang, merge_from, merge_into);
     }
 
     // Read WHILE THE HASHES STILL HOLD: after the merge the components no
@@ -235,36 +242,40 @@ void Zelph::set_name(const Node         node,
             // The decision is re-derived rather than assumed. Nothing renames
             // concurrently in this engine, and this is what keeps that a
             // checked assumption instead of an unwritten one.
-            Node from    = 0;
-            Node into    = 0;
-            bool is_core = false;
-            if (!resolve_name_conflict_locked(node, name, lang, from, into, is_core)
+            Node from = 0;
+            Node into = 0;
+            if (!resolve_name_conflict_locked(node, name, lang, from, into)
                 || from != merge_from || into != merge_into)
                 throw std::runtime_error("Zelph::set_name: the name conflict changed while it was being repaired");
 
             if (!Impl::is_var(from))
             {
-                if (conflict_is_core)
-                {
-                    out_stream() << "Warning: (A) Merging Node \"" << format(from)
-                                 << "\" into core Node \"" << format(into)
-                                 << "\" due to name conflict '" << name
-                                 << "' in language '" << lang << "'."
-                                 << std::endl;
-                }
-                else
-                {
-                    out_stream() << "Warning: (B) Merging Node " << from
-                                 << " into Node " << into
-                                 << " due to name conflict '" << name
-                                 << "' in language '" << lang << "'."
-                                 << std::endl;
-                }
+                out_stream() << "Warning: (B) Merging Node " << from
+                             << " into Node " << into
+                             << " due to name conflict '" << name
+                             << "' in language '" << lang << "'."
+                             << std::endl;
             }
 
             invalidate_fact_structures_cache();
 
             _pImpl->merge(from, into);
+
+            // In `lang`, the survivor is assigned `name` below, so a different
+            // name that either node carries there is dropped first: the
+            // transfer would otherwise report it as a conflict ("Keeping
+            // existing name 'bob'" just before 'bob' was overwritten). The
+            // vanishing node keeps `name` itself for the transfer, positioning
+            // the survivor in the group of nodes sharing the label. Removed
+            // ahead of time, the label would pass to the next carrier, and the
+            // assignment below would take it away again.
+            for (const Node n : {from, into})
+            {
+                const auto fwd_outer_it = _pImpl->_name_of_node.find(lang);
+                if (fwd_outer_it == _pImpl->_name_of_node.end()) break;
+                const auto fwd_it = fwd_outer_it->second.find(n);
+                if (fwd_it != fwd_outer_it->second.end() && fwd_it->second != name) _pImpl->remove_name_locked(n, lang);
+            }
             _pImpl->transfer_names_locked(from, into);
 
             target_node = into;
@@ -364,12 +375,9 @@ Node Zelph::set_name(const std::string& name_in_current_lang,
         auto old_forward_it = forward.find(node);
         if (old_forward_it != forward.end() && old_forward_it->second != new_name)
         {
-            auto old_reverse_it = reverse.find(old_forward_it->second);
-            if (old_reverse_it != reverse.end() && old_reverse_it->second == node)
-            {
-                reverse.erase(old_reverse_it);
-            }
+            const std::string_view old_name = old_forward_it->second;
             forward.erase(old_forward_it);
+            _pImpl->release_label_locked(target_lang, node, old_name);
         }
 
         std::string_view sv = _pImpl->_string_pool.intern(new_name);
@@ -480,31 +488,36 @@ Node Zelph::set_name(const std::string& name_in_current_lang,
         // else: inconsistent reverse entry -> continue into normal conflict handling
     }
 
-    // A merge is refused before any alteration, the names included, when a
-    // collection of a rule's text takes part.
+    // A merge is rejected before any modification, including the names, if
+    // a collection of a rule's text is involved, if the name matches the
+    // spelling of a core node, or if both nodes are core nodes -- the
+    // refusals of resolve_name_conflict_locked.
     {
-        Node other = 0;
+        Node other         = 0;
+        bool core_spelling = false;
         if (const auto it = node_of_name_cur.find(name_in_current_lang); it != node_of_name_cur.end())
             other = it->second;
         else if (const auto core = _core_names_by_name.find(name_in_current_lang); core != _core_names_by_name.end())
-            other = core->second;
-
-        if (other != 0 && other != result_node && (is_rule_template(other) || is_rule_template(result_node)))
         {
-            throw std::runtime_error(template_merge_refusal(name_in_current_lang, other, _lang, is_rule_template(result_node) ? result_node : other));
+            other         = core->second;
+            core_spelling = true;
+        }
+
+        if (other != 0 && other != result_node)
+        {
+            if (core_spelling) throw std::runtime_error(core_name_refusal(name_in_current_lang, other));
+            if (!get_core_name(other).empty() && !get_core_name(result_node).empty())
+                throw std::runtime_error(core_merge_refusal(name_in_current_lang, other, _lang));
+            if (is_rule_template(other) || is_rule_template(result_node))
+                throw std::runtime_error(template_merge_refusal(name_in_current_lang, other, _lang, is_rule_template(result_node) ? result_node : other));
         }
     }
 
     // Remove old current-language mapping for result_node, if any
     if (!old_current_name.empty())
     {
-        auto old_reverse_it = node_of_name_cur.find(old_current_name);
-        if (old_reverse_it != node_of_name_cur.end() && old_reverse_it->second == result_node)
-        {
-            node_of_name_cur.erase(old_reverse_it);
-        }
-
         name_of_node_cur.erase(result_node);
+        _pImpl->release_label_locked(_lang, result_node, old_current_name);
     }
 
     // Check whether the desired current-language name is already used by another regular node
@@ -548,40 +561,6 @@ Node Zelph::set_name(const std::string& name_in_current_lang,
         _pImpl->transfer_names_locked(from, into);
 
         result_node = into;
-    }
-    else if (conflict_it == node_of_name_cur.end())
-    {
-        // Not in regular map — but it might be a core node
-        auto core_it = _core_names_by_name.find(name_in_current_lang);
-        if (core_it != _core_names_by_name.end() && core_it->second != result_node)
-        {
-            Node core_node = core_it->second;
-
-            if (Impl::is_var(result_node) != Impl::is_var(core_node))
-            {
-                std::stringstream s;
-                s << "Requested name '" << name_in_current_lang
-                  << "' is already used by core node " << core_node
-                  << ". Merging is impossible because one node is a variable, the other not.";
-                throw std::runtime_error(s.str());
-            }
-
-            if (!Impl::is_var(result_node))
-            {
-                out_stream() << "Warning: (D) Merging Node \"" << format(result_node)
-                             << "\" into core Node \"" << format(core_node)
-                             << "\" due to name conflict '" << name_in_current_lang
-                             << "' in language '" << _lang << "'."
-                             << std::endl;
-            }
-
-            invalidate_fact_structures_cache();
-
-            _pImpl->merge(result_node, core_node);
-            _pImpl->transfer_names_locked(result_node, core_node);
-
-            result_node = core_node;
-        }
     }
 
     // Finally assign the desired current-language name
@@ -951,6 +930,24 @@ size_t Zelph::get_node_of_name_size(const std::string& lang) const
     return (it != _pImpl->_node_of_name.end()) ? it->second.size() : 0;
 }
 
+bool Zelph::name_maps_consistent() const
+{
+    std::shared_lock lock_node(_pImpl->_mtx_node_of_name);
+    std::shared_lock lock_name(_pImpl->_mtx_name_of_node);
+
+    for (const auto& [lang, rev] : _pImpl->_node_of_name)
+    {
+        const auto fwd_it = _pImpl->_name_of_node.find(lang);
+        for (const auto& [name, node] : rev)
+        {
+            if (fwd_it == _pImpl->_name_of_node.end()) return false;
+            const auto it = fwd_it->second.find(node);
+            if (it == fwd_it->second.end() || it->second != name) return false;
+        }
+    }
+    return true;
+}
+
 size_t Zelph::language_count() const
 {
     // Same rule as get_languages(), so that a count and the list below it in
@@ -981,11 +978,14 @@ void Zelph::Impl::transfer_names_locked(const Node from, const Node into)
         auto& reverse = reverse_outer_it->second;
 
         // Remove reverse entry for the disappearing pair (from_name -> from), if it exists.
-        auto rev_from_it = reverse.find(from_name);
-        if (rev_from_it != reverse.end() && rev_from_it->second == from)
+        auto       rev_from_it = reverse.find(from_name);
+        const bool from_held   = rev_from_it != reverse.end() && rev_from_it->second == from;
+        if (from_held)
         {
             reverse.erase(rev_from_it);
         }
+
+        std::vector<Node>* const carriers = label_carriers_locked(lang, from_name);
 
         auto it_into = forward.find(into);
         if (it_into != forward.end())
@@ -1003,6 +1003,16 @@ void Zelph::Impl::transfer_names_locked(const Node from, const Node into)
             // Drop the old forward mapping for "from".
             forward.erase(it_from);
 
+            // "from" no longer carries its name. A name it previously
+            // held, which other nodes now possess, is transferred to the
+            // first of them, unless "into" also bears it, in which case
+            // "into" holds it as before.
+            if (carriers != nullptr)
+            {
+                std::erase(*carriers, from);
+                if (from_held && into_name != from_name && !carriers->empty()) reverse.emplace(from_name, first_carrier_locked(*carriers));
+            }
+
             // Repair reverse mapping for the kept name.
             auto rev_into_it = reverse.find(into_name);
             if (rev_into_it == reverse.end())
@@ -1013,6 +1023,8 @@ void Zelph::Impl::transfer_names_locked(const Node from, const Node into)
             {
                 rev_into_it->second = into;
             }
+
+            if (carriers != nullptr) trim_label_locked(lang, from_name);
         }
         else
         {
@@ -1022,6 +1034,12 @@ void Zelph::Impl::transfer_names_locked(const Node from, const Node into)
             if (!inserted_into)
             {
                 new_into_it->second = from_name;
+            }
+
+            if (carriers != nullptr)
+            {
+                std::erase(*carriers, from);
+                if (may_carry_label(into)) carriers->push_back(into);
             }
 
             // Move reverse mapping from_name -> into
@@ -1041,6 +1059,8 @@ void Zelph::Impl::transfer_names_locked(const Node from, const Node into)
                     << "' in language '" << lang
                     << "' due to existing conflicting mapping.";
             }
+
+            if (carriers != nullptr) trim_label_locked(lang, from_name);
         }
     }
 }
@@ -1075,12 +1095,9 @@ void Zelph::Impl::assign_name_locked(const Node node, const std::string& name, c
     auto fwd_it = fwd.find(node);
     if (fwd_it != fwd.end() && fwd_it->second != name)
     {
-        auto old_rev_it = rev.find(fwd_it->second);
-        if (old_rev_it != rev.end() && old_rev_it->second == node)
-        {
-            rev.erase(old_rev_it);
-        }
+        const std::string_view old_name = fwd_it->second;
         fwd.erase(fwd_it);
+        release_label_locked(lang, node, old_name);
     }
 
     // 2. Intern new name
@@ -1132,6 +1149,15 @@ void Zelph::Impl::assign_name_locked(const Node node, const std::string& name, c
         }
 
         if (takes_over) rev_it->second = node;
+
+        // The remaining carriers of a shared name keep it; the previous
+        // owner has lost it, and the new one now bears it.
+        if (std::vector<Node>* const carriers = takes_over ? label_carriers_locked(lang, sv) : nullptr)
+        {
+            std::erase(*carriers, previous_owner);
+            if (may_carry_label(node) && std::find(carriers->begin(), carriers->end(), node) == carriers->end()) carriers->push_back(node);
+            trim_label_locked(lang, sv);
+        }
     }
     else if (rev_it == rev.end())
     {
@@ -1144,6 +1170,393 @@ void Zelph::Impl::assign_name_locked(const Node node, const std::string& name, c
     {
         new_fwd_it->second = sv;
     }
+}
+
+// Arranged such that the smaller value ranks first: the kind of entity
+// encoded in the two top bits, the number of its identifier positioned
+// beneath. Identifiers contain no more than 18 digits in this context, which
+// is sufficient.
+bool Zelph::Impl::label_precedes_locked(const Node a, const Node b) const
+{
+    // PRECONDITION:
+    // caller holds _mtx_name_of_node (shared or exclusive)
+
+    if (is_var(a) != is_var(b)) return is_var(b);
+
+    const auto rank = [this](const Node n) -> uint64_t
+    {
+        constexpr uint64_t property = 0, item = 1, other = 2, unnamed = 3;
+
+        const auto wd = _name_of_node.find("wikidata");
+        if (wd == _name_of_node.end()) return unnamed << 62;
+        const auto it = wd->second.find(n);
+        if (it == wd->second.end()) return unnamed << 62;
+
+        const std::string_view id = it->second;
+        if (id.size() < 2 || id.size() > 19
+            || !std::all_of(id.begin() + 1, id.end(), [](const char c)
+                            { return c >= '0' && c <= '9'; }))
+            return other << 62;
+
+        uint64_t number = 0;
+        for (const char c : id.substr(1))
+            number = number * 10 + static_cast<uint64_t>(c - '0');
+
+        const uint64_t kind = id[0] == 'P' ? property : id[0] == 'Q' ? item
+                                                                     : other;
+        return (kind << 62) | number;
+    };
+
+    const uint64_t rank_a = rank(a);
+    const uint64_t rank_b = rank(b);
+    return rank_a != rank_b ? rank_a < rank_b : a < b;
+}
+
+bool Zelph::label_precedes(const Node a, const Node b) const
+{
+    if (name_of_node_exclusive_depth > 0) return _pImpl->label_precedes_locked(a, b);
+
+    std::shared_lock lock(_pImpl->_mtx_name_of_node);
+    return _pImpl->label_precedes_locked(a, b);
+}
+
+// assign_name_locked hands a name to its most recent owner and strips the
+// previous one, a mechanism that `.name` and every other caller rely on. An
+// import cannot function in this manner: the label from whichever line a
+// thread had last processed ended up attached to its item, and every prior
+// item sharing that label lost its English name -- "man" was a Drosophila
+// gene, and P31 and P279 possessed no English name whatsoever. Here, the node
+// gets the label regardless of the name → node entry, no other node loses its
+// own, and that entry goes to the carrier label_precedes ranks first, the
+// same carrier irrespective of the order of the lines.
+void Zelph::Impl::assign_label_ranked_locked(const Node node, const std::string& label, const std::string& lang)
+{
+    // PRECONDITION:
+    // caller holds _mtx_node_of_name and _mtx_name_of_node exclusively
+    // in this order: _mtx_node_of_name -> _mtx_name_of_node
+
+    auto& rev = _node_of_name[lang];
+    auto& fwd = _name_of_node[lang];
+
+    // The label previously carried by the node is replaced, as a rename
+    // operation takes it.
+    if (const auto it = fwd.find(node); it != fwd.end() && it->second != label)
+    {
+        const std::string_view old_label = it->second;
+        fwd.erase(it);
+        release_label_locked(lang, node, old_label);
+    }
+
+    const std::string_view sv = _string_pool.intern(label);
+    fwd[node]                 = sv;
+
+    const auto [rev_it, inserted] = rev.try_emplace(sv, node);
+    if (inserted || rev_it->second == node) return;
+
+    // A second carrier: the label enters the index alongside both, enabling
+    // the discovery of the others upon removal of its holder. Not following a
+    // partial load, which builds no index (see nodes_named).
+    const Node holder = rev_it->second;
+    if (!_names_loaded_partially.load(std::memory_order_relaxed))
+    {
+        std::vector<Node>& carriers = _label_index[lang][sv];
+        for (const Node n : {holder, node})
+        {
+            if (may_carry_label(n) && std::find(carriers.begin(), carriers.end(), n) == carriers.end()) carriers.push_back(n);
+        }
+    }
+
+    if (label_precedes_locked(node, holder)) rev_it->second = node;
+
+    if (!_names_loaded_partially.load(std::memory_order_relaxed)) trim_label_locked(lang, sv);
+}
+
+void Zelph::assign_label_ranked(const Node node, const std::string& label, std::string lang)
+{
+    if (lang.empty()) lang = _lang;
+
+    std::unique_lock lock_node(_pImpl->_mtx_node_of_name);
+    std::unique_lock lock_name(_pImpl->_mtx_name_of_node);
+
+    ExclusiveNameAccessScope scope_node(node_of_name_exclusive_depth);
+    ExclusiveNameAccessScope scope_name(name_of_node_exclusive_depth);
+
+    _pImpl->assign_label_ranked_locked(node, label, lang);
+}
+
+// The importer's vocabulary, not the engine's: `.cleanup` keeps the node
+// even when nothing references it, and a predicate slice takes it along.
+const char* Zelph::wikidata_labels_marker_name()
+{
+    return "wikidata:labels-v2";
+}
+
+bool Zelph::Impl::may_carry_label(const Node n) const
+{
+    return !is_var(n) && (_core_names == nullptr || _core_names->count(n) == 0);
+}
+
+std::vector<Node>* Zelph::Impl::label_carriers_locked(const std::string& lang, const std::string_view label)
+{
+    if (_label_index.empty()) return nullptr;
+    const auto lang_it = _label_index.find(lang);
+    if (lang_it == _label_index.end()) return nullptr;
+    const auto it = lang_it->second.find(label);
+    return it == lang_it->second.end() ? nullptr : &it->second;
+}
+
+const std::vector<Node>* Zelph::Impl::label_carriers_locked(const std::string& lang, const std::string_view label) const
+{
+    return const_cast<Impl*>(this)->label_carriers_locked(lang, label);
+}
+
+Node Zelph::Impl::first_carrier_locked(const std::vector<Node>& carriers) const
+{
+    return *std::min_element(carriers.begin(), carriers.end(), [this](const Node a, const Node b)
+                             { return label_precedes_locked(a, b); });
+}
+
+// A label departs from the index once no other node carries it any
+// more: no carrier remains, or the sole one left is the node to which
+// it resolves.
+void Zelph::Impl::trim_label_locked(const std::string& lang, const std::string_view label)
+{
+    const auto lang_it = _label_index.find(lang);
+    if (lang_it == _label_index.end()) return;
+    const auto it = lang_it->second.find(label);
+    if (it == lang_it->second.end()) return;
+
+    const std::vector<Node>& carriers = it->second;
+    if (carriers.size() > 1) return;
+    if (carriers.size() == 1)
+    {
+        const auto rev_outer_it = _node_of_name.find(lang);
+        if (rev_outer_it == _node_of_name.end()) return;
+        const auto rev_it = rev_outer_it->second.find(label);
+        if (rev_it == rev_outer_it->second.end() || rev_it->second != carriers.front()) return;
+    }
+
+    lang_it->second.erase(it);
+    if (lang_it->second.empty()) _label_index.erase(lang_it);
+}
+
+// Once the `node` has relinquished its `label` in `lang` -- the node → name
+// entry is already absent. If the `node` was previously holding the `label`,
+// the name → node mapping shifts to the carrier that ranks first among the
+// remaining ones, or vanishes if no others remain.
+void Zelph::Impl::release_label_locked(const std::string& lang, const Node node, const std::string_view label)
+{
+    std::vector<Node>* const carriers = label_carriers_locked(lang, label);
+    if (carriers != nullptr) std::erase(*carriers, node);
+
+    if (const auto rev_outer_it = _node_of_name.find(lang); rev_outer_it != _node_of_name.end())
+    {
+        auto&      rev    = rev_outer_it->second;
+        const auto rev_it = rev.find(label);
+        if (rev_it != rev.end() && rev_it->second == node)
+        {
+            if (carriers != nullptr && !carriers->empty())
+                rev_it->second = first_carrier_locked(*carriers);
+            else
+                rev.erase(rev_it);
+        }
+    }
+
+    if (carriers != nullptr) trim_label_locked(lang, label);
+}
+
+// The release_label_locked batch form: each node `gone` names has already
+// forfeited its node -> name entry, and every label undergoes filtering
+// just once, regardless of how many of its carriers went.
+void Zelph::Impl::settle_labels_locked(const std::string& lang, const std::vector<std::string_view>& labels, const std::function<bool(Node)>& gone)
+{
+    const auto rev_outer_it = _node_of_name.find(lang);
+
+    for (const std::string_view label : labels)
+    {
+        std::vector<Node>* const carriers = label_carriers_locked(lang, label);
+        if (carriers == nullptr) continue; // already settled
+        std::erase_if(*carriers, gone);
+
+        if (rev_outer_it != _node_of_name.end())
+        {
+            auto&      rev    = rev_outer_it->second;
+            const auto rev_it = rev.find(label);
+            if (rev_it == rev.end())
+            {
+                if (!carriers->empty()) rev.emplace(label, first_carrier_locked(*carriers));
+            }
+            else if (gone(rev_it->second))
+            {
+                if (!carriers->empty())
+                    rev_it->second = first_carrier_locked(*carriers);
+                else
+                    rev.erase(rev_it);
+            }
+        }
+
+        trim_label_locked(lang, label);
+    }
+}
+
+// A single traversal through the node → name entries of a language where the
+// two maps differ in size: given the invariant that the reverse map
+// preserves, the discrepancy amounts precisely to the entries no name → node
+// entry points back at, and a language lacking any costs nothing. A language
+// whose maps differ solely in the display names of variables costs one pass
+// that finds nothing.
+//
+// A label with carriers but no node it resolves to -- a slice that left the
+// holder behind, a network pruned by an engine that failed to re-elect -- or
+// whose name → node entry corresponds to a variable's display name gets the
+// carrier that ranks first, just as the removal of the holder would have
+// granted, and just as an atom takes a name from a variable.
+void Zelph::Impl::rebuild_label_index_locked()
+{
+    _label_index.clear();
+    if (_names_loaded_partially.load(std::memory_order_relaxed)) return;
+
+    for (const auto& [lang, fwd] : _name_of_node)
+    {
+        const auto   rev_outer_it = _node_of_name.find(lang);
+        const size_t rev_size     = rev_outer_it == _node_of_name.end() ? 0 : rev_outer_it->second.size();
+        if (fwd.size() == rev_size) continue;
+
+        label_carriers carriers;
+        for (const auto& [node, label] : fwd)
+        {
+            if (!may_carry_label(node)) continue;
+            if (rev_outer_it != _node_of_name.end())
+            {
+                const auto rev_it = rev_outer_it->second.find(label);
+                if (rev_it != rev_outer_it->second.end() && rev_it->second == node) continue;
+            }
+            carriers[label].push_back(node);
+        }
+        if (carriers.empty()) continue;
+
+        auto& rev = _node_of_name[lang];
+        for (auto it = carriers.begin(); it != carriers.end();)
+        {
+            const std::string_view label  = it->first;
+            std::vector<Node>&     nodes  = it->second;
+            const auto             rev_it = rev.find(label);
+
+            Node holder = 0;
+            if (rev_it != rev.end() && !is_var(rev_it->second))
+            {
+                holder = rev_it->second;
+                if (may_carry_label(holder)) nodes.push_back(holder);
+            }
+            else
+            {
+                holder = first_carrier_locked(nodes);
+                if (rev_it != rev.end())
+                    rev_it->second = holder;
+                else
+                    rev.emplace(label, holder);
+            }
+
+            if (nodes.size() == 1 && nodes.front() == holder)
+            {
+                it = carriers.erase(it);
+            }
+            else
+            {
+                nodes.shrink_to_fit();
+                ++it;
+            }
+        }
+
+        if (!carriers.empty()) _label_index.emplace(lang, std::move(carriers));
+    }
+}
+
+void Zelph::Impl::rebuild_label_index()
+{
+    std::unique_lock lock_node(_mtx_node_of_name);
+    std::unique_lock lock_name(_mtx_name_of_node);
+
+    ExclusiveNameAccessScope scope_node(node_of_name_exclusive_depth);
+    ExclusiveNameAccessScope scope_name(name_of_node_exclusive_depth);
+
+    rebuild_label_index_locked();
+}
+
+std::optional<std::vector<Node>> Zelph::nodes_named(const std::string& name, std::string lang) const
+{
+    if (lang.empty()) lang = _lang;
+
+    std::shared_lock lock_node(_pImpl->_mtx_node_of_name);
+    std::shared_lock lock_name(_pImpl->_mtx_name_of_node);
+
+    if (_pImpl->_names_loaded_partially.load(std::memory_order_relaxed)) return std::nullopt;
+
+    if (const std::vector<Node>* const carriers = _pImpl->label_carriers_locked(lang, name))
+    {
+        std::vector<Node> sorted(*carriers);
+        std::sort(sorted.begin(), sorted.end(), [this](const Node a, const Node b)
+                  { return _pImpl->label_precedes_locked(a, b); });
+        return sorted;
+    }
+
+    if (const auto rev_outer_it = _pImpl->_node_of_name.find(lang); rev_outer_it != _pImpl->_node_of_name.end())
+    {
+        if (const auto it = rev_outer_it->second.find(name); it != rev_outer_it->second.end() && _pImpl->may_carry_label(it->second))
+            return std::vector<Node>{it->second};
+    }
+    return std::vector<Node>{};
+}
+
+bool Zelph::label_index_consistent() const
+{
+    std::shared_lock lock_node(_pImpl->_mtx_node_of_name);
+    std::shared_lock lock_name(_pImpl->_mtx_name_of_node);
+
+    if (_pImpl->_names_loaded_partially.load(std::memory_order_relaxed)) return _pImpl->_label_index.empty();
+
+    size_t languages = 0;
+    for (const auto& [lang, fwd] : _pImpl->_name_of_node)
+    {
+        const auto rev_outer_it = _pImpl->_node_of_name.find(lang);
+
+        // The index that the build would produce, excluding its elections.
+        Impl::label_carriers expected;
+        for (const auto& [node, label] : fwd)
+        {
+            if (!_pImpl->may_carry_label(node)) continue;
+            if (rev_outer_it != _pImpl->_node_of_name.end())
+            {
+                const auto rev_it = rev_outer_it->second.find(label);
+                if (rev_it != rev_outer_it->second.end() && rev_it->second == node) continue;
+            }
+            expected[label].push_back(node);
+        }
+
+        for (auto& [label, nodes] : expected)
+        {
+            if (rev_outer_it == _pImpl->_node_of_name.end()) return false;
+            const auto rev_it = rev_outer_it->second.find(label);
+            if (rev_it == rev_outer_it->second.end()) return false;
+            if (_pImpl->may_carry_label(rev_it->second)) nodes.push_back(rev_it->second);
+            std::sort(nodes.begin(), nodes.end());
+        }
+
+        const auto   index_it = _pImpl->_label_index.find(lang);
+        const size_t indexed  = index_it == _pImpl->_label_index.end() ? 0 : index_it->second.size();
+        if (indexed != expected.size()) return false;
+        if (indexed > 0) ++languages;
+
+        for (const auto& [label, nodes] : expected)
+        {
+            const auto it = index_it->second.find(label);
+            if (it == index_it->second.end()) return false;
+            std::vector<Node> kept(it->second);
+            std::sort(kept.begin(), kept.end());
+            if (kept != nodes) return false;
+        }
+    }
+    return languages == _pImpl->_label_index.size();
 }
 
 void Zelph::Impl::remove_name_locked(const Node node, const std::string& lang)
@@ -1168,18 +1581,7 @@ void Zelph::Impl::remove_name_locked(const Node node, const std::string& lang)
     const std::string_view old_name = fwd_it->second;
     fwd.erase(fwd_it);
 
-    auto rev_outer_it = _node_of_name.find(lang);
-    if (rev_outer_it == _node_of_name.end())
-    {
-        return;
-    }
-
-    auto& rev    = rev_outer_it->second;
-    auto  rev_it = rev.find(old_name);
-    if (rev_it != rev.end() && rev_it->second == node)
-    {
-        rev.erase(rev_it);
-    }
+    release_label_locked(lang, node, old_name);
 }
 
 size_t Zelph::Impl::cleanup_dangling_names()
@@ -1196,66 +1598,86 @@ size_t Zelph::Impl::cleanup_dangling_names()
         }
     }
 
+    const auto gone = [&valid_nodes](const Node n)
+    { return valid_nodes.count(n) == 0; };
+
+    std::unique_lock lock_node(_mtx_node_of_name);
+    std::unique_lock lock_name(_mtx_name_of_node);
+
+    // A label that other nodes carry remains intact when a node goes: its
+    // name → node entry goes to the first carrier remaining, following both
+    // walks.
+    std::unordered_map<std::string, std::vector<std::string_view>> shared;
+
+    for (auto& lang_pair : _name_of_node)
     {
-        std::unique_lock lock(_mtx_name_of_node);
-        for (auto& lang_pair : _name_of_node)
+        auto& map = lang_pair.second;
+        for (auto it = map.begin(); it != map.end();)
         {
-            auto& map = lang_pair.second;
-            for (auto it = map.begin(); it != map.end();)
+            if (gone(it->first))
             {
-                if (valid_nodes.count(it->first) == 0)
-                {
-                    it = map.erase(it);
-                    removed_count++;
-                }
-                else
-                {
-                    ++it;
-                }
+                if (label_carriers_locked(lang_pair.first, it->second) != nullptr) shared[lang_pair.first].push_back(it->second);
+                it = map.erase(it);
+                removed_count++;
+            }
+            else
+            {
+                ++it;
             }
         }
     }
 
+    for (auto& lang_pair : _node_of_name)
     {
-        std::unique_lock lock(_mtx_node_of_name);
-        for (auto& lang_pair : _node_of_name)
+        auto& map = lang_pair.second;
+        for (auto it = map.begin(); it != map.end();)
         {
-            auto& map = lang_pair.second;
-            for (auto it = map.begin(); it != map.end();)
+            if (gone(it->second))
             {
-                if (valid_nodes.count(it->second) == 0)
+                removed_count++;
+                if (label_carriers_locked(lang_pair.first, it->first) != nullptr)
                 {
-                    it = map.erase(it);
-                    removed_count++;
+                    shared[lang_pair.first].push_back(it->first);
+                    ++it;
                 }
                 else
                 {
-                    ++it;
+                    it = map.erase(it);
                 }
+            }
+            else
+            {
+                ++it;
             }
         }
     }
+
+    for (const auto& [lang, labels] : shared)
+        settle_labels_locked(lang, labels, gone);
 
     // Note: removed strings remain in _string_pool (append-only).
 
     return removed_count;
 }
 
-// The names of MANY nodes, in ONE pass over the reverse map.
+// The reverse entries of a node are discovered via its forward entries:
+// each writer maintains the invariant "node_of_name[l][s] = n implies
+// name_of_node[l][n] = s", meaning the names a node holds in the reverse
+// map are limited to at most one name per language as provided by the
+// forward map. Consequently, a removal requires a single lookup per
+// language and walks nothing.
 //
-// remove_node_names below has to SCAN `_node_of_name` for a value
-// equal to the node: the forward map holds one name per language,
-// while several names may point AT one node, so it cannot say which
-// reverse entries exist. One scan per node is the right trade for
-// `.remove`, where one scan is one scan, and fatal in bulk.
+// Previously, it performed `_node_of_name` walks for entries matching the
+// node, executing one such walk per node. Measured during the live run on
+// 11 August 2026: pruning the full Wikidata dump achieved a rate of 1.11
+// nodes per second and spent 97.7 % of its time within that walk, as the
+// map contains approximately 204 million entries at that location;
+// conducting one walk per batch rendered pruning feasible, and each cluster
+// drop and every claim associated with a marked pattern still paid one walk
+// per node.
 //
-// Measured on the live run of 11 August 2026: pruning the full
-// Wikidata dump managed 1.11 nodes per second and spent 97.7 % of its
-// time in remove_node_names, because that map holds ~204 million
-// entries there (204 chunks of `chunk_entries`). The script's
-// 6.2 million removals would have taken two months. The dead set
-// answers the same question in one pass, so a prune costs one scan
-// per COMMAND instead of one per node.
+// Following a partial load, the two sections might not align, and the walk
+// remains unchanged: see _names_loaded_partially.
 void Zelph::Impl::remove_names_of(const adjacency_set& dead)
 {
     if (dead.empty()) return;
@@ -1263,26 +1685,61 @@ void Zelph::Impl::remove_names_of(const adjacency_set& dead)
     std::unique_lock lock1(_mtx_node_of_name);
     std::unique_lock lock2(_mtx_name_of_node);
 
-    // Forward: keyed by the node, so no scan is needed either way.
-    for (auto& lang_map : _name_of_node)
+    if (_names_loaded_partially.load(std::memory_order_relaxed))
     {
-        for (const Node nd : dead)
-            lang_map.second.erase(nd);
-    }
-
-    _name_map_scans.fetch_add(1, std::memory_order_relaxed);
-
-    for (auto& lang_map : _node_of_name)
-    {
-        auto& map = lang_map.second;
-        for (auto it = map.begin(); it != map.end();)
+        for (auto& lang_map : _name_of_node)
         {
-            if (dead.count(it->second) != 0)
-                it = map.erase(it);
-            else
-                ++it;
+            for (const Node nd : dead)
+                lang_map.second.erase(nd);
+        }
+
+        _name_map_scans.fetch_add(1, std::memory_order_relaxed);
+
+        for (auto& lang_map : _node_of_name)
+        {
+            auto& map = lang_map.second;
+            for (auto it = map.begin(); it != map.end();)
+            {
+                if (dead.count(it->second) != 0)
+                    it = map.erase(it);
+                else
+                    ++it;
+            }
         }
     }
+    else
+    {
+        for (auto& [lang, fwd] : _name_of_node)
+        {
+            const auto                    rev_outer_it = _node_of_name.find(lang);
+            std::vector<std::string_view> shared;
+            for (const Node nd : dead)
+            {
+                const auto it = fwd.find(nd);
+                if (it == fwd.end()) continue;
+                const std::string_view name = it->second;
+                fwd.erase(it);
+
+                // A label that other nodes carry becomes settled once
+                // across the entire batch, as shown below.
+                if (label_carriers_locked(lang, name) != nullptr)
+                {
+                    shared.push_back(name);
+                    continue;
+                }
+
+                if (rev_outer_it == _node_of_name.end()) continue;
+                const auto rev_it = rev_outer_it->second.find(name);
+                if (rev_it != rev_outer_it->second.end() && rev_it->second == nd) rev_outer_it->second.erase(rev_it);
+            }
+
+            if (!shared.empty())
+                settle_labels_locked(lang, shared, [&dead](const Node n)
+                                     { return dead.count(n) != 0; });
+        }
+    }
+
+    erase_empty_languages_locked();
 }
 
 void Zelph::Impl::remove_node_names(Node nd)
@@ -1290,28 +1747,67 @@ void Zelph::Impl::remove_node_names(Node nd)
     std::unique_lock lock1(_mtx_node_of_name);
     std::unique_lock lock2(_mtx_name_of_node);
 
-    // Remove forward mappings (node → name) in all languages
-    for (auto& lang_map : _name_of_node)
+    if (_names_loaded_partially.load(std::memory_order_relaxed))
     {
-        lang_map.second.erase(nd);
-    }
-
-    // Remove reverse mappings (name → node) for this node in all languages
-    _name_map_scans.fetch_add(1, std::memory_order_relaxed);
-
-    for (auto& lang_map : _node_of_name)
-    {
-        auto& map = lang_map.second;
-        for (auto it = map.begin(); it != map.end();)
+        for (auto& lang_map : _name_of_node)
         {
-            if (it->second == nd)
+            lang_map.second.erase(nd);
+        }
+
+        _name_map_scans.fetch_add(1, std::memory_order_relaxed);
+
+        for (auto& lang_map : _node_of_name)
+        {
+            auto& map = lang_map.second;
+            for (auto it = map.begin(); it != map.end();)
             {
-                it = map.erase(it);
-            }
-            else
-            {
-                ++it;
+                if (it->second == nd)
+                {
+                    it = map.erase(it);
+                }
+                else
+                {
+                    ++it;
+                }
             }
         }
+    }
+    else
+    {
+        for (auto& [lang, fwd] : _name_of_node)
+        {
+            const auto it = fwd.find(nd);
+            if (it == fwd.end()) continue;
+            const std::string_view name = it->second;
+            fwd.erase(it);
+            release_label_locked(lang, nd, name);
+        }
+    }
+
+    erase_empty_languages_locked();
+}
+
+// A language remains registered as long as at least one map knows it
+// (get_languages), and a registered language changes more than a count:
+// `wikidata` by itself triggers the display update for every node bearing
+// an `en` name (get_formatted_name). Thus, a removal that empties both maps
+// of a language removes the language as well.
+void Zelph::Impl::erase_empty_languages_locked()
+{
+    std::vector<std::string> empty;
+    for (const auto& [lang, fwd] : _name_of_node)
+    {
+        if (!fwd.empty()) continue;
+        const auto rev_it = _node_of_name.find(lang);
+        if (rev_it == _node_of_name.end() || rev_it->second.empty()) empty.push_back(lang);
+    }
+    for (const auto& [lang, rev] : _node_of_name)
+    {
+        if (rev.empty() && _name_of_node.find(lang) == _name_of_node.end()) empty.push_back(lang);
+    }
+    for (const std::string& lang : empty)
+    {
+        _name_of_node.erase(lang);
+        _node_of_name.erase(lang);
     }
 }

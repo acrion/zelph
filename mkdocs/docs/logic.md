@@ -407,6 +407,17 @@ alarm is on  [rule pattern; not asserted]
 
 When the user types the identical `(rust is bad) seen (alarm is on)`, it writes both parts and claims them.
 
+A mentioned rule features the same slots as any other rule: a condition operator must reside at the top of one of its conditions, just as in a typed rule, and is disallowed elsewhere, particularly within the consequence. What follows beneath the operator, as written in the mention, constitutes a pattern, as the other components of the rule do, whether in a statement or in a query:
+
+```
+zelph> ((X is bad, ¬(rust is fixed)) => (alarm is on)) "was proposed by" bob
+zelph> rust is bad
+zelph> A is B
+Answer: rust is bad
+zelph> .explain (rust is fixed)
+rust is fixed  [rule pattern; not asserted]
+```
+
 A firing does not derive a statement whose instance would keep a variable from a rule it mentions. It writes the conditions of such a rule exactly as they are, meaning that `(X p Y) => (X about ((A r B, A s B) => (c q d)))` would write rule text that no query answers, and the first rule below would produce half of a rule that was never written, with `b` and `k` appearing in its consequence while `X` and `Y` remain in its conditions. Neither is derived: nothing is written, claimed, or printed, and no witness is made for a fresh variable that exists solely in that context. The same applies within a collection of the rule’s text, for which the firing builds a value, as seen in the second rule below. There, the firing also keeps a variable it does not bind, such as `B` in the third rule, whereas a rule that the firing makes ground, as in the fourth, is derived:
 
 ```
@@ -740,17 +751,16 @@ what the engine WALKS, not what you assert. Write a variable to ASK ("S p⁺ b")
 or use the path as a condition -- in a rule, or in a query (a line with a
 variable).
 zelph> S P279⁺ d
-(S P279 d) closure one-or-more
-Answer: (a P279 d) closure one-or-more
-Answer: (b P279 d) closure one-or-more
-Answer: (c P279 d) closure one-or-more
+Answer: a P279⁺ d
+Answer: b P279⁺ d
+Answer: c P279⁺ d
 ```
 
-In a query, the ground path functions as a condition in addition to the others, and when both endpoints are bound, it acts as a reachability test, just as it does within a rule. The single step beneath the marker constitutes a pattern at that location, hence `S P279 d` does not answer `a P279 d`:
+Every answer constitutes a ground path, and when entered again, it is the line refused above. In a query, the ground path functions as a condition in addition to the others, and when both endpoints are bound, it acts as a reachability test, just as it does within a rule. The single step beneath the marker constitutes a pattern at that location, hence `S P279 d` does not answer `a P279 d`:
 
 ```
 zelph> X P279 b, a P279⁺ d
-Answer: {(a P279 b) ((a P279 d) closure one-or-more)}
+Answer: a P279 b, a P279⁺ d
 zelph> X P279 b, d P279⁺ a
 zelph> S P279 d
 Answer: c P279 d
@@ -773,7 +783,7 @@ rule, or in a query (a line with a variable) -- under "¬" for the case the net
 does not confirm.
 ```
 
-Nor does putting them one argument down. A line lacking a variable possesses no condition slot at any level of nesting, thus all three operators are rejected within one:
+Nor does putting them one argument down. A line lacking a variable possesses no condition slot at any level of nesting outside a rule it mentions, thus all three operators are rejected within one:
 
 ```
 zelph> x mentions (≈net(a p b))
@@ -834,7 +844,7 @@ A negated condition inquires into _absence_ – but absence _at what time_? Whil
 
 Results arising from deferred rules may activate positive rules, leading to alternating phases at one level until no additional derivations can be made; only then does progression to the next level start. This ordering guarantees that negation-as-failure stays sound in a forward-chaining system: facts continuously accumulate, so a later derivation may cause a negation to _fail_ but never cause it to _succeed_ anew – a negation that succeeds at a stratum boundary is final, assuming no subsequent process can derive a fact that the negation had checked for absence. In terms of logic programming, evaluation is _inflationary_ – facts are introduced only, never removed – whereas a program employing ¬ is _non-monotonic_: an additional fact may invalidate a negation and thus necessitate retracting a prior conclusion. The strata serve to harmonize these two aspects; for rules they cannot order, check mode reports a derived fact whose negated condition has come to hold.
 
-The levels guarantee precisely that. A rule depends on another when the latter is capable of generating a fact – anywhere within the depth of its conclusion – by employing a predicate that the former accesses, whether in affirmation or within a negation. A negated rule executes solely after every rule whose facts it tests under negation – either directly or via positive rules in between – has derived all possible derivations. When such facts are accessed solely in affirmation, it runs no lower than the rule that produces them, potentially at the same level, where the two alternate until neither derives anything new. Rules that negate outcomes they contribute to cannot be ordered in any way; they represent the first of the two boundaries mentioned below. In
+The levels guarantee precisely that. A rule depends on another if the latter is able to produce a fact – anywhere within the depth of its conclusion – whose predicate is accessed by the former, either affirmatively or within a negation, and whose object is the same where both name a constant one, as detailed following the `.strata` examples below. A negated rule executes solely after every rule whose facts it tests under negation – either directly or via positive rules in between – has derived all possible derivations. When such facts are accessed solely in affirmation, it runs no lower than the rule that produces them, potentially at the same level, where the two alternate until neither derives anything new. Rules that negate outcomes they contribute to cannot be ordered in any way; they represent the first of the two boundaries mentioned below. In
 
 ```
 zelph> (¬(:blockp A), (:start A)) => (:q A)
@@ -868,6 +878,35 @@ Two boundaries are worth knowing:
 
 Both boundaries may leave behind the same signature: a fact that was derived under a negation that no longer holds. `.semi-naive check` explicitly looks for this exact scenario. Upon completion of each execution, it re-evaluates every negation that could have been invalidated by a newly introduced fact, and it reports every fact whose negated condition now holds and which is not derived through any alternative route. The fact persists, as facts are only added over time. Each rule continues to be satisfied – the rule that derived the fact now has a condition that fails – but the state contains a fact that none of your rules supports any more: it is not a supported model. Three types of rule are not re-tested, since the test cannot differentiate between a fact that has been lost and one that continues to be derived: a rule featuring a [neural condition](neural.md), a rule that negates a [path condition](#transitive-path-conditions), and a rule whose path condition binds a variable that neither a fact condition nor the conclusion binds. What check mode is unable to identify is a choice between two outcomes, both of which are logically consistent. With `(:p A, ¬(:q A)) => (:r A)` and `(:p A, ¬(:r A)) => (:q A)`, `:p w` ends with either `(w r w)` or `(w q w)`, depending on the order in which the rules execute, and the rules support either outcome.
 
+Outside check mode, enabling `.negation-records on` maintains identical records and runs the same test following each execution, yet issues a warning for a fact whose negated premise now holds: the execution completes successfully, and the fact remains present. The warning names the fact alongside the rule that derived it, allowing a front end to inform the user that a later statement has defeated an earlier conclusion. A man is considered happy if every dog they possess barks, and `h1` marks a man who owns a dog that does not bark:
+
+```
+zelph> .negation-records on
+Negation records: on
+zelph> (M ~ man, M owns D, D ~ dog, ¬(D barks nil)) => (M h1 nil)
+zelph> (M ~ man, ¬(M h1 nil)) => (M is happy)
+zelph> bill ~ man
+(bill is happy) ⇐ {(bill ~ man) (¬(bill h1 nil))}
+zelph> bill owns max
+zelph> max ~ dog
+(bill h1 nil) ⇐ {(max ~ dog) (bill ~ man) (¬(max barks nil)) (bill owns max)}
+Warning: 1 fact(s) no longer justified -- a negated premise they were derived
+under now holds, and nothing else derives them; they stay:
+  bill is happy  (by ((M ~ man), ¬(M h1 nil)) => (M is happy))
+zelph> john owns fido
+zelph> fido ~ dog
+zelph> john ~ man
+(john h1 nil) ⇐ {(fido ~ dog) (john ~ man) (¬(fido barks nil)) (john owns fido)}
+zelph> fido barks nil
+Warning: 1 fact(s) no longer justified -- a negated premise they were derived
+under now holds, and nothing else derives them; they stay:
+  john h1 nil  (by ((D ~ dog), (M ~ man), ¬(D barks nil), (M owns D)) => (M h1 nil))
+zelph> X is happy
+Answer: bill is happy
+```
+
+The warning names the fact that has lost its support, not what that fact blocks. After `fido` barks, `(john is happy)` ought to follow, yet locating it would require assessing the rules as though `(john h1 nil)` had been removed – its withdrawal, which zelph does not perform. Nor does the warning refer to a fact that a rule lacking negation derived from the stale one, since that fact is still derived. The records are held in memory, one per fact that a rule with a negated condition derives, which is why the toggle is off by default: disabling it frees those records, `.new` and a `.load` that replaces the network discard them, and a saved network excludes them. Each record contains the fact, the rule, the rule’s condition set, and the variable bindings from the firing event: 72 bytes in an array that grows by doubling, plus 48 bytes per binding. Measured over 200,000 and 400,000 derived facts, the process grew by approximately 250 bytes per record for a rule binding one variable, and by an additional 60 bytes for each further variable, so a million such facts cost roughly a quarter to two fifths of a gigabyte. The time is spent on re-evaluation: after each execution, every record whose rule negates a predicate that has acquired new facts since the last check is re-verified under its bindings, taking about a microsecond per record, while the remaining records incur a pass across the array that was too small to measure at this size. A session holding a million records with auto-run enabled thus pays about one second after each statement that adds a fact to a negated predicate. A Janet program switches the records on via [`(zelph/negation-records true)`](janet.md#running-the-engine) and retrieves the list of the most recent run from [`(zelph/defeated)`](janet.md#running-the-engine).
+
 `.strata` shows the levels of the rules in their current state, without executing any of them. Regarding the three rules from the example above:
 
 ```
@@ -894,13 +933,28 @@ Not stratifiable, on level 1 -- these rules negate what they derive:
   (¬(:q A), (:p A)) => (:r A)
 ```
 
-The analysis examines predicates rather than patterns, which means it also reports a cycle that would only be resolved by the arguments of the facts. Two shipped modules exemplify this behaviour. The gate rule in `binary-nand-arithmetic` negates `((A nand B) out 0)` and derives `((A nand B) out 1)`. The primality rule referenced earlier appears alongside the entire arithmetic set, because the rule that reports its result, `(N testprime N, N isprime N) => ((N testprime N) = prime)`, closes the cycle twice: it creates an `=` fact, which serves as the predicate for every arithmetic result the divisor scan reads, and the `(N testprime N)` within it initiates the scan. Neither element can produce a fact that the negation depends on. The `=` fact features a `testprime` term as its subject, never one of the arithmetic terms the scan reads, and `(N testprime N)` is already present, as it is the rule’s own premise. Consequently, every `hasdivisor` fact is derived before the rule’s level runs, and check mode confirms this during every run.
+A pattern positioned at the top of a condition or conclusion is compared by its predicate, and if its object corresponds to a single constant, that constant is also taken into account. Each class membership constitutes a `~` fact, and the objects keep rules about different classes apart; `married`, `bachelor`, and `husband` order these two rules across two distinct levels:
+
+```
+zelph> (X ~ man, ¬(X ~ married)) => (X ~ bachelor)
+zelph> (X ~ man, ¬(X ~ bachelor)) => (X ~ husband)
+zelph> .strata
+2 negation levels:
+Level 1:
+  (¬(X ~ married), (X ~ man)) => (X ~ bachelor)
+Level 2:
+  ((X ~ man), ¬(X ~ bachelor)) => (X ~ husband)
+```
+
+A variable located in the object position, a term or several objects, and each statement enclosed within a pattern represent facts involving any object: a negation of `(X ~ married)` also waits for a rule that derives `(X ~ C)`. A [path condition](#transitive-path-conditions) counts as its predicate with any object, because its walk traverses facts that involve any object. When a rule governing predicates like the transitivity rule is in force, no object undergoes comparison (see [Rules over predicates](#rules-over-predicates)).
+
+The analysis does not compare entire patterns, implying it also identifies cycles that only the subjects of the facts would resolve. Two shipped modules exemplify this behaviour. The gate rule in `binary-nand-arithmetic` negates `((A nand B) out 0)`, and the gate rules that read the `out` facts it generates yield `out` facts where the output is a variable, for instance `((A and B) out V)`. The primality rule referenced earlier appears alongside the entire arithmetic set, because the rule that reports its result, `(N testprime N, N isprime N) => ((N testprime N) = prime)`, closes the cycle twice: it creates an `=` fact, which serves as the predicate for every arithmetic result the divisor scan reads, and the `(N testprime N)` within it initiates the scan. Neither element can produce a fact that the negation depends on. The `=` fact features a `testprime` term as its subject, never one of the arithmetic terms the scan reads, and `(N testprime N)` is already present, as it is the rule’s own premise. Consequently, every `hasdivisor` fact is derived before the rule’s level runs, and check mode confirms this during every run.
 
 ##### Rules over predicates
 
 A [meta-rule](#meta-rules-predicates-as-first-class-nodes) features a variable in place of the predicate, meaning the analysis cannot determine which predicates it creates.
 When this variable corresponds to the predicate of a fact the rule has matched – `(R is transitive, A R B, B R C) => (A R C)`, and likewise for the symmetric and reflexive rule – the rule only extends predicates that already possess associated facts, and the levels remain unchanged: whatever is awaiting those facts is already awaiting whatever generates them.
-Which predicates the rule extends is determined by the declaration it reads, `(R is transitive)`, hence every negation is positioned after the rules that derive such declarations.
+Which predicates the rule extends is determined by the declaration it reads, `(R is transitive)`, hence every negation is positioned after the rules that derive such declarations. As long as this rule remains in force, the analysis compares predicates independently of their objects: the facts it produces inherit their objects from other facts – `(w linked b)` and `(b linked c)` give `(w linked c)` – and the predicates it extends are determined by the declarations present within the facts.
 
 A rule that takes the predicate it creates from the subject or object of a fact – such as the [opposite relations](#meta-rules-predicates-as-first-class-nodes) rule `(R "is opposite of" S, X R Y) => (Y S X)`, or a sub-property axiom `(P subpropertyof Q, X P Y) => (X Q Y)` – or that reads a second predicate variable, is considered to create every predicate.
 This kind of rule joins every negating rule it can reach into a single level, where they alternate as outlined in the first boundary description, and is listed under "Not stratifiable" in `.strata`.
@@ -1472,7 +1526,7 @@ zelph> Q2 P279 Q3
 zelph> Q3 P279 Q4
 zelph> alice member Q1
 zelph> (X member C, C P279⁺ T) => (X "belongs to" T)
-(((C P279 T) closure one-or-more), (X member C)) => (X "belongs to" T)
+((C P279⁺ T), (X member C)) => (X "belongs to" T)
 (alice "belongs to" Q2) ⇐ {((Q1 P279 Q2) closure one-or-more) (alice member Q1)}
 (alice "belongs to" Q3) ⇐ {((Q1 P279 Q3) closure one-or-more) (alice member Q1)}
 (alice "belongs to" Q4) ⇐ {((Q1 P279 Q4) closure one-or-more) (alice member Q1)}
@@ -1484,7 +1538,7 @@ zelph> (X member C, C P279⁺ T) => (X "belongs to" T)
 
 The operator is **not a reserved character**. It is read only as a trailing marker in *predicate* position, and only when a name is left over once it is removed, so `Na⁺` is an ordinary node name in any position, `a⁺b` is an ordinary predicate, and `⁺` on its own is the predicate `⁺`. ASCII `+` deliberately has no such reading, because `z+` and `d+` are the addition predicates of the arithmetic modules, and `*` is the [focus operator](concepts.md#the-focus-operator).
 
-Like `≈`, the sugar is input syntax over an ordinary fact: `(C P279⁺ T)` is the fact `((C P279 T) closure one-or-more)`, which is what `.list-rules` prints and what re-enters as the same rule.
+Like `≈`, the sugar is input syntax over an ordinary fact: `(C P279⁺ T)` is the fact `((C P279 T) closure one-or-more)`, and when this fact is typed within a condition, it is the same condition. In any context where a condition appears – within `.list-rules`, in the echo of a rule or query – it prints as the sugar form, which re-enters as the identical rule. The premises following `⇐` are not conditions, but rather the facts identified during a firing, hence they name the fact.
 
 **A marker on a [self-fact](concepts.md#the-self-fact-prefix) inquires if a node reaches itself**, since `:pred X` is `(X pred X)` and predicate position is where the marker is read. That is a cycle test, and it needs nothing beyond what is already here – one condition to bind the node, and the path condition to ask:
 
@@ -1492,16 +1546,19 @@ Like `≈`, the sugar is input syntax over an ordinary fact: `(C P279⁺ T)` is 
 zelph> Q1 ~ class
 zelph> Q2 ~ class
 zelph> Q5 ~ class
+zelph> Q7 ~ class
 zelph> Q1 P279 Q2
 zelph> Q2 P279 Q1
 zelph> Q5 P279 Q6
+zelph> Q7 P279 Q7
 zelph> (C ~ class, :P279⁺ C) => (C "sits in a cycle" C)
-((C ~ class), ((:P279 C) closure one-or-more)) => (C "sits in a cycle" C)
+((C ~ class), (:P279⁺ C)) => (C "sits in a cycle" C)
 (Q1 "sits in a cycle" Q1) ⇐ {(Q1 ~ class) ((:P279 Q1) closure one-or-more)}
 (Q2 "sits in a cycle" Q2) ⇐ {(Q2 ~ class) ((:P279 Q2) closure one-or-more)}
+(Q7 "sits in a cycle" Q7) ⇐ {(Q7 ~ class) ((:P279 Q7) closure one-or-more)}
 ```
 
-`Q5` is excluded: it has a superclass, but no path back to itself. With `∗` every node qualifies instead, since zero steps is a path.
+`Q5` is excluded: it has a superclass, but no path back to itself. `Q7` serves as its own superclass, forming a loop of one step and thus constituting a path of length one. With `∗` every node qualifies instead, since zero steps is a path.
 
 **Under `¬` the condition asks the same question the other way round:** does this node _not_ reach that one.
 
@@ -1512,7 +1569,7 @@ zelph> Q4 P279 Q9
 zelph> alice member Q1
 zelph> bob member Q4
 zelph> (X member C, ¬(C P279⁺ Q3)) => (X clear-of Q3)
-((X member C), ¬((C P279 Q3) closure one-or-more)) => (X clear-of Q3)
+((X member C), ¬(C P279⁺ Q3)) => (X clear-of Q3)
 (bob clear-of Q3) ⇐ {(bob member Q4) (¬((Q4 P279 Q3) closure one-or-more))}
 ```
 

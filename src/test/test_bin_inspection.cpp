@@ -26,6 +26,9 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include <doctest/doctest.h>
 
 #include "test_helpers.hpp"
+#include "wikidata_dump.hpp"
+
+#include "network/reasoning.hpp"
 
 #include <filesystem>
 #include <fstream>
@@ -207,10 +210,11 @@ TEST_CASE("bin inspection: a failed load says what happened to the network")
     zelph::io::OutputCollector  collector;
     zelph::console::Interactive interactive(collector.sink());
 
-    // A load merges into whatever is there and discards the previous state on
-    // the way, so a file that stops in the middle leaves a graph that is
-    // neither. The message used to be the kj backtrace and said nothing about
-    // that; the way back is .new, and it now says so.
+    // Upon reading the file's header, a load supersedes the graph, meaning
+    // that a file interrupted mid-process leaves part of its content in the
+    // graph and nothing of the session. Previously, the message was the kj
+    // backtrace and conveyed no information regarding this; the recovery path
+    // is .new, and the message now indicates this explicitly.
     try
     {
         interactive.process(".load \"" + f.truncated.string() + "\"");
@@ -225,6 +229,225 @@ TEST_CASE("bin inspection: a failed load says what happened to the network")
     }
 
     fs::remove_all(f.root);
+}
+
+TEST_CASE("bin inspection: a file that is not a network leaves the session's graph as it was")
+{
+    const Fixtures f = build();
+
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+    interactive.process("a p b");
+
+    // A file that is not a network encounters failure at the header stage,
+    // before any interaction with the graph: the session keeps its graph, and
+    // the message must refrain from redirecting the user to .new for a network
+    // that remains present.
+    try
+    {
+        interactive.process(".load \"" + f.garbage.string() + "\"");
+        FAIL("expected .load to refuse a file that is not a network");
+    }
+    catch (const std::runtime_error& e)
+    {
+        const std::string message(e.what());
+        CHECK(message.find("zelph .bin") != std::string::npos);
+        CHECK(message.find(".new") == std::string::npos);
+    }
+
+    collector.clear();
+    interactive.process("A p B");
+    CHECK(answers_contain(collector, "a p b"));
+
+    fs::remove_all(f.root);
+}
+
+// A complete-file .load previously integrated the file into the session
+// incrementally, node by node, due to the chunk loaders' clears being
+// positioned beneath a macro with no definition. A fact within the session,
+// whose ids the file did not reference, remained intact; a session name
+// continued to point to whichever file node took its identifier (`bill` was
+// reassigned to the file's `john`, and a typed `bill likes Y` queried john);
+// and the file's variable counter assigned an identifier that a session
+// variable still retained, causing the first query involving a variable to
+// fail with "Network::var: Node 18446744073709551615 already in use". A
+// cluster recorded before the load still retained its listed identifiers, and
+// dropping it removed the loaded nodes that had reused those identifiers. A
+// load now starts from a blank graph and discards any knowledge the session
+// kept about the old one; the subcases take each piece in sequence, mirroring
+// how a session reaches it.
+TEST_CASE("load: a network file replaces the session's graph")
+{
+    const fs::path plain = fs::temp_directory_path() / "zelph_load_replaces.bin";
+    const fs::path rules = fs::temp_directory_path() / "zelph_load_replaces_rules.bin";
+    const auto     save  = [](const fs::path& file, const std::string& lines)
+    {
+        zelph::io::OutputCollector  collector;
+        zelph::console::Interactive interactive(collector.sink());
+        process_lines(interactive, lines);
+        interactive.process(".save \"" + file.string() + "\"");
+    };
+    save(plain, "john ~ man\njohn likes mary");
+    // A rule, and a fact that remains unapplied: auto-run is off upon the
+    // arrival of `john ~ man`, meaning the file holds no `john ~ mortal`.
+    save(rules, "(X ~ man) => (X ~ mortal)\n.auto-run\njohn ~ man");
+
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+    const auto                  session = [&interactive]
+    {
+        process_lines(interactive, R"(
+bill ~ man
+bill likes ann
+p1 q1 r1
+p2 q2 r2
+p3 q3 r3
+(X ~ man) => (X ~ mortal)
+)");
+    };
+
+    SUBCASE("the session's facts, names and rules go")
+    {
+        session();
+        interactive.process(".load \"" + plain.string() + "\"");
+
+        collector.clear();
+        interactive.process("X ~ man");
+        CHECK(collect_answers(collector) == std::vector<std::string>{"john ~ man"});
+        CHECK_THROWS_WITH_AS(interactive.process(".node bill"), doctest::Contains("No node found with name 'bill'"), std::runtime_error);
+        collector.clear();
+        interactive.process("p1 q1 X");
+        CHECK(collect_answers(collector).empty());
+        collector.clear();
+        interactive.process(".list-rules");
+        CHECK(any_output_contains(collector, "No rules found."));
+    }
+    SUBCASE("a variable query after the load answers, whatever variables the session made")
+    {
+        // The reported reproduction: a query leaves its variables within the
+        // graph, and the first variable of a query following the load collided
+        // with one of those.
+        interactive.process("X p Y");
+        interactive.process(".load \"" + plain.string() + "\"");
+        collector.clear();
+        CHECK_NOTHROW(interactive.process("X ~ man"));
+        CHECK(answers_contain(collector, "john ~ man"));
+    }
+    SUBCASE("a variable a Janet block named before the load is a new one after it")
+    {
+        // Within a single Janet block, a symbol names a single variable.
+        // Following the load, the file's rule assigns the variable's
+        // identifier to its own `X`, and the block's next `'X` took that node
+        // over. The load makes the symbol name a new variable.
+        collector.clear();
+        interactive.process(R"(%(do (def before (zelph/fact 'X "in" "nil")) (zelph/load ")" + rules.generic_string()
+                            + R"(") (zelph/out (string/format "same=%j" (= before (zelph/fact 'X "in" "nil"))))))");
+        CHECK(any_output_contains(collector, "same=false"));
+    }
+    SUBCASE("the node printed last is forgotten")
+    {
+        // The `.node` directive, when used without a parameter, displays the
+        // most recently printed node. The entries `bill ~ woman` and the
+        // file's `john ~ man` are built from nodes sharing identical
+        // identifiers, hence the prior identifier refers to the fact stored in
+        // the file, which has never been output.
+        interactive.process("bill ~ woman");
+        interactive.process(".load \"" + plain.string() + "\"");
+        CHECK_THROWS_WITH_AS(interactive.process(".node"), doctest::Contains("no previous output node"), std::runtime_error);
+    }
+    SUBCASE("a predicate that only the file declares is one")
+    {
+        // Predicate detection reads a cached collection of relation types,
+        // while the session constructs its own set based on its `p`. Preserved
+        // throughout the load, this collection concealed each fact associated
+        // with a predicate that only the file declares.
+        interactive.process("a p b");
+        interactive.process(".load \"" + plain.string() + "\"");
+        collector.clear();
+        interactive.process("X likes Y");
+        CHECK(answers_contain(collector, "john likes mary"));
+    }
+    SUBCASE("the input focus is forgotten")
+    {
+        // The deduction filter reveals the logical consequences of the input.
+        // Since `bill` and the file's `john` share an id, a focus maintained
+        // throughout the load showed `john ~ mortal` as though it derived from
+        // the session's input.
+        process_lines(interactive, "(X ~ man) => (X ~ mortal)\nbill ~ woman");
+        interactive.process(".load \"" + rules.string() + "\"");
+        collector.clear();
+        interactive.process(".run");
+        CHECK_FALSE(any_output_contains(collector, "(john ~ mortal) ⇐"));
+        collector.clear();
+        interactive.process("X ~ mortal");
+        CHECK(answers_contain(collector, "john ~ mortal"));
+    }
+    SUBCASE("a cluster recorded before the load is forgotten")
+    {
+        // c1 contains the session's nodes, while c2 is active upon loading.
+        // Both go: none of their identifiers names what they recorded any
+        // more, and dropping c1 caused the loaded nodes to be dropped.
+        process_lines(interactive, ".cluster c1\nbill ~ man\nbill likes ann\n.cluster c2\nann ~ woman");
+        interactive.process(".load \"" + plain.string() + "\"");
+
+        collector.clear();
+        interactive.process(R"(%(zelph/out (string/format "active=%j clusters=%j" (zelph/cluster) (zelph/clusters))))");
+        CHECK(any_output_contains(collector, "active=nil clusters=@[]"));
+        CHECK_THROWS_WITH_AS(interactive.process(".cluster-drop c1"), doctest::Contains("unknown cluster 'c1'"), std::runtime_error);
+        collector.clear();
+        interactive.process("X likes Y");
+        CHECK(answers_contain(collector, "john likes mary"));
+    }
+    SUBCASE("the Janet state and a registered keyword survive, and auto-run is off")
+    {
+        // What lies outside the graph remains after a load: Janet definitions,
+        // a registered keyword, and the session's settings. Auto-run is
+        // disabled, as a load has always done.
+        session();
+        interactive.process("%(def kept @{:k 1})");
+        interactive.process(R"(%(zelph/register-keyword "vk" (fn [text] (zelph/out (string "VK got: " text)) nil)))");
+        interactive.process(".lang en");
+        interactive.process(".load \"" + plain.string() + "\"");
+        CHECK_FALSE(interactive.is_auto_run_active());
+
+        collector.clear();
+        interactive.process(R"(%(zelph/out (string/format "kept=%j" kept)))");
+        CHECK(any_output_contains(collector, "kept=@{:k 1}"));
+        interactive.process("vk hello.");
+        interactive.process("");
+        CHECK(any_output_contains(collector, "VK got: hello."));
+        interactive.process(".lang");
+        CHECK(any_output_contains(collector, "The current language is 'en'"));
+    }
+    SUBCASE("the next run-delta is a full pass")
+    {
+        // The session has run, thus its delta record is valid, and the session
+        // and the file contain an identical count of rules. Performing seeding
+        // from that record after the load skipped the classic pass, and the
+        // file's `john ~ man` never met the rule.
+        process_lines(interactive, "(X ~ man) => (X ~ mortal)\nbill ~ man");
+        interactive.process(".load \"" + rules.string() + "\"");
+
+        collector.clear();
+        interactive.process(".run-delta");
+        CHECK(any_event_contains(collector, "Incremental run not applicable"));
+        collector.clear();
+        interactive.process("X ~ mortal");
+        CHECK(collect_answers(collector) == std::vector<std::string>{"john ~ mortal"});
+    }
+    SUBCASE("zelph/load replaces as .load does")
+    {
+        session();
+        interactive.process("%(zelph/load \"" + plain.generic_string() + "\")");
+
+        collector.clear();
+        interactive.process("X ~ man");
+        CHECK(collect_answers(collector) == std::vector<std::string>{"john ~ man"});
+        CHECK_THROWS_WITH_AS(interactive.process(".node bill"), doctest::Contains("No node found with name 'bill'"), std::runtime_error);
+    }
+
+    fs::remove(plain);
+    fs::remove(rules);
 }
 
 TEST_CASE("bin inspection: a mistyped chunk selector leaves the session alone")
@@ -247,4 +470,56 @@ TEST_CASE("bin inspection: a mistyped chunk selector leaves the session alone")
     CHECK(answers_contain(collector, "a p b"));
 
     fs::remove_all(f.root);
+}
+
+TEST_CASE("load-partial: a partial load marks the label index incomplete")
+{
+    // Every load retrieves the carriers associated with a shared label,
+    // drawing from both name sections. When a load examines only a portion of
+    // their chunks, it identifies only a subset of the carriers, and
+    // responding based on that partial set would constitute a silent error;
+    // the response indicates it cannot provide an answer.
+    using namespace wikidata_dump;
+    const auto     dump = write_lines("zelph_partial_labels",
+                                      {entity("Q8441", text("en", "man")),
+                                       entity("Q29719014", text("en", "man")),
+                                       entity("Q709369", text("en", "man"))});
+    const fs::path file = fs::temp_directory_path() / "zelph_partial_labels_saved.bin";
+
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+    interactive.process(".load \"" + dump.string() + "\"");
+    interactive.process(".save \"" + file.string() + "\"");
+    const std::vector<std::string> carriers{"Q8441", "Q709369", "Q29719014"};
+
+    SUBCASE("a selection of the name chunks")
+    {
+        interactive.process(".load-partial \"" + file.string() + "\" nameOfNode=0 nodeOfName=0");
+        CHECK_FALSE(interactive.graph()->nodes_named("man", "en").has_value());
+
+        interactive.process(".new");
+        interactive.process(".load \"" + file.string() + "\"");
+        CHECK(ids_of(interactive, interactive.graph()->nodes_named("man", "en")) == carriers);
+    }
+
+    SUBCASE("a whole load after it")
+    {
+        // A whole load replaces the graph that the partial one left
+        // behind, along with its associated mark: there is no need for a
+        // .new in between.
+        interactive.process(".load-partial \"" + file.string() + "\" nameOfNode=0 nodeOfName=0");
+        CHECK_FALSE(interactive.graph()->nodes_named("man", "en").has_value());
+
+        interactive.process(".load \"" + file.string() + "\"");
+        CHECK(ids_of(interactive, interactive.graph()->nodes_named("man", "en")) == carriers);
+    }
+
+    SUBCASE("every name chunk")
+    {
+        interactive.process(".load-partial \"" + file.string() + "\" left=0");
+        CHECK(ids_of(interactive, interactive.graph()->nodes_named("man", "en")) == carriers);
+    }
+
+    fs::remove(file);
+    remove_dump(dump);
 }

@@ -923,6 +923,37 @@ TEST_CASE("capi: weights written back survive save and load, and nodes keep thei
     fs::remove(path);
 }
 
+// zelph_variable keeps track of a variable through its name across multiple
+// invocations. The file holds no variable, so following the load, the engine's
+// counter reassigns the first variable ID, which X still retains: Y reappears
+// as the identical node as X. When a load still merged the file into the
+// graph, Y failed completely, since X's node persisted after the load with
+// that same ID.
+TEST_CASE("capi: a load that replaces the graph forgets the variables remembered by name")
+{
+    const auto path = fs::temp_directory_path() / "zelph_capi_load_variables.bin";
+    fs::remove(path);
+
+    Engine           engine;
+    const zelph_node a    = engine.node("a");
+    const zelph_node b    = engine.node("b");
+    zelph_node       fact = 0;
+    REQUIRE(zelph_fact(engine, a, engine.node("p"), &b, 1, &fact) == ZELPH_OK);
+    REQUIRE(zelph_save(engine, path.string().c_str()) == ZELPH_OK);
+
+    zelph_node before = 0;
+    REQUIRE(zelph_variable(engine, "X", &before) == ZELPH_OK);
+    REQUIRE(zelph_load(engine, path.string().c_str()) == ZELPH_OK);
+
+    zelph_node x = 0;
+    zelph_node y = 0;
+    REQUIRE(zelph_variable(engine, "X", &x) == ZELPH_OK);
+    REQUIRE(zelph_variable(engine, "Y", &y) == ZELPH_OK);
+    CHECK(x != y);
+
+    fs::remove(path);
+}
+
 TEST_CASE("capi: failures come back as a status and a message, never as an exception")
 {
     Engine engine;

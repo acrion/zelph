@@ -38,14 +38,22 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 // instances where this approach faltered: the fallback tested (T rw S) before
 // the gate rule had produced the digit tables that the rewrite relies upon.
 //
-// The dependency analysis operates over PREDICATES. A rule depends on another
-// if the second can create a fact -- across any depth of its consequence, as
-// instantiating (T rw (K * U)) creates the product as well -- whose predicate
-// is either read directly by the first or appears within a negation. This
-// approach is coarser than unifying patterns, and this breadth is intentional:
-// the math stack employs `=` uniformly across every layer, making pattern
-// unification lead to identical components, albeit at the price of a unifier
-// across templates.
+// The dependency analysis functions on PREDICATES, each paired with an
+// object. A rule depends on another when the latter can generate a fact --
+// through any depth of its consequence, such as how instantiating
+// (T rw (K * U)) creates the product -- that the first either reads directly
+// or evaluates inside a negation. A pattern situated at the top of a
+// condition or consequence is keyed by its predicate and object, provided
+// that object is a single constant node; any other object, and each
+// statement embedded within a pattern, represents facts involving any
+// object. Thus, ¬(X ~ married) awaits rules that derive (X ~ married) or
+// (X ~ C), but not those that derive (X ~ bachelor): class memberships and
+// properties utilize a shared predicate across multiple constant objects,
+// and if only the predicate were used to key them, unrelated rules would
+// merge into a single component. This approach is coarser than unifying
+// patterns, and this breadth is intentional: the math stack employs `=`
+// uniformly across every layer, making pattern unification lead to
+// identical components, albeit at the price of a unifier across templates.
 //
 // A predicate variable in a position meant for a predicate represents any
 // possible predicate. A rule whose consequence is another rule is considered
@@ -54,7 +62,9 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 // specific scenario is more limited: a rule that only extends the predicates
 // it reads, like transitivity applied to a predicate variable, is excluded
 // from cycles, and instead, what it depends on is passed forward (as
-// indicated by footprint and negation_levels).
+// indicated by footprint and negation_levels). While this rule remains in
+// force, objects are not compared, because the objects of the facts it
+// derives originate from other facts.
 //
 // The rules subsequently partition into strongly connected components. A
 // component where negations reach back into itself -- specifically, where the
@@ -81,6 +91,8 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include <algorithm>
 #include <cstddef>
 #include <functional>
+#include <map>
+#include <set>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
@@ -116,12 +128,52 @@ namespace
 
         history.pop_back();
     }
+
+    using PatternKey = std::pair<Node, Node>;
+
+    // What collect_predicates collects from a pattern positioned at the top
+    // of a condition or consequence, together with the key the levels
+    // compare each predicate by: the pattern's own predicate is paired with
+    // its object when that object is a single constant node, and every
+    // nested predicate is paired with any object (0). When `by_object` is
+    // false, each predicate is associated with any object.
+    void collect_keys(const Zelph* z, const Node pattern, std::unordered_set<Node>& preds, std::unordered_set<Node>& vars, std::set<PatternKey>& keys, const bool by_object = true)
+    {
+        if (pattern == 0 || Zelph::Impl::is_var(pattern) || !Zelph::Impl::is_hash(pattern)) return;
+
+        const FactStructure fs = get_preferred_structure(z, pattern, 1);
+        if (fs.subject == 0) return;
+
+        Node object = 0;
+        if (by_object && fs.objects.size() == 1)
+        {
+            const Node o = *fs.objects.begin();
+            if (o != 0 && !Zelph::Impl::is_var(o) && !Zelph::Impl::is_hash(o)) object = o;
+        }
+        if (Zelph::Impl::is_var(fs.predicate))
+            vars.insert(fs.predicate);
+        else if (fs.predicate != 0)
+        {
+            preds.insert(fs.predicate);
+            keys.emplace(fs.predicate, object);
+        }
+
+        std::unordered_set<Node> nested;
+        std::vector<Node>        history{pattern};
+        collect_predicates(z, fs.subject, nested, vars, history);
+        collect_predicates(z, fs.predicate, nested, vars, history);
+        for (const Node o : fs.objects)
+            collect_predicates(z, o, nested, vars, history);
+        for (const Node p : nested)
+        {
+            preds.insert(p);
+            keys.emplace(p, 0);
+        }
+    }
 }
 
 void Reasoning::read_footprint(const Node condition, RuleFootprint& f)
 {
-    std::vector<Node> history;
-
     if (is_condition_set(condition))
     {
         for (const Node rel : _pImpl->get_right(condition))
@@ -156,7 +208,7 @@ void Reasoning::read_footprint(const Node condition, RuleFootprint& f)
         f.has_negation = true;
         f.negated_conditions.push_back(pattern);
         std::unordered_set<Node> vars;
-        collect_predicates(this, pattern, f.negates, vars, history);
+        collect_keys(this, pattern, f.negates, vars, f.negates_keys);
         if (!vars.empty()) f.negates_any = true;
         return;
     }
@@ -172,11 +224,12 @@ void Reasoning::read_footprint(const Node condition, RuleFootprint& f)
     }
     if (closure)
     {
-        // The subject of the tag is the path pattern; its predicate is
-        // the one the walk follows.
+        // The path pattern serves as the subject of the tag; the walk
+        // proceeds along its predicate, traversing facts that have any
+        // object.
         adjacency_set modes;
         const Node    path = parse_fact(condition, modes, 0);
-        collect_predicates(this, path, f.reads, f.reads_vars, history);
+        collect_keys(this, path, f.reads, f.reads_vars, f.reads_keys, false);
         if (!f.reads_vars.empty()) f.reads_any = true;
         f.paths.push_back(path);
         return;
@@ -187,7 +240,7 @@ void Reasoning::read_footprint(const Node condition, RuleFootprint& f)
     // variable there is bound to a predicate that already has facts (see
     // footprint).
     if (Zelph::Impl::is_var(rel)) f.binds_vars.insert(rel);
-    collect_predicates(this, condition, f.reads, f.reads_vars, history);
+    collect_keys(this, condition, f.reads, f.reads_vars, f.reads_keys);
     if (!f.reads_vars.empty()) f.reads_any = true;
 
     std::vector<Node> var_history;
@@ -230,8 +283,7 @@ Reasoning::RuleFootprint Reasoning::footprint(const Node rule)
                     f.produces_any = true;
                 continue;
             }
-            std::vector<Node> history;
-            collect_predicates(this, ic, f.produces, written_vars, history);
+            collect_keys(this, ic, f.produces, written_vars, f.produces_keys);
         }
     };
     for (const Node c : consequences)
@@ -243,8 +295,7 @@ Reasoning::RuleFootprint Reasoning::footprint(const Node rule)
             written(c, 1);
             continue;
         }
-        std::vector<Node> history;
-        collect_predicates(this, c, f.produces, f.produces_vars, history);
+        collect_keys(this, c, f.produces, f.produces_vars, f.produces_keys);
         std::vector<Node> var_history;
         collect_variables(this, c, f.joined_vars, 1, var_history);
     }
@@ -311,8 +362,15 @@ Reasoning::NegationLevels Reasoning::negation_levels(const std::vector<Node>& ru
         footprint[i] = this->footprint(rules[i]);
 
     // --- Who depends on whom ----------------------------------------------
-    // edges[r] holds (s, negative): s reads something r can create.
+    // edges[r] holds (s, negative): s reads something r can create. A key
+    // associated with a constant object is established through the rules
+    // responsible for generating that key (by_object) or through any rule
+    // that generates its predicate with any object (any_object), while a key
+    // linked to any object is produced by every rule that creates its
+    // predicate (producers).
     std::unordered_map<Node, std::vector<std::size_t>> producers;
+    std::unordered_map<Node, std::vector<std::size_t>> any_object;
+    std::map<PatternKey, std::vector<std::size_t>>     by_object;
     std::vector<std::size_t>                           any_producers;
     std::vector<std::size_t>                           all_producers;
     for (std::size_t i = 0; i < n; ++i)
@@ -321,10 +379,41 @@ Reasoning::NegationLevels Reasoning::negation_levels(const std::vector<Node>& ru
         if (footprint[i].produces_any || !footprint[i].produces.empty()) all_producers.push_back(i);
         for (const Node p : footprint[i].produces)
             producers[p].push_back(i);
+        for (const PatternKey& key : footprint[i].produces_keys)
+        {
+            if (key.second == 0)
+                any_object[key.first].push_back(i);
+            else
+                by_object[key].push_back(i);
+        }
     }
+    // A transparent rule (see footprint) adds to each predicate listed in
+    // its declaration, and the facts it generates obtain their objects
+    // from facts with other objects: from (w linked b) and (b linked c),
+    // transitivity derives (w linked c). The set of predicates declared is
+    // determined by the facts, so as long as this rule remains in force,
+    // each key is compared solely through its predicate.
+    const bool by_predicate  = std::any_of(footprint.begin(), footprint.end(), [](const RuleFootprint& f)
+                                           { return f.transparent; });
+    const auto for_producers = [&](const PatternKey& key, const auto& visit)
+    {
+        const auto each = [&](const auto& map, const auto& at)
+        {
+            if (const auto it = map.find(at); it != map.end())
+                for (const std::size_t r : it->second)
+                    visit(r);
+        };
+        if (key.second == 0 || by_predicate)
+            each(producers, key.first);
+        else
+        {
+            each(by_object, key);
+            each(any_object, key.first);
+        }
+    };
 
     std::vector<std::vector<std::pair<std::size_t, bool>>> edges(n);
-    const auto                                             link = [&](const std::size_t s, const std::unordered_set<Node>& preds, const bool any, const bool negative)
+    const auto                                             link = [&](const std::size_t s, const std::set<PatternKey>& keys, const bool any, const bool negative)
     {
         if (any)
         {
@@ -332,20 +421,17 @@ Reasoning::NegationLevels Reasoning::negation_levels(const std::vector<Node>& ru
                 edges[r].emplace_back(s, negative);
             return;
         }
-        for (const Node p : preds)
-        {
-            if (const auto it = producers.find(p); it != producers.end())
-                for (const std::size_t r : it->second)
-                    edges[r].emplace_back(s, negative);
-        }
-        if (!preds.empty())
+        for (const PatternKey& key : keys)
+            for_producers(key, [&](const std::size_t r)
+                          { edges[r].emplace_back(s, negative); });
+        if (!keys.empty())
             for (const std::size_t r : any_producers)
                 edges[r].emplace_back(s, negative);
     };
     for (std::size_t s = 0; s < n; ++s)
     {
-        link(s, footprint[s].reads, footprint[s].reads_any, false);
-        link(s, footprint[s].negates, footprint[s].negates_any, true);
+        link(s, footprint[s].reads_keys, footprint[s].reads_any, false);
+        link(s, footprint[s].negates_keys, footprint[s].negates_any, true);
     }
 
     // A transparent rule (see footprint) does not acquire an edge of its own

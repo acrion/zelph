@@ -1146,12 +1146,13 @@ TEST_CASE("display: the negation of a rule condition stays with the rule")
 
 TEST_CASE("display: the negated condition of a rule a statement mentions prints as the fact it is")
 {
-    // A plain statement rejects `¬` at any level, including the rule it
-    // mentions, but the condition of that rule printed as `¬(P)`: the echo
-    // of the statement, and every answer naming it, came back as an error
-    // when entered. When a statement stands above the rule, the condition
-    // prints as the fact it represents, which re-enters as the identical
-    // node.
+    // A rule that a plain statement mentions reads `¬` in its condition,
+    // and there `¬(P)` and the fact form re-enter as the same node. A rule
+    // that a typed rule holds as an argument accepts solely the fact form,
+    // and the printer is unable to distinguish between the two locations,
+    // so wherever a statement stands above the rule, its condition prints
+    // as the fact it is: the echo of the statement, and every answer naming
+    // it, re-enters as the identical node.
     run_both_modes([](auto& collector, auto& interactive)
                    {
         collector.clear();
@@ -1197,6 +1198,290 @@ TEST_CASE("display: a negation typed as a query echoes and answers as it was typ
         interactive.process(answers.front());
         CHECK(any_output_starts_with(collector, "¬(X p b)"));
         CHECK(collect_answers(collector) == answers); });
+}
+
+namespace
+{
+    // The initial line printed by a statement: its echo.
+    std::string echo_of(const zelph::io::OutputCollector& collector)
+    {
+        for (const auto& event : collector.events())
+            if (event.channel == zelph::io::OutputChannel::Out && !event.text.empty()) return normalize(event.text);
+        return {};
+    }
+
+    // The conditions within a comma-separated list, sorted. A list prints its
+    // conditions following the order of their nodes, and the variables in a
+    // query are fresh for each line, thus the order does not constitute part
+    // of what a line says.
+    std::vector<std::string> conditions_of(const std::string& line)
+    {
+        std::vector<std::string> conditions;
+        int                      depth = 0;
+        std::size_t              start = 0;
+        for (std::size_t i = 0; i < line.size(); ++i)
+        {
+            if (line[i] == '(' || line[i] == '{') ++depth;
+            if (line[i] == ')' || line[i] == '}') --depth;
+            if (line[i] == ',' && depth == 0 && line.compare(i, 2, ", ") == 0)
+            {
+                conditions.push_back(line.substr(start, i - start));
+                start = i + 2;
+            }
+        }
+        conditions.push_back(line.substr(start));
+        std::sort(conditions.begin(), conditions.end());
+        return conditions;
+    }
+}
+
+// A query containing multiple conditions printed its condition list as a set
+// in both the echo and every answer: "{(X ~ interval) (¬(X before B))}",
+// which reads back as a set literal -- data -- and is refused for the
+// negation among its members. It prints as the comma list it was written as:
+// lacking the outer parentheses of a rule's list, which would make the line
+// into a term awaiting the rest of its statement, and with each condition
+// expressed exactly as it would be written on an individual line.
+TEST_CASE("display: a query with several conditions echoes and answers as a comma list")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, "c ~ interval\nd ~ interval\nc before e");
+
+        collector.clear();
+        interactive.process("X ~ interval, ¬(X before B)");
+        const std::string echo = echo_of(collector);
+        CHECK(conditions_of(echo) == std::vector<std::string>{"X ~ interval", "¬(X before B)"});
+        const std::vector<std::string> answers = collect_answers(collector);
+        REQUIRE(answers.size() == 1);
+        CHECK(conditions_of(answers.front()) == std::vector<std::string>{"d ~ interval", "¬(d before B)"});
+
+        // The echo is the same query.
+        collector.clear();
+        interactive.process(echo);
+        CHECK(conditions_of(echo_of(collector)) == conditions_of(echo));
+        const std::vector<std::string> again = collect_answers(collector);
+        REQUIRE(again.size() == 1);
+        CHECK(conditions_of(again.front()) == conditions_of(answers.front())); });
+}
+
+// An answer constitutes an instance of the condition list, and when typed
+// back, it conveys the same meaning as any line of that shape. Without a
+// condition operator, it becomes a ground comma list, asserting each of its
+// members and echoing as the same list. A negation does not bind any
+// variable, thus an answer can retain one: that line then functions as a
+// query again and answers with itself. Ground, the answer is a statement that
+// asserts, and a condition operator holds no significance in that context.
+TEST_CASE("display: an answer with several conditions re-enters as the line it reads as")
+{
+    SUBCASE("without an operator it asserts its members")
+    {
+        std::string answer;
+        {
+            zelph::io::OutputCollector  collector;
+            zelph::console::Interactive interactive(collector.sink());
+            process_lines(interactive, "c ~ interval\nc before e");
+            collector.clear();
+            interactive.process("X before e, X ~ interval");
+            const std::vector<std::string> answers = collect_answers(collector);
+            REQUIRE(answers.size() == 1);
+            answer = answers.front();
+        }
+        CHECK(conditions_of(answer) == std::vector<std::string>{"c before e", "c ~ interval"});
+
+        zelph::io::OutputCollector  collector;
+        zelph::console::Interactive interactive(collector.sink());
+        interactive.process(answer);
+        CHECK(conditions_of(echo_of(collector)) == conditions_of(answer));
+
+        collector.clear();
+        interactive.process("X before e");
+        CHECK(collect_answers(collector) == std::vector<std::string>{"c before e"});
+        collector.clear();
+        interactive.process("X ~ interval");
+        CHECK(collect_answers(collector) == std::vector<std::string>{"c ~ interval"});
+    }
+
+    SUBCASE("a negation that keeps a variable makes it a query again")
+    {
+        zelph::io::OutputCollector  collector;
+        zelph::console::Interactive interactive(collector.sink());
+        process_lines(interactive, "c ~ interval\nd ~ interval\nc before e");
+        collector.clear();
+        interactive.process("X ~ interval, ¬(X before B)");
+        const std::vector<std::string> answers = collect_answers(collector);
+        REQUIRE(answers.size() == 1);
+
+        collector.clear();
+        interactive.process(answers.front());
+        const std::vector<std::string> again = collect_answers(collector);
+        REQUIRE(again.size() == 1);
+        CHECK(conditions_of(again.front()) == conditions_of(answers.front()));
+    }
+
+    SUBCASE("a ground negation is refused, and nothing is asserted")
+    {
+        zelph::io::OutputCollector  collector;
+        zelph::console::Interactive interactive(collector.sink());
+        process_lines(interactive, "c ~ interval\nd ~ interval\nc before e");
+        collector.clear();
+        interactive.process("X ~ interval, ¬(X before e)");
+        const std::vector<std::string> answers = collect_answers(collector);
+        REQUIRE(answers.size() == 1);
+        CHECK(conditions_of(answers.front()) == std::vector<std::string>{"d ~ interval", "¬(d before e)"});
+
+        const std::size_t before = node_count(collector, interactive);
+        CHECK_THROWS_WITH(interactive.process(answers.front()), doctest::Contains("has no meaning in a statement that asserts"));
+        CHECK(node_count(collector, interactive) == before);
+    }
+}
+
+// The path and the neural condition are facts, `((S p O) closure mode)` and
+// `((P) nn net)`, and they printed as those facts wherever they were located:
+// within the echo of a rule, within `.list-rules`, within the echo and the
+// answers of a query -- a notation that nobody types -- in the places that
+// hold conditions. A condition prints there as it is typed. The facts keep
+// their own form when they are not conditions: inside `.node`, within a
+// statement that refers to the rule, and within a deduction's premises, which
+// name what a firing found.
+TEST_CASE("display: a path condition prints as it is typed wherever a condition stands")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, "a r b\nb r c\nk q k\nt go k");
+
+        SUBCASE("the condition of a rule, and a member of its condition list")
+        {
+            const std::vector<std::string> typed = {"(a r⁺ c) => (u v w)",
+                                                    "(¬(a r∗ c)) => (u v w2)",
+                                                    "(:q⁺ k) => (u v w3)",
+                                                    "((X go Y), ¬(Y q∗ X)) => (X ok Y)"};
+            for (const std::string& rule : typed)
+            {
+                CAPTURE(rule);
+                collector.clear();
+                interactive.process(rule);
+                CHECK(echo_of(collector).find("closure") == std::string::npos);
+            }
+
+            collector.clear();
+            interactive.process(".list-rules");
+            CHECK(any_output_contains(collector, "(a r⁺ c) => (u v w)"));
+            CHECK(any_output_contains(collector, "(¬(a r∗ c)) => (u v w2)"));
+            CHECK(any_output_contains(collector, "(:q⁺ k) => (u v w3)"));
+            CHECK(any_output_contains(collector, "¬(Y q∗ X)"));
+            CHECK_FALSE(any_output_contains(collector, "closure"));
+
+            // Every line listed is the rule that it lists.
+            std::vector<std::string> listed;
+            for (const auto& event : collector.events())
+                if (event.text.find("=>") != std::string::npos) listed.push_back(normalize(event.text));
+            REQUIRE(listed.size() == typed.size());
+            const std::size_t before = node_count(collector, interactive);
+            for (const std::string& rule : listed)
+                interactive.process(rule);
+            CHECK(node_count(collector, interactive) == before);
+        }
+
+        SUBCASE("a query's echo and its answers")
+        {
+            collector.clear();
+            interactive.process("a r⁺ X");
+            CHECK(echo_of(collector) == "a r⁺ X");
+            std::vector<std::string> answers = collect_answers(collector);
+            std::sort(answers.begin(), answers.end());
+            CHECK(answers == std::vector<std::string>{"a r⁺ b", "a r⁺ c"});
+
+            // The self-path prints in the same form as the self-fact does.
+            collector.clear();
+            interactive.process("k q∗ X");
+            CHECK(collect_answers(collector) == std::vector<std::string>{":q∗ k"});
+
+            collector.clear();
+            interactive.process("X r⁺ Y, Y r c");
+            CHECK(conditions_of(echo_of(collector)) == std::vector<std::string>{"X r⁺ Y", "Y r c"});
+            REQUIRE(collect_answers(collector).size() == 1);
+            CHECK(conditions_of(collect_answers(collector).front()) == std::vector<std::string>{"a r⁺ b", "b r c"});
+        }
+
+        SUBCASE("an answer that is a ground path is refused when typed back")
+        {
+            // It is read as a statement that asserts, and reachability is
+            // walked, not asserted.
+            const std::size_t before = node_count(collector, interactive);
+            CHECK_THROWS_WITH(interactive.process("a r⁺ c"), doctest::Contains("condition operators"));
+            CHECK_THROWS_WITH(interactive.process("a r⁺ b, b r c"), doctest::Contains("condition operator"));
+            CHECK(node_count(collector, interactive) == before);
+        }
+
+        SUBCASE("the fact where it is not a condition")
+        {
+            // A deduction identifies the facts its firing uncovered.
+            interactive.process(".deductions all");
+            collector.clear();
+            interactive.process("(a r⁺ c) => (u v w)");
+            CHECK(any_output_contains(collector, "(u v w) ⇐ ((a r c) closure one-or-more)"));
+
+            collector.clear();
+            interactive.process(".node (a r c) closure one-or-more");
+            CHECK(any_output_contains(collector, "Representation: (a r c) closure one-or-more"));
+
+            // A statement that refers to a rule stands above its
+            // conditions, which are displayed as the facts they are, just as
+            // a negation does (see above).
+            collector.clear();
+            interactive.process("bob says (((a r c) closure one-or-more) => (u v w))");
+            CHECK(echo_of(collector) == "bob says (((a r c) closure one-or-more) => (u v w))");
+        } });
+}
+
+// The syntactic sugar appears in the output for the nodes whose names in the
+// zelph language are `closure` and `nn`. In a different language, the
+// explicit spelling `((X p Y) nn net)` names a node of that language,
+// interpreted by the parser (denotes_zelph_name) as a standard predicate --
+// and the printer, which generated both forms identically, caused the rule
+// for the neural condition to re-enter as the alternative one.
+TEST_CASE("display: a condition operator prints by the node it is, in every language")
+{
+    for (const char* lang : {"en", "wikidata"})
+    {
+        CAPTURE(lang);
+        zelph::io::OutputCollector  collector;
+        zelph::console::Interactive interactive(collector.sink());
+        interactive.process(std::string(".lang ") + lang);
+        process_lines(interactive, R"(≈net(X p Y) => (X q Y)
+(X p⁺ Y) => (X q2 Y)
+((X p Y) nn net) => (X r Y)
+((X p Y) closure one-or-more) => (X s Y))");
+
+        const auto listing = [&]
+        {
+            collector.clear();
+            interactive.process(".list-rules");
+            std::vector<std::string> rules;
+            for (const auto& event : collector.events())
+                if (event.text.find("=>") != std::string::npos) rules.push_back(normalize(event.text));
+            std::sort(rules.begin(), rules.end());
+            return rules;
+        };
+        const std::vector<std::string> rules = listing();
+        CHECK(rules == std::vector<std::string>{"((X p Y) closure one-or-more) => (X s Y)", "((X p Y) nn net) => (X r Y)", "(X p⁺ Y) => (X q2 Y)", "≈net(X p Y) => (X q Y)"});
+
+        // Every line is the rule it lists, in the language it was typed in.
+        for (const std::string& rule : rules)
+            interactive.process(rule);
+        CHECK(listing() == rules);
+    }
+
+    // In the zelph language, the explicit spelling is the operator.
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+    collector.clear();
+    interactive.process("((X p Y) nn net) => (X r Y)");
+    CHECK(echo_of(collector) == "≈net(X p Y) => (X r Y)");
+    collector.clear();
+    interactive.process("((X p Y) closure one-or-more) => (X s Y)");
+    CHECK(echo_of(collector) == "(X p⁺ Y) => (X s Y)");
 }
 
 // .mermaid took a single name or ID while .node took the fact itself, so a

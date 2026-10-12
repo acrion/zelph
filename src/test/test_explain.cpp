@@ -4096,23 +4096,27 @@ TEST_CASE("explain: a rule read before edges were removed and others added is re
     CHECK(session(true) != derivation);
 }
 
-// A load writes into the graph without a removal the rules read for an
-// explanation could see: .load merges a file into the session node by node,
-// such that a node acquires the edges the file holds. g1 and g2 are saved by
-// two sessions that typed identical lines, except that g2's rule negates
-// `a p b`: the rule node, its condition set, and the patterns it holds share
+// A load replaces the graph without a removal that the rules read for an
+// explanation could see. g1 and g2 are saved by two sessions that typed
+// identical lines, except that g2's rule negates `a p b` and g2 states `x r y`
+// directly: the rule node, its condition set, and the patterns it holds share
 // the same ids and the same counts of edges in both files, yet one set holds
-// `(a p b)` while the other holds `¬(a p b)`. Thus, only the epoch of the
-// graph can tell that the rule now reads negated -- and only a load advances
-// it. The rule was adopted with its positive reading, and the explanation
-// printed a step the rule in force does not license. Both loads are ordinary
-// commands.
-TEST_CASE("explain: a rule read before a .load is read again after it")
+// `(a p b)` while the other holds `¬(a p b)`. Thus only the load can tell that
+// the rule now reads as negated. The rule was adopted with its positive
+// reading, and the explanation printed a step that the rule in force does not
+// license. Both loads are ordinary commands.
+//
+// This case was named "... is read again after it" when a load merged g2 into
+// g1 on a node-by-node basis: the `x r y` that g1's rule produced endured the
+// merge, and the case explained that enduring result. A load retains solely
+// g2's facts, thus g2 states `x r y`, and the explanation is requested from
+// it.
+TEST_CASE("explain: a rule read before a .load is read again from the loaded file")
 {
     namespace fs      = std::filesystem;
     const fs::path g1 = fs::temp_directory_path() / "zelph_explain_load_g1.bin";
     const fs::path g2 = fs::temp_directory_path() / "zelph_explain_load_g2.bin";
-    for (const auto& [file, rule] : {std::pair{g1, "((a p b), (X q Y)) => (X r Y)"}, std::pair{g2, "(¬(a p b), (X q Y)) => (X r Y)"}})
+    for (const auto& [file, rule] : {std::pair{g1, "((a p b), (X q Y)) => (X r Y)"}, std::pair{g2, "(¬(a p b), (X q Y)) => (X r Y)\nx r y"}})
     {
         zelph::io::OutputCollector  collector;
         zelph::console::Interactive interactive(collector.sink());

@@ -136,6 +136,8 @@ Zelph::Zelph(const io::OutputHandler& output)
     : _pImpl{new Impl(output)}
     , core({_pImpl->create(), _pImpl->create(), _pImpl->create(), _pImpl->create(), _pImpl->create(), _pImpl->create(), _pImpl->create(), _pImpl->create(), _pImpl->create(), _pImpl->create()})
 {
+    _pImpl->_core_names = &_core_names_by_node;
+
     fact(core.IsA, core.IsA, {core.RelationTypeCategory});
     fact(core.Unequal, core.IsA, {core.RelationTypeCategory});
     fact(core.Causes, core.IsA, {core.RelationTypeCategory});

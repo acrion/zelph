@@ -72,9 +72,9 @@ namespace zelph
         // Whether a statement writes a condition operator anywhere outside
         // the rules it mentions -- `¬`, `≈`, `⁺`/`∗`, or any of these
         // expressed explicitly as the fact they construct. A text that fails
-        // to parse writes none. `is_rule` receives whether the statement is
-        // a rule in its own right, whose condition slots count as well.
-        bool carries_condition_operator(const std::string& input, bool* is_rule = nullptr) const;
+        // to parse writes none, and neither does a rule typed as the
+        // statement itself: its operators occupy its own slots.
+        bool carries_condition_operator(const std::string& input) const;
 
         // Execute Janet code (either raw or transformed zelph AST)
         // is_zelph_ast determines how the output is handled/printed
@@ -106,6 +106,12 @@ namespace zelph
 
         // Inject arguments into the script environment (for script files with args)
         void set_script_args(const std::vector<std::string>& args);
+
+        // Forget the variables the current block has named, ensuring that any
+        // subsequent reference to a symbol creates a new one. A load operation
+        // that supersedes the graph calls it: the ids of those variables might
+        // correspond to nodes within the loaded graph.
+        void clear_scoped_variables();
 
         // Handler backing the Janet function zelph/import. It delegates to
         // the REPL's .import implementation (path resolution including the
@@ -157,7 +163,8 @@ namespace zelph
         bool continue_inline_janet(const std::string& line);
         void drop_inline_janet();
 
-        static bool is_zelph_complete(const std::string& code);
+        // Whether a statement is complete, or is pending the next line.
+        bool is_zelph_complete(const std::string& code) const;
 
         ScriptEngine(const ScriptEngine&)            = delete;
         ScriptEngine& operator=(const ScriptEngine&) = delete;
@@ -165,6 +172,10 @@ namespace zelph
     private:
         class Impl;
         Impl* const _pImpl;
+
+        // The statement that `parse_zelph_to_janet` processes, after its
+        // islands have been expanded.
+        std::string transform_statement(const std::string& expanded, bool pattern) const;
 
         static const JanetAbstractType zelph_node_type;
         static void                    zelph_node_tostring(void* p, JanetBuffer* buffer);

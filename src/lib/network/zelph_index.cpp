@@ -184,7 +184,7 @@ std::vector<IndexPair> Zelph::Impl::extract_predicate_pairs(const Node predicate
                 // the predicate is its SUBJECT -- every `P ~ ->`
                 // declaration is such a relation. The hash separates
                 // the declaration from a genuine `~ ~ ->`.
-                if (bidirectional > 1 || subject == predicate)
+                if (bidirectional > 1)
                 {
                     subject = 0;
                     for (const Node c : rel_right)
@@ -485,7 +485,15 @@ bool Zelph::Impl::try_transitive_direct(Node start, Node predicate, bool include
 
             if (bidirectional == 0) continue;
 
-            if (bidirectional > 1)
+            // subject == predicate is the second case a single
+            // bidirectional node does not decide, as in the index build
+            // above: the predicate's own declaration `P ~ ->` also
+            // references it via its subject slot, and solely the triple
+            // hash tells that declaration from a fact where the predicate
+            // serves as the subject. Absent this distinction, a walk
+            // through the predicate node would treat the declaration as
+            // an additional step and arrive at `->`.
+            if (bidirectional > 1 || subject == predicate)
             {
                 subject = 0;
                 for (const Node c : rel_right)
@@ -501,13 +509,20 @@ bool Zelph::Impl::try_transitive_direct(Node start, Node predicate, bool include
 
             if (is_var(subject)) continue;
 
+            // A self-fact keeps its object within the bidirectional entry,
+            // thus the split above results in it being empty, just as in the
+            // index build shown earlier. It constitutes a loop consisting of a
+            // single step: `k q k` represents a path of length one from k back
+            // to k, and the one-or-more closure of k contains k.
+            if (objects.empty()) objects.insert(subject);
+
             if (forward)
             {
                 if (subject != n) continue;
 
                 for (const Node obj : objects)
                 {
-                    if (obj == n || is_var(obj)) continue;
+                    if (is_var(obj)) continue;
                     if (seen.insert(obj).second)
                     {
                         result.insert(obj);
@@ -519,7 +534,7 @@ bool Zelph::Impl::try_transitive_direct(Node start, Node predicate, bool include
             }
             else
             {
-                if (subject == n || objects.count(n) == 0) continue;
+                if (objects.count(n) == 0) continue;
 
                 if (seen.insert(subject).second)
                 {

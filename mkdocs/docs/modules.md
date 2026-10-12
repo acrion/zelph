@@ -66,6 +66,8 @@ The registry is session state and is deliberately **not** part of a `.save`
 file — see [Rules Say Themselves Only Once](#rules-say-themselves-only-once)
 for why re-importing a module after `.load` is both necessary and free.
 
+A `.load` keeps the registry, whereas the network it supersedes takes along what a module stored within it – its rules and facts – and the module’s Janet component remains intact. A module brought in before a `.load` therefore continues to be regarded as imported, so attempting to import it once more is bypassed. To work with such a module in conjunction with a saved network, begin with `.new`, followed by loading the network and importing the module.
+
 ### Rules Say Themselves Only Once
 
 Facts are hash-consed: the node *is* its own structure, meaning that asserting the same fact twice results in no change. (Two different facts only share a node when their 62-bit hashes collide; zelph then keeps the first one and records nothing from the second, as detailed in [The Identity Foundation](internals/performance.md#the-identity-foundation).) A rule requires one additional step. It includes variables, which are allocated fresh for every statement, and a node built from newly allocated variables constitutes a fresh node – hence, entering the same rule twice would yield two rules deriving identical consequences, doubling the unification cost.
@@ -79,10 +81,7 @@ reasoner reads — set membership, the conjunction tag, and each condition's
 subject, predicate and objects, including any negated condition — so two
 rules that survive the check are guaranteed to behave differently.
 
-This matters most in a place where it is easy to miss. `.load` restores the
-graph but not the Janet side of a module (`zelph/number`, digit alphabets,
-display schemes), so working with a saved arithmetic network means
-re-importing the module:
+This matters most in a place where it is easy to miss. Using `.load` swaps the current graph for the stored version, which retains a module’s rules but omits its Janet side (`zelph/number`, digit alphabets, display schemes); thus, resuming work on a saved arithmetic network in a new session means re-importing the module:
 
 ```
 .load math.bin

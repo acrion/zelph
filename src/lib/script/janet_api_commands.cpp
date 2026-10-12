@@ -230,6 +230,90 @@ namespace zelph
         return command_noarg_impl(argc, argv, "zelph/run-delta", ".run-delta");
     }
 
+    // The negation levels of the active rules, as data, as .strata prints
+    // them. For each rule: its level, counted from 1 as .strata counts it
+    // and omitted for a rule lacking a negated condition; its component;
+    // and whether that component is stratifiable. A front end that writes
+    // rules can thus refuse a program based on the engine's own verdict
+    // rather than a second analysis, and every rule currently in effect is
+    // counted, not just the rules it authored.
+    //
+    // Only on the main thread: the analysis updates the engine's state
+    // that a run reads (Reasoning::negation_levels).
+    Janet ScriptEngine::Impl::janet_cfun_zelph_strata(int32_t argc, Janet* argv)
+    {
+        janet_fixarity(argc, 0);
+        if (!s_instance) return janet_wrap_nil();
+        if (s_instance->_log_janet_functions) s_instance->log_janet_call("zelph/strata", argc, argv, true);
+
+        require_main_thread("zelph/strata");
+
+        const network::Reasoning::NegationLevels strata = s_instance->_n->strata();
+        JanetArray*                              out    = janet_array(static_cast<int32_t>(strata.rules.size()));
+        for (std::size_t i = 0; i < strata.rules.size(); ++i)
+        {
+            // A `=>` fact lacking the form of a rule, like the declaration that
+            // `=>` denotes a relation, is omitted, just as .list-rules omits it.
+            if (!s_instance->_n->has_rule_form(strata.rules[i])) continue;
+
+            const std::size_t component = strata.component[i];
+            JanetTable*       entry     = janet_table(4);
+            janet_table_put(entry, janet_ckeywordv("rule"), zelph_wrap_node(strata.rules[i]));
+            if (strata.negates[i]) janet_table_put(entry, janet_ckeywordv("level"), janet_wrap_integer(static_cast<int32_t>(strata.level[i] + 1)));
+            janet_table_put(entry, janet_ckeywordv("component"), janet_wrap_integer(static_cast<int32_t>(component)));
+            janet_table_put(entry, janet_ckeywordv("stratifiable"), janet_wrap_boolean(strata.negation_inside[component] ? 0 : 1));
+            janet_array_push(out, janet_wrap_table(entry));
+        }
+        return janet_wrap_array(out);
+    }
+
+    // Janet's perspective on the warning about defeated negations. A
+    // program executing the engine through Janet cannot read the warning,
+    // thus it reads the identical facts presented here. A front end that
+    // translates its own input can subsequently inform its user which
+    // earlier conclusion a newly introduced statement has defeated.
+    Janet ScriptEngine::Impl::janet_cfun_zelph_defeated(int32_t argc, Janet* argv)
+    {
+        janet_fixarity(argc, 0);
+        if (!s_instance) return janet_wrap_array(janet_array(0));
+        if (s_instance->_log_janet_functions) s_instance->log_janet_call("zelph/defeated", argc, argv, true);
+
+        require_main_thread("zelph/defeated");
+
+        const auto& defeated = s_instance->_n->defeated_negations();
+        JanetArray* out      = janet_array(static_cast<int32_t>(defeated.size()));
+        for (const auto& [fact, rule] : defeated)
+        {
+            Janet pair[2] = {zelph_wrap_node(fact), zelph_wrap_node(rule)};
+            janet_array_push(out, janet_wrap_tuple(janet_tuple_n(pair, 2)));
+        }
+        Janet res = janet_wrap_array(out);
+        if (s_instance->_log_janet_functions) s_instance->log_janet_call("zelph/defeated", argc, argv, false, res);
+        return res;
+    }
+
+    // The .negation-records switch, when used by a front end that controls
+    // zelph via Janet and lacks the ability to input a command: if invoked
+    // without a parameter, it reads the current state; if provided with true
+    // or false, it modifies the switch setting; in both cases, it returns the
+    // resulting state, mirroring how zelph/cluster reports the state of the
+    // active cluster. A boolean is required: a string like "off" is considered
+    // truthy, and reading it as such would switch the records on.
+    Janet ScriptEngine::Impl::janet_cfun_zelph_negation_records(int32_t argc, Janet* argv)
+    {
+        janet_arity(argc, 0, 1);
+        if (!s_instance) return janet_wrap_false();
+        if (s_instance->_log_janet_functions) s_instance->log_janet_call("zelph/negation-records", argc, argv, true);
+
+        require_main_thread("zelph/negation-records");
+
+        if (argc == 1) s_instance->_n->record_negations(janet_getboolean(argv, 0) != 0);
+
+        Janet res = janet_wrap_boolean(s_instance->_n->record_negations() ? 1 : 0);
+        if (s_instance->_log_janet_functions) s_instance->log_janet_call("zelph/negation-records", argc, argv, false, res);
+        return res;
+    }
+
     // --- Clusters: the graph as a workspace rather than a store ---
     //
     // A cluster maintains a record of the node IDs CREATED during its active

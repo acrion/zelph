@@ -183,7 +183,7 @@ void Zelph::set_application_display(const std::size_t scheme, const std::vector<
 // ADDITIVE across calls (unlike the replace-the-set semantics of
 // set_number_digits): modules stack (arithmetic -> symbolic-core -> eml),
 // and a later module must not clobber an earlier module's registrations.
-// Display-only session state, cleared by .reset and not persisted --
+// Display-only session state, cleared by .new and not persisted --
 // like the digit alphabet, the graph topology is unaffected.
 void Zelph::add_verbose_selffact_predicates(const std::vector<Node>& preds)
 {

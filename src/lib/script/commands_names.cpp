@@ -27,12 +27,46 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #include "network/reasoning.hpp"
 
+#include <algorithm>
 #include <ostream>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 using namespace zelph;
+
+namespace
+{
+    // The nodes that a name represents within languages other than `lang`,
+    // arranged in sequence by language to ensure a message listing them
+    // appears identically each time.
+    std::vector<std::pair<std::string, network::Node>> named_elsewhere(const network::Zelph& z, const std::string& name, const std::string& lang)
+    {
+        std::vector<std::string> languages = z.get_languages();
+        std::sort(languages.begin(), languages.end());
+
+        std::vector<std::pair<std::string, network::Node>> found;
+        for (const std::string& other : languages)
+        {
+            if (other == lang) continue;
+            if (const network::Node nd = z.get_node(name, other); nd != 0) found.emplace_back(other, nd);
+        }
+        return found;
+    }
+
+    // "node 13 in 'zelph'", "node 20 in 'de' and node 13 in 'zelph'".
+    std::string list_holders(const std::vector<std::pair<std::string, network::Node>>& holders)
+    {
+        std::string s;
+        for (std::size_t i = 0; i < holders.size(); ++i)
+        {
+            if (i > 0) s += i + 1 == holders.size() ? " and " : ", ";
+            s += "node " + std::to_string(holders[i].second) + " in '" + holders[i].first + "'";
+        }
+        return s;
+    }
+}
 
 namespace zelph::console
 {
@@ -70,18 +104,37 @@ namespace zelph::console
             // the existing node. It does not make sense to support creating a new node in this mode.
             if (node_in_current_lang == 0)
             {
-                throw std::runtime_error("Node '" + name_in_current_lang + "' does not exist");
+                // A node bearing a name in a different language still
+                // exists, yet the message "does not exist" sent the user to
+                // check for a spelling mistake. The name is searched for
+                // solely in the current language, meaning access to that
+                // node is via its id or the specific language in question.
+                const auto elsewhere = named_elsewhere(*_n, name_in_current_lang, current_lang);
+                if (elsewhere.empty()) throw std::runtime_error("Node '" + name_in_current_lang + "' does not exist");
+
+                const std::string& lang = elsewhere.front().first;
+                const std::string  id   = std::to_string(elsewhere.front().second);
+                throw std::runtime_error("No node is named '" + name_in_current_lang + "' in the current language '" + current_lang
+                                         + "'; the name belongs to " + list_holders(elsewhere) + ". Refer to "
+                                         + (elsewhere.size() == 1 ? "that node" : "one of them") + " by its id -- \".name " + id + " "
+                                         + name_in_target_lang + "\" names it in '" + current_lang + "', \".name " + id + " " + lang + " "
+                                         + name_in_target_lang + "\" renames it in '" + lang + "' -- or switch with \".lang " + lang + "\".");
             }
-            else if (node_in_target_lang == node_in_current_lang)
+
+            // Which node holds the new name is a matter concerning names.
+            // Resolved in the same manner as the node parameter, the string
+            // "14" represented node 14 when no node bore the label "14", and
+            // a name unclaimed by anyone was considered occupied.
+            const network::Node holder = _n->get_node(name_in_target_lang, target_lang);
+
+            if (holder == node_in_current_lang)
             {
                 // Renaming a node to the name it already carries. Refusing
                 // it complained about the node itself -- "Name 'a' is
                 // already in use by node 11" where 11 IS 'a'.
                 _n->out("Node '" + name_in_current_lang + "' already has this name in language '" + target_lang + "'.", true);
             }
-            else if (node_in_target_lang != 0
-                     && network::Zelph::is_var(node_in_target_lang)
-                     && !network::Zelph::is_var(node_in_current_lang))
+            else if (holder != 0 && network::Zelph::is_var(holder) && !network::Zelph::is_var(node_in_current_lang))
             {
                 // A rule's VARIABLE holds the name. Refusing here told the
                 // user something the engine does not believe -- names are
@@ -100,13 +153,27 @@ namespace zelph::console
                             + name_in_current_lang + "' carries it now; the variable keeps rendering under it.",
                         true);
             }
-            else if (node_in_target_lang != 0)
+            else if (holder != 0 && network::Zelph::is_var(holder))
             {
-                throw std::runtime_error("Name '" + name_in_target_lang + "' is already in use by node " + std::to_string(node_in_target_lang)
-                                         + ". Names are unique per language; remove the other node or use a different name.");
+                // Both serve as variables. A variable is associated with
+                // the statement that quantifies it, meaning that merging
+                // two would result in one rule's variable being another
+                // rule's, and the name remains purely for display purposes
+                // on both.
+                throw std::runtime_error("Name '" + name_in_target_lang + "' is the display name of a variable, and '" + name_in_current_lang
+                                         + "' is a variable as well. Merging them would make the variable of one statement the "
+                                           "variable of another, so nothing was changed.");
             }
             else
             {
+                // Another node holding the name is the same thing under a
+                // second name, and the pair merges -- the pathway between
+                // languages has always done this, yet this one refused with
+                // "Names are unique per language", guidance that neither a
+                // core node nor a user intending the merge could follow.
+                // set_name refuses what cannot be merged and explains the
+                // reason: a core node's spelling, two core nodes, a variable
+                // alongside a non-variable, a collection of a rule's text.
                 _n->set_name(node_in_current_lang, name_in_target_lang, target_lang, true);
             }
         }
@@ -116,7 +183,15 @@ namespace zelph::console
             {
                 node_in_current_lang = _n->node(name_in_current_lang);
                 _n->set_name(node_in_current_lang, name_in_target_lang, target_lang, true);
-                _n->out("Node '" + name_in_current_lang + "' ('" + current_lang + "') / '" + name_in_target_lang + "' ('" + target_lang + "') does not exist yet in either language => created it.", true);
+
+                // The newly created node has the same name as a node from a
+                // different language, a fact that the user who intended the
+                // other node must be aware of: the message alone read as
+                // though the name were free.
+                std::string note;
+                if (const auto elsewhere = named_elsewhere(*_n, name_in_current_lang, current_lang); !elsewhere.empty())
+                    note = " Note: '" + name_in_current_lang + "' also names " + list_holders(elsewhere) + "; the node created here is a different one.";
+                _n->out("Node '" + name_in_current_lang + "' ('" + current_lang + "') / '" + name_in_target_lang + "' ('" + target_lang + "') does not exist yet in either language => created it." + note, true);
             }
             else
             {
@@ -145,8 +220,12 @@ namespace zelph::console
         }
         else if (name_in_current_lang == _n->get_name(node_in_current_lang, current_lang, false) && name_in_target_lang == _n->get_name(node_in_target_lang, target_lang, false))
         {
-            _n->out("Node '" + name_in_current_lang + "' ('" + current_lang + "') / '" + name_in_target_lang + "' ('" + target_lang + "') have the requested names, but are different nodes => Merging them.", true);
+            // Announced once it has happened: set_name refuses the merges it
+            // is unable to perform, and a prior announcement had been
+            // displayed above the refusal, as though the merge had already
+            // been executed.
             _n->set_name(node_in_current_lang, name_in_target_lang, target_lang, true);
+            _n->out("Node '" + name_in_current_lang + "' ('" + current_lang + "') / '" + name_in_target_lang + "' ('" + target_lang + "') have the requested names, but are different nodes => Merging them.", true);
         }
         else
         {

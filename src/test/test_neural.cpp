@@ -27,6 +27,8 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #include "test_helpers.hpp"
 
+#include <filesystem>
+
 using namespace zelph::test;
 
 // ---------------------------------------------------------------------------
@@ -794,6 +796,52 @@ s2 marked yes
         CHECK_FALSE(any_output_starts_with(collector, "( s2 unsuggested")); });
 }
 
+// The net receives the subject and the predicate as input, so an ≈ whose
+// subject is not bound cannot be evaluated at all. This was left to `.log`:
+// the query `≈hnet(X relH c1)`, like a rule where the remaining conditions
+// never bind the subject, answered with silence, which reads as "the net
+// confirms nothing". Reported like the other shapes a condition cannot be
+// evaluated in -- once per condition, not per binding of the rest of the rule
+// -- and only when nothing binds the subject: an ≈ written before the
+// condition that binds it is ordered after that condition and is not
+// reported.
+TEST_CASE("neural: a ≈ whose subject nothing binds is reported, in a query and in a rule")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+s2 in HIn
+c1 in HOut
+c2 in HOut
+%(zelph/nn-connect "s2" "c1" 0.9)
+%(zelph/nn-connect "s2" "c2" 0.1)
+hnet nn-layers <HIn HOut>
+s2 marked yes
+s3 marked yes
+)");
+        const auto reports = [&]
+        { return count_outputs_containing(collector, "needs its subject and predicate bound"); };
+
+        for (const char* query : {"≈hnet(X relH c1)", "¬≈hnet(X relH c2)", "≈hnet(s2 R c1)"})
+        {
+            CAPTURE(query);
+            collector.clear();
+            interactive.process(query);
+            CHECK(reports() == 1);
+            CHECK(collect_answers(collector).empty());
+        }
+
+        collector.clear();
+        interactive.process("(A marked yes, ≈hnet(X relH c1)) => (X suggests A)");
+        interactive.process("(A marked yes, ¬≈hnet(X relH c2)) => (A unsure c2)");
+        CHECK(reports() == 2);
+
+        collector.clear();
+        interactive.process("(≈hnet(A relH X), A marked yes) => (A proposes X)");
+        CHECK(reports() == 0);
+        CHECK(any_output_starts_with(collector, "( s2 proposes c1 )")); });
+}
+
 // An unusable net makes the condition fail in BOTH readings. "The net does not
 // confirm this" and "there is no net" are different statements, and letting the
 // second one satisfy `¬≈` would turn a misspelled net name into a derivation
@@ -846,7 +894,46 @@ hnet nn-layers <HIn HOut>
 )");
         collector.clear();
         interactive.process("≈hnet(s2 relH X)");
-        CHECK(collect_answers(collector) == std::vector<std::string>{"(s2 relH c1) nn hnet"}); });
+        CHECK(collect_answers(collector) == std::vector<std::string>{"≈hnet(s2 relH c1)"}); });
+}
+
+// The echo and the answers printed the fact that the sugar builds, "(s2 relH
+// X) nn hnet", in a place that holds a condition. They print the condition as
+// it is typed, also for the full written form, which is the same condition.
+// An answer is ground: when typed back, it becomes a statement that asserts,
+// with the operator rejected and no assertion made.
+TEST_CASE("neural: a ≈ query echoes and answers as it is typed")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+s2 in HIn
+c1 in HOut
+c2 in HOut
+%(zelph/nn-connect "s2" "c1" 0.9)
+%(zelph/nn-connect "s2" "c2" 0.1)
+hnet nn-layers <HIn HOut>
+s2 marked yes
+)");
+        for (const char* query : {"≈hnet(s2 relH X)", "(s2 relH X) nn hnet"})
+        {
+            CAPTURE(query);
+            collector.clear();
+            interactive.process(query);
+            CHECK(any_output_starts_with(collector, "≈hnet(s2 relH X)"));
+            CHECK(collect_answers(collector) == std::vector<std::string>{"≈hnet(s2 relH c1)"});
+        }
+
+        collector.clear();
+        interactive.process("X marked yes, ¬≈hnet(s2 relH c2)");
+        const std::vector<std::string> answers = collect_answers(collector);
+        REQUIRE(answers.size() == 1);
+        CHECK((answers.front() == "s2 marked yes, ¬≈hnet(s2 relH c2)" || answers.front() == "¬≈hnet(s2 relH c2), s2 marked yes"));
+
+        const std::size_t before = node_count(collector, interactive);
+        CHECK_THROWS_WITH(interactive.process("≈hnet(s2 relH c1)"), doctest::Contains("has no meaning in a statement that asserts"));
+        CHECK_THROWS_WITH(interactive.process(answers.front()), doctest::Contains("has no meaning in a statement that asserts"));
+        CHECK(node_count(collector, interactive) == before); });
 }
 
 // "X go Y, ≈net(a r b)" built `a r b` as data on its way to querying the net
@@ -1068,6 +1155,26 @@ b p c
 c p d
 )");
         CHECK_FALSE(any_event_contains(collector, "nosuchnet")); });
+}
+
+TEST_CASE("neural: a load that replaces the graph says it again")
+{
+    // A net that does not exist is reported only once, keyed by the net's
+    // node. A load that replaces the graph forgets those reports, as the
+    // identifier might refer to a different net within the loaded graph: the
+    // rule specified in the file is reported again.
+    const auto file = std::filesystem::temp_directory_path() / "zelph_nosuchnet.bin";
+    run_both_modes([&file](auto& collector, auto& interactive)
+                   {
+        interactive.process("a p b");
+        interactive.process("(X p Y, ≈nosuchnet(X p Y)) => (X q Y)");
+        REQUIRE(any_event_contains(collector, "no nn-layers definition"));
+        interactive.process(".save \"" + file.string() + "\"");
+        interactive.process(".load \"" + file.string() + "\"");
+        collector.clear();
+        interactive.process(".run");
+        CHECK(any_event_contains(collector, "nosuchnet")); });
+    std::filesystem::remove(file);
 }
 
 TEST_CASE("neural: a malformed net definition is named as such, not as a missing one")

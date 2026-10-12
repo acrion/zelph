@@ -328,6 +328,19 @@ namespace zelph
         return signal;
     }
 
+    // What the islands of the statement built before its code ran,
+    // combined with what a rule's build or a query's recording captured:
+    // the islands run while the line is parsed, meaning no recording
+    // initiated by the code can see them, and a ground term an island built
+    // within a rule stayed data -- "($(a + b) p X) => (X q r)" answered
+    // `a + b` to "A + B" -- just as it did when situated under an operator
+    // in a query. Only what the walk from the rule's parts or from the
+    // operator reaches gets marked.
+    void ScriptEngine::Impl::add_island_created(std::vector<network::Node>& created) const
+    {
+        if (_statement) created.insert(created.end(), _statement->island_created.begin(), _statement->island_created.end());
+    }
+
     // Build a rule statement, and keep it only if it says something new.
     //
     // The thunk performs the whole construction -- condition patterns, the
@@ -364,8 +377,9 @@ namespace zelph
             // brought into being -- which is how a GROUND pattern can be told
             // from the same statement asserted earlier. Read it before the
             // merge, which drops the bookkeeping.
-            const std::vector<network::Node> created = s_instance->_n->cluster_nodes(kRuleScratch);
+            std::vector<network::Node> created = s_instance->_n->cluster_nodes(kRuleScratch);
             s_instance->_n->merge_cluster(kRuleScratch, previous);
+            s_instance->add_island_created(created);
             if (rule) s_instance->_n->mark_rule_patterns(rule, created);
             return out;
         }
@@ -517,6 +531,7 @@ namespace zelph
             // records.
             std::vector<network::Node> created = s_instance->_n->cluster_nodes(kRuleScratch);
             s_instance->_n->merge_cluster(kRuleScratch, previous);
+            s_instance->add_island_created(created);
 
             if (s_instance->_statement)
                 s_instance->_statement->mentions.push_back(std::move(created));
@@ -582,6 +597,7 @@ namespace zelph
                 // Read before the merge, which drops the accounting records.
                 std::vector<network::Node> created = s_instance->_n->cluster_nodes(kQueryScratch);
                 s_instance->_n->merge_cluster(kQueryScratch, previous);
+                s_instance->add_island_created(created);
                 s_instance->_statement->query_created.insert(s_instance->_statement->query_created.end(), created.begin(), created.end());
                 return out;
             }

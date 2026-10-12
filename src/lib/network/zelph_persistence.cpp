@@ -178,6 +178,8 @@ void Zelph::Impl::validate_chunk_selector(const detail::chunk_selector& selectio
 void Zelph::Impl::clear_loaded_state()
 {
     invalidate_predicate_index();
+    invalidate_relation_type_set();
+    forget_clusters();
     note_load();
 
     std::unique_lock<std::shared_mutex> lock_left(_smtx_left);
@@ -192,8 +194,10 @@ void Zelph::Impl::clear_loaded_state()
     _name_of_node.clear();
     _node_of_name.clear();
     _string_pool.clear();
+    _label_index.clear();
     _older_rule_literals.clear();
     _older_negations = false;
+    _names_loaded_partially.store(false, std::memory_order_relaxed);
 }
 #endif
 
@@ -633,6 +637,10 @@ void Zelph::Impl::loadFromManifest(const std::string& manifest_path, const Zelph
     }
 
     clear_loaded_state();
+    _names_loaded_partially.store(skip_payload
+                                      || (nameOfNodeSelectionPtr != nullptr && nameOfNodeSelection.size() != nameOfNodeChunkCount)
+                                      || (nodeOfNameSelectionPtr != nullptr && nodeOfNameSelection.size() != nodeOfNameChunkCount),
+                                  std::memory_order_relaxed);
 
     if (header_is_remote)
     {
@@ -1217,6 +1225,8 @@ bool Zelph::Impl::loadFromFile(const std::string& filename, bool& negation_condi
         throw std::runtime_error("Failed to open file for reading: " + filename);
     }
 
+    bool state_cleared = false;
+
     try
     {
         ::capnp::ReaderOptions options;
@@ -1229,10 +1239,6 @@ bool Zelph::Impl::loadFromFile(const std::string& filename, bool& negation_condi
         ::capnp::PackedMessageReader mainMessage(bufferedInput, options);
         auto                         impl = mainMessage.getRoot<ZelphImpl>();
 
-        // Before the first write: a load that encounters failure midway
-        // still results in partial merging of the file.
-        note_load();
-        loadSmallData(impl);
         const bool template_ids = impl.getTemplateIds();
         negation_conditions     = impl.getNegationConditions();
 
@@ -1240,6 +1246,17 @@ bool Zelph::Impl::loadFromFile(const std::string& filename, bool& negation_condi
         uint32_t rightChunkCount      = impl.getRightChunkCount();
         uint32_t nameOfNodeChunkCount = impl.getNameOfNodeChunkCount();
         uint32_t nodeOfNameChunkCount = impl.getNodeOfNameChunkCount();
+
+        // Following the header, on which a file that is not a network fails:
+        // in such a case, the session's graph remains unchanged. From this
+        // point forward, the file takes the place of the graph, meaning the
+        // session's nodes, names, and clusters are discarded before the first
+        // write, and a failure occurring during the process leaves a part of
+        // the file in the graph.
+        clear_loaded_state();
+        state_cleared = true;
+        loadSmallData(impl);
+
         io::OutputStream(_output, io::OutputChannel::Diagnostic, true) << "Loading: left chunks=" << leftChunkCount << ", right chunks=" << rightChunkCount
                                                                        << ", nameOfNode chunks=" << nameOfNodeChunkCount << ", nodeOfName chunks=" << nodeOfNameChunkCount;
 
@@ -1262,11 +1279,11 @@ bool Zelph::Impl::loadFromFile(const std::string& filename, bool& negation_condi
     }
     catch (const kj::Exception& e)
     {
-        // A load merges into whatever is already there, so a failure
-        // partway leaves a graph that is neither the old one nor the
-        // file. Say so; the handle was leaked on every throw before.
+        // After the header, the session's graph is no longer available and the
+        // file has been read incompletely: indicate this. The handle gets
+        // closed with every throw.
         fclose(file);
-        throw std::runtime_error(read_error_text(filename, e, true));
+        throw std::runtime_error(read_error_text(filename, e, state_cleared));
     }
     catch (...)
     {
@@ -1344,6 +1361,10 @@ void Zelph::Impl::loadFromFile(const std::string& filename, const Zelph::BinChun
 
         clear_loaded_state();
         state_cleared = true;
+        _names_loaded_partially.store(skip_payload
+                                          || (nameOfNodeSelectorPtr != nullptr && nameOfNodeSelector.size() != nameOfNodeChunkCount)
+                                          || (nodeOfNameSelectorPtr != nullptr && nodeOfNameSelector.size() != nodeOfNameChunkCount),
+                                      std::memory_order_relaxed);
         loadSmallData(impl);
 
         if (skip_payload)

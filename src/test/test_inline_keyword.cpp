@@ -52,6 +52,12 @@ namespace
     // before acceptance, as the contract requires.
     constexpr const char* kBalancedIsland =
         R"js(%(zelph/register-keyword "$(" ")" (fn [t] (var d 0) (each c t (case c 40 (++ d) 41 (-- d))) (if (= d 0) (zelph/resolve (string/trim t)) :incomplete))))js";
+
+    // An island that builds structure, in the manner a term island does:
+    // three names make the fact of them, and anything else is an error of
+    // the handler.
+    constexpr const char* kFactIsland =
+        R"js(%(zelph/register-keyword "$(" ")" (fn [t] (def w (string/split " " (string/trim t))) (if (= (length w) 3) (zelph/fact (w 0) (w 1) (w 2)) (error "three names")))))js";
 } // namespace
 
 TEST_CASE("inline keyword: islands splice into value positions")
@@ -112,6 +118,125 @@ TEST_CASE("inline keyword: island handlers share the statement's variable scope"
         collector.clear();
         interactive.process(R"js(%(string "IK-VAR-" (zelph/exists "tom" "celebrates" "tom")))js");
         CHECK(any_output_contains(collector, "IK-VAR-true")); });
+}
+
+// An island executes during the parsing of its line, before any code within
+// the statement being processed, meaning the recording of a rule build never
+// saw what the island built: "($( a p b ) q X) => (X r s)" left `a p b` as
+// data, which answered "A p B" and fed every rule over it, whereas the
+// identical rule written without the island maintains it as a pattern. What
+// the islands of a statement have built now constitutes what the statement
+// has built, and the rule marks what it reaches of that construction.
+TEST_CASE("inline keyword: a ground term an island builds inside a rule is a pattern of the rule")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process(kFactIsland);
+
+        SUBCASE("a typed rule") { interactive.process("($( a p b ) q X) => (X r s)"); }
+        SUBCASE("a rule a line mentions") { interactive.process("x about (($( a p b ) q X) => (X r s))"); }
+
+        collector.clear();
+        interactive.process("A p B");
+        CHECK(collect_answers(collector).empty());
+        collector.clear();
+        interactive.process(".explain (a p b)");
+        CHECK(any_output_contains(collector, "[rule pattern; not asserted]")); });
+}
+
+// The same principle applies under a condition operator within a query:
+// the structure the query builds there constitutes a pattern
+// (zelph/query-text), and a term an island built for it was left as data. A
+// term that the query also uses outside the operator is created there, and
+// thereby asserted, just as any part of a query is.
+TEST_CASE("inline keyword: a ground term an island builds beneath ¬ in a query is a pattern")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process(kFactIsland);
+        interactive.process("t go k");
+
+        collector.clear();
+        interactive.process("X go Y, ¬(X q $( a p b ))");
+        CHECK(collect_answers(collector).size() == 1);
+        interactive.process("X go Y, $( c p d ) s Y, ¬(X r $( c p d ))");
+
+        collector.clear();
+        interactive.process("S p O");
+        CHECK(collect_answers(collector) == std::vector<std::string>{"c p d"}); });
+}
+
+// The parser makes a judgment on a line once its islands have completed
+// execution. A line that gets rejected was never accepted, yet the
+// constructions its islands produced stayed: following the rejection of "$(
+// a p b ) q c, ¬(d q e)" due to its operator, "A p B" answered `a p b`, and
+// the arithmetic rules from the standard library fired on a term that no
+// accepted statement contained. A line that fails to parse entirely is
+// rejected in the same way.
+TEST_CASE("inline keyword: a line the parser refuses keeps nothing its island built")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process(kFactIsland);
+        const std::size_t before = node_count(collector, interactive);
+
+        CHECK_THROWS_WITH(interactive.process("$( a p b ) q c, ¬(d q e)"), doctest::Contains("condition operator"));
+        CHECK_THROWS_WITH(interactive.process("$( a p b ) q x(c d e)"), doctest::Contains("Could not parse"));
+
+        CHECK(node_count(collector, interactive) == before);
+        collector.clear();
+        interactive.process("A p B");
+        CHECK(collect_answers(collector).empty()); });
+}
+
+// A handler's error ends the line before the parser sees it, and the islands
+// located to its left had already completed their construction as requested.
+TEST_CASE("inline keyword: an island that fails leaves nothing the islands before it built")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process(kFactIsland);
+        const std::size_t before = node_count(collector, interactive);
+
+        CHECK_THROWS_WITH(interactive.process("$( a p b ) q $( fail )"), doctest::Contains("three names"));
+
+        CHECK(node_count(collector, interactive) == before);
+        collector.clear();
+        interactive.process("A p B");
+        CHECK(collect_answers(collector).empty()); });
+}
+
+// A handler may parse statements of its own: as the island executes, a file
+// it imports gets parsed one line at a time. Each of those parses ended the
+// line's recording as though it were its own, meaning what the handler built
+// after the import was recorded by nobody, and the term the island returned
+// remained data within the rule. Only the parse that opened the recording
+// ends it.
+TEST_CASE("inline keyword: a handler that imports a file still records what its island builds")
+{
+    namespace fs          = std::filesystem;
+    const fs::path script = fs::temp_directory_path() / "zelph_test_island_import.zph";
+    {
+        std::ofstream f(script);
+        f << "m n o\n";
+    }
+    const std::string handler = R"js(%(zelph/register-keyword "$(" ")" (fn [t] (zelph/import ")js" + script.generic_string()
+                              + R"js(") (zelph/fact "a" "b" "c"))))js";
+
+    run_both_modes([&](auto& collector, auto& interactive)
+                   {
+        interactive.process(handler);
+        interactive.process("($( x ) q X) => (X r s)");
+
+        collector.clear();
+        interactive.process("A b C");
+        CHECK(collect_answers(collector).empty());
+        collector.clear();
+        interactive.process("M n O");
+        CHECK(collect_answers(collector) == std::vector<std::string>{"m n o"}); });
+
+    std::error_code ec;
+    fs::remove(script, ec);
 }
 
 TEST_CASE("inline keyword: no expansion inside quoted atoms or comments")

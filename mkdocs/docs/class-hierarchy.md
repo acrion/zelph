@@ -181,10 +181,10 @@ wikidata> .deductions off
 Deduction printing mode: off
   No derivations are printed; a run says how many it hid and marks the prompt with '+' (e.g. "wikidata+> ").
 wikidata> (C P279 Q43229, C P279⁺ Q215627) => (C in-violation Q215627)
-(((C P279 Q215627) closure one-or-more), (C P279 Q43229)) => (C in-violation Q215627)
+((C P279⁺ Q215627), (C P279 Q43229)) => (C in-violation Q215627)
 Note: 9 deductions were hidden.
 wikidata+> (C P279 Q43229, ¬(C P279⁺ Q215627)) => (C sound-under Q43229)
-((C P279 Q43229), ¬((C P279 Q215627) closure one-or-more)) => (C sound-under Q43229)
+((C P279 Q43229), ¬(C P279⁺ Q215627)) => (C sound-under Q43229)
 Note: 815 deductions were hidden.
 ```
 
@@ -194,8 +194,7 @@ when it does. The `-` in the `zelph->` prompt is the reminder. A rule entered
 while inference is off is stored and does nothing until it is switched back on
 (or `.run` is typed).
 
-The echo shows what the `⁺` stands for as sugar: the condition is the ordinary
-fact `(C P279 Q215627) closure one-or-more`.
+The `⁺` serves as syntactic sugar for a standard fact, `(C P279 Q215627) closure one-or-more`. The echo writes the condition exactly as it was entered, while the proof below names the fact.
 
 _organization_ has 824 direct subclasses in this file. **Nine of them reach _profession_ as well** – among them _militia_ ([Q153936](https://www.wikidata.org/wiki/Q153936)) and _credit bureau_ ([Q1187145](https://www.wikidata.org/wiki/Q1187145)) – and 815 do not. An organization is not a profession, so those nine are where to look, and the 815 are what says the other question was asked too. `.deductions off` keeps each run to the notice above; without it every derived fact prints its own.
 

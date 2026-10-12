@@ -180,6 +180,23 @@ namespace zelph::console
         _n->out(std::string("Contradiction records: ") + cmd[1], true);
     }
 
+    void CommandExecutor::Impl::cmd_negation_records(const std::vector<std::string>& cmd)
+    {
+        if (cmd.size() == 1)
+        {
+            _n->out(std::string("Negation records: ") + (_n->record_negations() ? "on" : "off"), true);
+            return;
+        }
+        if (cmd.size() != 2 || (cmd[1] != "on" && cmd[1] != "off"))
+            throw std::runtime_error("Usage: .negation-records [on|off]");
+
+        // Re-armable too: a fact derived when the switch is off has no
+        // record, meaning a later fact that defeats it goes unreported, and
+        // that is precisely what the gap means.
+        _n->record_negations(cmd[1] == "on");
+        _n->out(std::string("Negation records: ") + cmd[1], true);
+    }
+
     void CommandExecutor::Impl::cmd_explain_budget(const std::vector<std::string>& cmd)
     {
         constexpr std::size_t unlimited = std::numeric_limits<std::size_t>::max();

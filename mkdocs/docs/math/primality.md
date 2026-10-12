@@ -68,10 +68,11 @@ rule is deferred until the positive rules, candidate enumeration and all
 against the complete divisor scan.
 
 `.strata` lists the rule as not stratifiable nonetheless, together with the
-whole arithmetic. The analysis compares predicates, and the rule delivering
-the verdict, `(N testprime N, N isprime N) => ((N testprime N) = prime)`,
-creates an `=` fact – the predicate for every arithmetic result the scan
-reads – and contains `(N testprime N)`, which starts the scan. Neither can
+whole arithmetic. The analysis does not compare whole patterns, and the
+rule that determines the verdict,
+`(N testprime N, N isprime N) => ((N testprime N) = prime)`, creates an `=`
+fact – the predicate for each arithmetic result the scan reads – and
+contains `(N testprime N)`, which starts the scan. Neither can
 produce a fact that the negation relies upon: the `=` fact has a
 `testprime` term as its subject, never one of the arithmetic terms the scan
 reads, and `(N testprime N)` is already established, being the rule’s own

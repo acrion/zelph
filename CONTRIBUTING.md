@@ -44,7 +44,7 @@ The packages run these tests when a user installs zelph, and not everything in t
 TEST_CASE("jacobian: det J_G is the constant -512 as a polynomial identity" * doctest::test_suite("slow"))
 ```
 
-The packages then run `zelph_tests --test-suite-exclude=slow`, which today is 673 of 762 cases in about 20 seconds instead of nearly three minutes. One case of every test file always stays unmarked, even where it is expensive, because the selection has to keep every area represented rather than only the cheap ones.
+The packages subsequently execute `zelph_tests --test-suite-exclude=slow`, thereby omitting the costly cases and requiring only a small portion of the total suite’s duration. Every test file maintains at least one case that remains unmarked, regardless of its expense, since the selection process must ensure all areas are represented, not merely the cheap ones.
 
 Forgetting the marker is caught rather than shipped: `ctest` refuses a selection that exceeds its declared budget, that lets a single case take more than a quarter of it, or that has shrunk below four fifths of all cases.
 

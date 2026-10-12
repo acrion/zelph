@@ -24,14 +24,25 @@ the list below. The list holds those a compiler reaches for on its own; an
 intrinsic for something more exotic can still slip through. At the v2 floor the
 same applies to lzcnt and tzcnt, which are v3 but legacy encoded.
 
+The disassembly is a linear sweep, so it also decodes data that a compiler put
+into the code section. MSVC puts the jump tables of a switch there, as four-byte
+offsets; an entry whose low byte is 0x62 then reads like an EVEX prefix, and
+objdump calls the sequence (bad) because it is no instruction. A sequence the
+disassembler cannot decode is not counted, but only after the disassembler has
+shown that it decodes EVEX: otherwise (bad) may be an instruction it does not
+know, and it counts as before. A table entry that happens to decode as a valid
+instruction is still counted.
+
 Exit codes: 0 the artefact fits, 1 it does not, 2 the question could not be put.
 """
 
 import argparse
+import os
 import re
 import shutil
 import subprocess
 import sys
+import tempfile
 
 VEX_PREFIXES = {0xC4, 0xC5}
 EVEX_PREFIX = 0x62
@@ -53,6 +64,16 @@ LEGACY_ABOVE_V3 = {
     "clwb", "cldemote", "movdiri", "movdir64b", "serialize",
     "prefetchwt1", "ptwrite", "umonitor", "umwait", "tpause",
 }
+
+# vaddps %zmm2,%zmm1,%zmm0: AVX-512F, the instruction set extension that a
+# compiler reaches for first above x86-64-v3.
+EVEX_SAMPLE = bytes.fromhex("62f1744858c2")
+
+# What is displayed by GNU objdump and llvm-objdump when they encounter
+# bytes that they are unable to decode.
+UNDECODABLE = {"(bad)", ".byte", "<unknown>"}
+
+INSTRUCTION_LINE = re.compile(r"^\s*([0-9a-f]+):\s*([0-9a-f]{2}(?: [0-9a-f]{2})*)\s*(?:\t(.*))?$")
 
 WIDE_REGISTER = re.compile(r"%zmm[0-9]+")
 OPMASK_REGISTER = re.compile(r"%k[0-7]\b")
@@ -84,29 +105,48 @@ def run(objdump, *args):
     return done.stdout
 
 
-def violations(disassembly, rejected_prefixes, floor):
+def decodes_evex(objdump):
+    with tempfile.NamedTemporaryFile(suffix=".bin", delete=False) as sample:
+        sample.write(EVEX_SAMPLE)
+    try:
+        done = subprocess.run([objdump, "-D", "-b", "binary", "-m", "i386:x86-64", sample.name],
+                              capture_output=True, check=False, encoding="utf-8", errors="replace")
+    except OSError:
+        return False
+    finally:
+        os.unlink(sample.name)
+    return (done.returncode == 0 and "%zmm" in done.stdout
+            and not any(word in done.stdout for word in UNDECODABLE))
+
+
+def violations(disassembly, rejected_prefixes, floor, undecodable_is_data):
     found = []
+    undecodable = 0
     for line in disassembly.splitlines():
-        parts = line.split("\t")
-        if len(parts) < 3 or not parts[0].strip().endswith(":"):
+        # GNU objdump uses tabs to distinguish address, bytes, and instruction;
+        # llvm-objdump puts a space following the address and employs a tab
+        # between the mnemonic and its operands. Simply splitting on tabs
+        # failed to match any line from the latter, resulting in a library
+        # containing AVX-512 instructions going undetected.
+        listed = INSTRUCTION_LINE.match(line)
+        if not listed:
             continue
+        address, raw, text = listed.groups()
 
         # A long instruction wraps, and the continuation lines carry bytes
         # without a mnemonic. The prefix that decides belongs to the first line.
-        text = parts[2].strip()
+        text = " ".join((text or "").split())
         if not text:
             continue
-
-        raw = parts[1].split()
-        if not raw:
-            continue
-        try:
-            first = int(raw[0], 16)
-        except ValueError:
-            continue
+        first = int(raw[:2], 16)
 
         mnemonic, _, operands = text.partition(" ")
         operands = operands.split("#")[0]
+
+        if mnemonic in UNDECODABLE and undecodable_is_data:
+            if first in rejected_prefixes:
+                undecodable += 1
+            continue
 
         reason = None
         if first in rejected_prefixes:
@@ -115,12 +155,13 @@ def violations(disassembly, rejected_prefixes, floor):
             reason = "512 bit register"
         elif OPMASK_REGISTER.search(operands):
             reason = "opmask register"
-        elif floor == "x86-64-v3" and mnemonic in LEGACY_ABOVE_V3:
+        elif floor == "x86-64-v3" and (mnemonic in LEGACY_ABOVE_V3
+                                       or (mnemonic[-1:] in "bwlq" and mnemonic[:-1] in LEGACY_ABOVE_V3)):
             reason = f"{mnemonic} is above the floor"
 
         if reason:
-            found.append((parts[0].strip().rstrip(":"), text, reason))
-    return found
+            found.append((address, text, reason))
+    return found, undecodable
 
 
 def main():
@@ -139,7 +180,11 @@ def main():
     if "i386:x86-64" not in header and "x86-64" not in header:
         fail(f"{args.binary} is not an x86-64 object, so the {args.floor} floor says nothing about it")
 
-    found = violations(run(objdump, "-d", args.binary), FLOORS[args.floor], args.floor)
+    found, undecodable = violations(run(objdump, "-d", args.binary), FLOORS[args.floor], args.floor,
+                                    decodes_evex(objdump))
+    if undecodable:
+        print(f"{args.binary}: {undecodable} undecodable byte sequence(s) with a VEX or EVEX prefix, "
+              f"taken for data in the code section")
     if not found:
         print(f"{args.binary}: fits within {args.floor}")
         return 0

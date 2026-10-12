@@ -34,6 +34,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #include <atomic>
 #include <functional>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -198,8 +199,8 @@ namespace zelph::network
         // Whether a removal has touched a node since the nodes were named, for
         // a few nodes named ahead of time (see Network::watch_removals): in
         // the absence of such a removal, a node's edge count indicates whether
-        // it underwent a change. `graph_epoch` counts the loads, merging ones
-        // included.
+        // it underwent a change. `graph_epoch` counts the loads, each of which
+        // replaced the graph.
         void          watch_removals(std::shared_ptr<const ankerl::unordered_dense::set<Node>> nodes) const;
         bool          touched_by_removal(Node n) const;
         std::uint64_t graph_epoch() const;
@@ -656,7 +657,7 @@ namespace zelph::network
         // Script-defined, like the digit alphabet: C++ makes no assumptions
         // about which predicates are term-forming operators -- the module
         // that defines an operator declares its display. Input sugar is
-        // unaffected. Session state (cleared by .reset, not persisted).
+        // unaffected. Session state (cleared by .new, not persisted).
         void add_verbose_selffact_predicates(const std::vector<Node>& preds);
         bool selffact_sugar_suppressed(Node pred) const;
 
@@ -673,11 +674,44 @@ namespace zelph::network
 
         // --- Implemented in zelph_names.cpp (name management) ---
 
-        void        set_name(Node node, const std::string& name, std::string lang, bool merge_on_conflict);
-        Node        set_name(const std::string& name_in_current_lang, const std::string& name_in_given_lang, std::string lang);
-        std::string get_name(const Node node, std::string lang = "", const bool fallback = false) const;
-        std::string get_formatted_name(Node node, const std::string& lang) const;
-        bool        has_name(Node node, const std::string& lang) const;
+        void set_name(Node node, const std::string& name, std::string lang, bool merge_on_conflict);
+        Node set_name(const std::string& name_in_current_lang, const std::string& name_in_given_lang, std::string lang);
+        /// The importer's method for assigning a label to an entity. In
+        /// contrast to set_name, it takes nothing from a different node: the
+        /// node gets the label as its name, every other node that carries the
+        /// label keeps it, and the name → node entry is directed to whichever
+        /// carrier ranks first (see label_precedes). The outcome remains
+        /// unaffected by the order in which labels are received, regardless
+        /// of the threading within an import.
+        void assign_label_ranked(Node node, const std::string& label, std::string lang);
+        /// Among two carriers of a single label, the one that holds it is
+        /// determined by: a property (`P…`) preceding an item (`Q…`) before
+        /// any other node, followed by the smaller numeric value derived from
+        /// the node's name in language `wikidata` (Q42 → 42; a node ID is
+        /// assigned without a stable order during a threaded import), then
+        /// the lower node ID. A node lacking a `wikidata` name comes last,
+        /// and a variable comes after every other node.
+        bool label_precedes(Node a, Node b) const;
+        /// Each node that carries `name` in `lang` (the current language if
+        /// empty), following the sequence defined by label_precedes: the
+        /// node the name resolves to alone when no other node carries it,
+        /// none if no node does; never a variable or a core node. Optional
+        /// and empty if the name sections were partially loaded, since the
+        /// carriers in the omitted chunks are not known. Creates nothing.
+        std::optional<std::vector<Node>> nodes_named(const std::string& name, std::string lang = "") const;
+        /// Whether the carriers kept for the labels that several nodes carry
+        /// are precisely the ones the name maps hold, and each such label
+        /// resolves to a node. Walks the forward map, serving as a check for
+        /// tests, never called by the engine.
+        bool label_index_consistent() const;
+        /// The name, in language `zelph`, of the node a Wikidata import
+        /// writes to say that every item kept its label and the lowest-ranked
+        /// carrier holds it. A network without this node was imported
+        /// previously.
+        static const char* wikidata_labels_marker_name();
+        std::string        get_name(const Node node, std::string lang = "", const bool fallback = false) const;
+        std::string        get_formatted_name(Node node, const std::string& lang) const;
+        bool               has_name(Node node, const std::string& lang) const;
         // Whether the node is a core node or possesses a name in any
         // language.
         bool        is_named_any(Node node) const;
@@ -705,6 +739,12 @@ namespace zelph::network
         size_t                   get_name_of_node_size(const std::string& lang) const;
         size_t                   get_node_of_name_size(const std::string& lang) const;
         size_t                   language_count() const;
+        /// Whether each name -> node entry is matched by a corresponding
+        /// node -> name entry, across all languages: this condition serves
+        /// as the invariant that removal relies on to find a node's names
+        /// without walking the reverse map. Walks both maps, so it is a
+        /// check for tests, never called by the engine.
+        bool name_maps_consistent() const;
 
         // --- Implemented in zelph_maintenance.cpp (cleanup, rules, persistence) ---
 
@@ -981,7 +1021,7 @@ namespace zelph::network
         /// it. Assumes both name locks are HELD; reads only, so set_name can
         /// derive it twice -- once to plan the repair, once to carry it out.
         /// False when there is no conflict; throws when the two cannot merge.
-        bool resolve_name_conflict_locked(Node node, const std::string& name, const std::string& lang, Node& from, Node& into, bool& conflict_is_core) const;
+        bool resolve_name_conflict_locked(Node node, const std::string& name, const std::string& lang, Node& from, Node& into) const;
 
         void   remove_rules() const;
         size_t rule_count() const;
@@ -994,13 +1034,19 @@ namespace zelph::network
         // rules_kept, if given, receives how many rules the slice happens to
         // contain -- see the definition for why that is not a fixed answer.
         size_t save_predicate_slice(const std::string& filename, const std::vector<Node>& predicates, size_t* rules_kept = nullptr) const;
-        void   load_from_file(const std::string& filename) const;
-        void   load_from_file(const std::string& filename, const BinChunkSelection& selection, bool skip_payload = false) const;
-        void   load_from_manifest(const std::string&       manifest_path,
-                                  const BinChunkSelection& selection,
-                                  const std::string&       shard_root        = "",
-                                  const std::string&       bin_path_override = "",
-                                  bool                     skip_payload      = false) const;
+        // During a whole-file load, the graph gets substituted with the
+        // contents of the file: each node, name, and cluster associated with
+        // the session is discarded, indexes are regenerated based on the file,
+        // and _on_graph_replaced lets the derived engine discard its prior
+        // knowledge of the old graph. If a file fails following its header,
+        // the graph retains a portion of its content.
+        void load_from_file(const std::string& filename) const;
+        void load_from_file(const std::string& filename, const BinChunkSelection& selection, bool skip_payload = false) const;
+        void load_from_manifest(const std::string&       manifest_path,
+                                const BinChunkSelection& selection,
+                                const std::string&       shard_root        = "",
+                                const std::string&       bin_path_override = "",
+                                bool                     skip_payload      = false) const;
 
         void                                        set_active_cluster(const std::string& name) const;
         void                                        deactivate_cluster() const;
@@ -1071,6 +1117,11 @@ namespace zelph::network
         mutable std::shared_mutex                                 _smtx_verbose_selffact_preds;
         FactCreationObserver                                      _on_fact_created;
 
+        // Triggered following a load operation that replaced the graph, as
+        // well as after one that halted midway. Reasoning sets it to disregard
+        // the information it retains about the old graph across commands.
+        std::function<void()> _on_graph_replaced;
+
         // Drop the memoized relation-type set, so the next predicate test
         // rebuilds it from the graph. Protected rather than private: every
         // path that removes facts has to call it when one of them was a
@@ -1078,6 +1129,11 @@ namespace zelph::network
         void invalidate_relation_type_set() const;
 
     private:
+        // Following a load: once it advanced the epoch past `epoch_before`,
+        // rebuilds the indexes read from the graph and calls
+        // _on_graph_replaced.
+        void adopt_loaded_graph(std::uint64_t epoch_before) const;
+
         // The ground facts a construction brought into existence, reached
         // from `pending`: the walk underlying mark_rule_parts and
         // mark_query_operands. `fresh` holds what the construction created

@@ -80,7 +80,9 @@ In section [Semantic Network Structure](concepts.md#semantic-network-structure) 
 
 **A statement may span several lines.** zelph reads lines until it has a
 complete statement — a subject, a predicate and at least one object — so a
-line that stops short of that waits for the rest. Two forms are easy to type
+line that stops short of that waits for the rest. A line containing a
+solitary value that stands on its own – a set, a collection, a list, a
+negation like `¬(a p b)` – is complete as it is. Two forms are easy to type
 by accident: `a p` (the object forgotten) and `(a p b)` on its own, which is a
 **term**, i.e. a statement *prefix*, and is exactly how the renderer prints a
 nested fact and how `.explain` takes its argument. Both wait, and the next
@@ -197,13 +199,27 @@ zelph allows you to save the current network state to a binary file and load it 
 
 ```
 .save network.bin          # Save the current network
-.load network.bin          # Load a previously saved network
+.load network.bin          # Replace the current network by a saved one
 ```
 
 The `.load` command is general-purpose:
 
-- If the file ends with `.bin`, it loads the serialized network directly (fast).
-- If the file ends with `.json` or `.json.bz2` (a Wikidata dump), it imports the data and automatically creates a `.bin` cache file for future loads.
+- When the file ends with `.bin`, the saved network **replaces** the session's network (quickly). All nodes, names, rules, and clusters within the session are discarded, along with anything that references them: the entries in `.negation-records`, the input focus of `.deductions`, and the facts that `.run-delta` seeds from, ensuring the next `.run-delta` performs a full pass.
+- When the file ends with `.json` or `.json.bz2` (a Wikidata dump), the data is imported and **added** to the session's network, and the resulting network is saved as a `.bin` cache file next to the dump. As long as this cache exists, a `.load` of the dump reads the cache instead, and the cache **replaces** the session's network in the same manner as a `.bin` file does.
+
+```
+zelph> john ~ man
+zelph> .save john.bin
+...
+zelph> bill ~ man
+zelph> .load john.bin
+Auto-run has been disabled due to loading a large dataset.
+...
+zelph-> X ~ man
+Answer: john ~ man
+```
+
+What remains outside the network stays: Janet definitions and registered keywords, the import registry, `.lang` and the other configurations. The `.load` command switches auto-run off, indicated by the `-` symbol in the prompt. A Janet value containing a node refers to whatever entity shares the same identifier within the loaded network, or to nothing at all. A module imported before the load is still considered imported, even though its contributions to the network have been erased; refer to [Import once](modules.md#import-once).
 
 ## Data Cleanup Commands
 
@@ -249,7 +265,7 @@ Type `.help` inside the interactive session for a complete overview, or `.help <
 
 - `.import <script> [args...]` – Load and execute a zelph (.zph, optional) or Janet (.janet) script; falls back to the standard library
 - `.provides <id> [id2 ...]` – Claim module IDs in the import registry
-- `.load <file>` – Load a saved network (.bin) or import Wikidata JSON dump (creates .bin cache)
+- `.load <file>` – Replace the network by a saved one (.bin), or add a Wikidata JSON dump (creates .bin cache)
 - `.load-partial <file|manifest> [...]` – Load selected chunks as a read-only partial view (see `.help .load-partial`)
 - `.save <file.bin>` – Save the current network to a binary file
 - `.save-predicates <file.bin> <predicate> [...]` – Save only the facts of the given predicates (a slice; see [Publishing a Predicate Slice](publishing-slices.md))
@@ -263,7 +279,7 @@ Type `.help` inside the interactive session for a complete overview, or `.help <
 - `.name <node|id> <lang> <new_name>` – Set name in specific language
 - `.delname <node|id> [lang]` – Delete name in current language (or specified language)
 
-Assigning a node a name that another node already holds in that language **merges the two**, accompanied by a warning naming both – this is how one indicates, post hoc, that a manually created node and an imported entity are the same thing. A node *is* the hash of its constituent parts, so any structure depending on the vanished node is re-created under the identifier provided by its new components, and folds into an equal fact where the graph already holds one. Core nodes never vanish during this process, and a variable cannot be merged with a non-variable, nor can a collection of a rule’s text be merged with any other node.
+Assigning a node a name that another node already holds in that language **merges the two**, accompanied by a warning naming both – this is how one indicates, post hoc, that a manually created node and an imported entity are the same thing. A node *is* the hash of its constituent parts, so any structure depending on the vanished node is re-created under the identifier provided by its new components, and folds into an equal fact where the graph already holds one. Core nodes never vanish during this operation, hence two core nodes cannot be merged, and the spelling of a core node, like `~` or `in`, denotes it in every language and is never given to any other node. A variable cannot be merged with a non-variable, nor can a collection of a rule’s text be merged with any other node.
 
 ### Exploring the Network
 
@@ -318,6 +334,7 @@ Assigning a node a name that another node already holds in that language **merge
 - `.semi-naive [on|off|check]` – Show or set the fixpoint evaluation strategy (default: on)
 - `.fact-stores [on|off]` – Show or disable the fact-path acceleration stores (memory vs. speed)
 - `.contradiction-records [on|off]` – Show or disable writing each contradiction into the graph (memory vs. repeated reports)
+- `.negation-records [on|off]` – Show or set whether records of what negations derived are maintained, to warn when a later fact defeats one (default: off)
 - `.explain-budget [<units>|default|unlimited]` – Show or adjust the amount of work `.explain` can allocate toward the complete proof under a depth limit (default: 80000)
 
 ### Logging & Profiling

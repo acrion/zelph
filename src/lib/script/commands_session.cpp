@@ -32,6 +32,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include "platform/platform_utils.hpp"
 #include "repl_state.hpp"
 #include "script/script_engine.hpp"
+#include "string/node_to_string.hpp"
 #include "string/string_utils.hpp"
 #include "versions.hpp"
 
@@ -522,6 +523,35 @@ namespace zelph::console
     }
 
 #ifndef __EMSCRIPTEN__
+    // Runs a load operation, and upon replacing the graph -- also partially,
+    // before a failure -- loses track of what the session layer retains
+    // regarding the old graph: the variables currently named by the Janet
+    // block, whose ids the loaded graph may assign to other nodes, which a
+    // later symbol might then claim, and the node that was most recently
+    // printed, to which .node and .explain revert. A dump imported without a
+    // cache extends the graph and leaves both alone.
+    void CommandExecutor::Impl::load_into_session(const std::function<void()>& load)
+    {
+        const std::uint64_t epoch      = _n->graph_epoch();
+        const auto          forget_old = [&]
+        {
+            if (_n->graph_epoch() == epoch) return;
+            _script_engine->clear_scoped_variables();
+            string::reset_last_node();
+        };
+
+        try
+        {
+            load();
+        }
+        catch (...)
+        {
+            forget_old();
+            throw;
+        }
+        forget_old();
+    }
+
     void CommandExecutor::Impl::cmd_load(const std::vector<std::string>& cmd)
     {
         if (cmd.size() < 2) throw std::runtime_error("Command .load: Missing bin or json file name");
@@ -540,7 +570,8 @@ namespace zelph::console
 
             // This detects if it's Wikidata (json/bz2 OR bin with source) or Generic (bin only)
             _data_manager = io::DataManager::create(_n, cmd[1]);
-            _data_manager->load();
+            load_into_session([this]
+                              { _data_manager->load(); });
             _repl_state->partial_load_mode   = false;
             _repl_state->partial_load_source = "";
 
@@ -681,14 +712,16 @@ namespace zelph::console
 
         chrono::StopWatch watch;
         watch.start();
-        if (use_manifest)
-        {
-            _n->load_from_manifest(source_or_manifest, selection, shard_root, source_bin_override, meta_only);
-        }
-        else
-        {
-            _n->load_from_file(source_or_manifest, selection, meta_only);
-        }
+        load_into_session([&]
+                          {
+            if (use_manifest)
+            {
+                _n->load_from_manifest(source_or_manifest, selection, shard_root, source_bin_override, meta_only);
+            }
+            else
+            {
+                _n->load_from_file(source_or_manifest, selection, meta_only);
+            } });
         watch.stop();
 
         _data_manager                    = nullptr;

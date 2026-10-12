@@ -178,6 +178,91 @@ TEST_CASE("parsing: a statement continues on the next line behind a name such as
         CHECK(collect_answers(collector) == std::vector<std::string>{"½ q µ"}); });
 }
 
+// The scanner determining line completion tracks chunks separated by blanks,
+// with nesting limited to "(" and "{", while a grammar value may extend
+// across multiple chunks: a list "<a b>", a prefix followed by a blank, "¬ (a
+// q b)". It also recognized standalone values based on their initial
+// character, and "@{" and ":p(" were excluded from this group. Each of these
+// lines was treated as the beginning of a statement, consuming the next line
+// -- "<a b>" followed by "e r f" became the statement "<a b> e r f". The
+// grammar now has the last word on a line the scanner treats as incomplete.
+TEST_CASE("parsing: a line that is one value standing on its own does not take the next line")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        const std::vector<std::string> accepted = {"@{a b}", "@{(a p b) (c q d)}", "<a b>", "<(a p b) c>",
+                                                   "¬ (g q h)", ":p(a b c)", "*<a b>"};
+        for (std::size_t i = 0; i < accepted.size(); ++i)
+        {
+            CAPTURE(accepted[i]);
+            CHECK_NOTHROW(interactive.process(accepted[i]));
+            interactive.process("e r" + std::to_string(i) + " f");
+            collector.clear();
+            interactive.process("S r" + std::to_string(i) + " O");
+            CHECK(collect_answers(collector) == std::vector<std::string>{"e r" + std::to_string(i) + " f"});
+        }
+
+        // Refused, and by the parser of their respective line: the
+        // subsequent line constitutes a statement of its own.
+        const std::vector<std::string> refused = {"<¬(a q b) c>", "≈net (a p b)"};
+        for (std::size_t i = 0; i < refused.size(); ++i)
+        {
+            CAPTURE(refused[i]);
+            CHECK_THROWS_WITH(interactive.process(refused[i]), doctest::Contains("condition operator"));
+            interactive.process("e s" + std::to_string(i) + " f");
+            collector.clear();
+            interactive.process("S s" + std::to_string(i) + " O");
+            CHECK(collect_answers(collector) == std::vector<std::string>{"e s" + std::to_string(i) + " f"});
+        } });
+}
+
+// After the "?" prefix, the scanner inquired about the initial character of
+// the second segment, and neither "≈", "@", "*", nor ":" followed by a group
+// were recognized by it: "? ≈net(a p b)" took the subsequent line into the
+// request and was rejected alongside it, while the remaining items waited
+// for a rest of the statement that they did not have.
+TEST_CASE("parsing: after the ? prefix, a value standing on its own is the whole request")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        CHECK_THROWS_WITH(interactive.process("? ≈net(a p b)"), doctest::Contains("condition operator"));
+        interactive.process("e r f");
+        collector.clear();
+        interactive.process("S r O");
+        CHECK(collect_answers(collector) == std::vector<std::string>{"e r f"});
+
+        const std::vector<std::string> requests = {"? @{a b}", "? <a b>", "? :p(a b c)", "? *<a b>"};
+        for (std::size_t i = 0; i < requests.size(); ++i)
+        {
+            CAPTURE(requests[i]);
+            CHECK_NOTHROW(interactive.process(requests[i]));
+            interactive.process("e s" + std::to_string(i) + " f");
+            collector.clear();
+            interactive.process("S s" + std::to_string(i) + " O");
+            CHECK(collect_answers(collector) == std::vector<std::string>{"e s" + std::to_string(i) + " f"});
+        } });
+}
+
+// A closing bracket appeared without any preceding opening bracket, causing
+// the bracket count to drop below zero, a state that no subsequent line can
+// ever restore: "a p b)" awaited the rest of a statement that would never
+// conclude, consuming every line that followed until the end of the input.
+TEST_CASE("parsing: a closing bracket without an opening one ends the statement")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        const std::vector<std::string> lines = {"a p b)", "a p b}", "(a p b))"};
+        for (std::size_t i = 0; i < lines.size(); ++i)
+        {
+            CAPTURE(lines[i]);
+            CHECK_THROWS_WITH(interactive.process(lines[i]), doctest::Contains("Could not parse"));
+            interactive.process("e r" + std::to_string(i) + " f");
+            collector.clear();
+            interactive.process("S r" + std::to_string(i) + " O");
+            CHECK(collect_answers(collector) == std::vector<std::string>{"e r" + std::to_string(i) + " f"});
+        } });
+}
+
 TEST_CASE("rules: asking which implications exist does not create a rule")
 {
     // `=>` is an ordinary relation type as well as the rule arrow (see the
@@ -1420,8 +1505,8 @@ TEST_CASE("negation: a negated path condition leaves a positive one over the sam
             CHECK(collect_answers(collector).empty());
 
             const auto rules = listed_rule_texts(collector, interactive);
-            CHECK(listed(rules, "((a p b) closure one-or-more) => (c q d)"));
-            CHECK_FALSE(listed(rules, "(¬((a p b) closure one-or-more)) => (c q d)"));
+            CHECK(listed(rules, "(a p⁺ b) => (c q d)"));
+            CHECK_FALSE(listed(rules, "(¬(a p⁺ b)) => (c q d)"));
         } });
 }
 
@@ -1434,9 +1519,9 @@ TEST_CASE("negation: a negated neural condition and a positive one over the same
                    {
         process_lines(interactive, "(X go Y, ¬≈net(a p b)) => (X ok Y)\n(≈net(a p b)) => (c q d)");
         const auto rules = listed_rule_texts(collector, interactive);
-        CHECK(listed(rules, "((a p b) nn net) => (c q d)"));
+        CHECK(listed(rules, "≈net(a p b) => (c q d)"));
         CHECK(std::ranges::any_of(rules, [](const std::string& rule)
-                                  { return rule.find("¬((a p b) nn net)") != std::string::npos
+                                  { return rule.find("¬≈net(a p b)") != std::string::npos
                                         && rule.find("(X ok Y)") != std::string::npos; })); });
 }
 

@@ -187,7 +187,16 @@ void Reasoning::evaluate_neural(const Node condition, const RulePos& rule, Reaso
     {
         // v1: the subject must be bound by a preceding positive condition
         // (optimize_order schedules ≈ late, so this is the normal flow).
+        //
+        // When nothing binds them, the net is never consulted, and the rule
+        // or query remains inert. This is reported, just like the other
+        // condition shapes the engine refuses: left to `.log`, a query
+        // `≈net(X p o)` answered with silence, interpreted as "the net
+        // confirms nothing".
         if (should_log(depth)) log(depth, "neural", "≈ requires bound subject and predicate (v1)");
+        refuse_condition(condition,
+                         "a ≈ condition needs its subject and predicate bound -- they are what the net "
+                         "is given as input. Bind them with a preceding condition.");
         return;
     }
 

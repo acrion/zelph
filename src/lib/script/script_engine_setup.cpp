@@ -159,7 +159,10 @@ namespace zelph
                                                                                                     "The filename must end with '.bin'. Main thread only, and refused while a rule is being built.");
 
         janet_def(_janet_env, "zelph/load", wrap((JanetCFunction)&guarded<&janet_cfun_zelph_load>), "(zelph/load file)\nLoad a saved network (.bin) or import a Wikidata JSON dump "
-                                                                                                    "(.json/.json.bz2, creates a .bin cache next to it), like the .load command. Main thread only, and refused while a rule is being built.");
+                                                                                                    "(.json/.json.bz2, creates a .bin cache next to it), like the .load command. "
+                                                                                                    "A network file, and a dump whose .bin cache is used, replaces the graph: every node, name, rule and cluster of the session goes. "
+                                                                                                    "A dump imported without a cache is added to the graph. The Janet environment is kept; a node a Janet value held "
+                                                                                                    "names whatever has that id in the loaded graph, or nothing. Main thread only, and refused while a rule is being built.");
 
         janet_def(_janet_env, "zelph/run", wrap((JanetCFunction)&guarded<&janet_cfun_zelph_run>), "(zelph/run)\nRun forward chaining to a fixed point, like the .run command. "
                                                                                                   "Needed when driving zelph as a library: facts and rules created from Janet only take effect once the engine has run, "
@@ -172,6 +175,21 @@ namespace zelph
                                                                                                               "Skips the pass over the whole graph for the rules that can be seeded, which is what makes assert-then-reason loops practical; "
                                                                                                               "a rule with a negated condition still takes a classic pass over the facts its positive conditions match at each negation level, and a rule that cannot be seeded takes one in every iteration. "
                                                                                                               "Requires an earlier run, an unchanged rule set and semi-naive evaluation; otherwise it falls back to a full pass. Returns nil. Main thread only, and refused while a rule is being built.");
+
+        janet_def(_janet_env, "zelph/strata", wrap((JanetCFunction)&guarded<&janet_cfun_zelph_strata>), "(zelph/strata)\nThe negation levels of the rules in force, as the .strata command shows them, without running anything. "
+                                                                                                        "Returns an array with one table per rule, in no particular order: :rule the rule node, :level its negation level counted from 1 "
+                                                                                                        "(absent for a rule without a negated condition), :component a number shared by the rules of one strongly connected component, "
+                                                                                                        "and :stratifiable, false when that component negates what it derives. Main thread only.");
+        janet_def(_janet_env, "zelph/defeated", wrap((JanetCFunction)&guarded<&janet_cfun_zelph_defeated>), "(zelph/defeated)\nReturn an array of [fact rule] tuples, one per fact the latest run found no longer justified: "
+                                                                                                            "derived by that rule under a negated premise that has since come to hold, and derived by nothing else. "
+                                                                                                            "These are the facts the run's warning names while .negation-records is on, or its error in check mode; "
+                                                                                                            "the facts stay in the graph. Empty after a run that found none, after every run while neither is on, and after a load that replaced the graph. "
+                                                                                                            "(zelph/negation-records true) switches the records on. Main thread only.");
+        janet_def(_janet_env, "zelph/negation-records", wrap((JanetCFunction)&guarded<&janet_cfun_zelph_negation_records>), "(zelph/negation-records &opt on)\nRead, or with true or false set, whether a run records each fact a rule with a negated condition derives, "
+                                                                                                                            "as the .negation-records command does. With the records on, a run warns when a later fact defeats such a conclusion, and (zelph/defeated) returns what it named. "
+                                                                                                                            "Returns the state afterwards. Off by default, because every record costs memory (see .help .negation-records); "
+                                                                                                                            "switching off drops the records, unless check mode keeps them. The switch is a setting of the session: a load keeps it, "
+                                                                                                                            "and discards the records, which name the nodes of the graph it replaced. Main thread only.");
 
         janet_def(_janet_env, "zelph/cluster", wrap((JanetCFunction)&guarded<&janet_cfun_zelph_cluster>), "(zelph/cluster &opt name)\nActivate a named cluster, or with nil / \"default\" deactivate cluster tracking; without an argument only report. "
                                                                                                           "Returns the name of the cluster that is active afterwards, or nil for the default. "

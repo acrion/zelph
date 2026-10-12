@@ -152,6 +152,11 @@ namespace zelph
             // statement, just before the query is evaluated
             // (Zelph::mark_query_operands).
             std::vector<network::Node> query_created;
+            // What the statement's `$( )` islands created before any of its
+            // code ran (expand_inline_keywords). A rule authored by the
+            // statement and a query that carries an operator both count it
+            // among what they created themselves.
+            std::vector<network::Node> island_created;
         };
         ParsedStatement* _statement = nullptr;
 
@@ -216,13 +221,24 @@ namespace zelph
         // island handlers and the surrounding statement share one variable scope.
         bool _scoped_vars_preloaded = false;
 
+        // What the islands of the statement under parsing create is logged
+        // within a scratch cluster, progressing from the first island to the
+        // end of the parsing phase. A line rejected by the parser retains
+        // none of it; a line accepted by the parser preserves it within the
+        // currently active cluster, and once process_janet executes, that
+        // line's list is transferred to the statement
+        // (ParsedStatement::island_created).
+        bool                       _island_recording = false;
+        std::string                _island_previous;
+        std::vector<network::Node> _island_created;
+
         enum class HandlerCall
         {
             Dispatched,
             Incomplete
         };
 
-        // Compiled neural networks (session-scoped caches, discarded on .reset).
+        // Compiled neural networks (session-scoped caches, discarded on .new).
         // Handles handed to Janet are indexes into this vector.
         std::vector<std::unique_ptr<network::NeuralNet>> _neural_nets;
 
@@ -320,6 +336,7 @@ namespace zelph
         static Janet  rule_from_parts(Janet parts);
         static Janet  janet_cfun_zelph_rule_star(int32_t argc, Janet* argv);
         void          mark_mentioned_rules(const std::vector<network::Node>& created) const;
+        void          add_island_created(std::vector<network::Node>& created) const;
         static Janet  janet_cfun_zelph_rule_text(int32_t argc, Janet* argv);
         static Janet  janet_cfun_zelph_query_text(int32_t argc, Janet* argv);
         static Janet  janet_cfun_zelph_operand(int32_t argc, Janet* argv);
@@ -373,6 +390,9 @@ namespace zelph
         static Janet janet_cfun_zelph_run(int32_t argc, Janet* argv);
         static Janet janet_cfun_zelph_run_once(int32_t argc, Janet* argv);
         static Janet janet_cfun_zelph_run_delta(int32_t argc, Janet* argv);
+        static Janet janet_cfun_zelph_strata(int32_t argc, Janet* argv);
+        static Janet janet_cfun_zelph_defeated(int32_t argc, Janet* argv);
+        static Janet janet_cfun_zelph_negation_records(int32_t argc, Janet* argv);
         static void  cluster_preamble(int32_t argc, Janet* argv, const char* name);
         static Janet janet_cfun_zelph_cluster(int32_t argc, Janet* argv);
         static Janet janet_cfun_zelph_cluster_drop(int32_t argc, Janet* argv);
@@ -382,6 +402,7 @@ namespace zelph
 
         HandlerCall  call_keyword_handler(const std::string& name, const Janet handler, const std::string& text, const bool force, Janet& result);
         std::string  expand_inline_keywords(const std::string& input);
+        void         end_island_recording(const bool keep);
         static Janet janet_cfun_zelph_register_keyword(int32_t argc, Janet* argv);
 
         // --- Implemented in zelph_to_janet.cpp ---
@@ -391,13 +412,14 @@ namespace zelph
         static bool     is_path_ast(Janet node);
         static bool     writes_path_marker(Janet node);
         static NestedOp nested_condition_op(Janet node, const bool into_rules = true);
-        static NestedOp misplaced_condition_op(Janet node, const bool in_condition, const bool reopen_rules = true);
-        static NestedOp mentioned_rule_op(Janet node);
+        static NestedOp misplaced_condition_op(Janet node, const bool in_condition, const bool skip_rules = false, const bool skip_mentions = false);
         NestedOp        set_literal_op(Janet node, const bool in_set = false) const;
         bool            denotes_zelph_name(Janet token, const char* name) const;
         NestedOp        explicit_condition_op(const Janet* parts, const int32_t count) const;
         NestedOp        explicit_condition_op(Janet node) const;
         NestedOp        written_out_condition_op(Janet node) const;
+        bool            mentions_condition_op(Janet node, const bool in_rule = false) const;
+        bool            reads_complete(const std::string& code) const;
         std::string     build_smart_call(const std::string& func_name, const std::vector<Janet>& args, const std::string& role = "") const;
         std::string     transform_arg(Janet arg_tuple) const;
 

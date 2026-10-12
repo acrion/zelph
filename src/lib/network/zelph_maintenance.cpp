@@ -50,9 +50,14 @@ void Zelph::cleanup_isolated(size_t& removed_count) const
     // negation tags -- so a plain .cleanup used to delete them, and the next
     // rule concluding "!" then failed with "requested left node does not
     // exist" until .new. They are the engine's own vocabulary, not data.
+    //
+    // The same holds for the node that says how a Wikidata import named its
+    // items. It possesses no edges either, and the published networks are
+    // cut by a recipe concluding with .cleanup.
+    const Node labels_marker = get_node(wikidata_labels_marker_name(), "zelph", true);
     _pImpl->remove_isolated_nodes(removed_count,
-                                  [this](const Node nd)
-                                  { return !get_core_name(nd).empty(); });
+                                  [this, labels_marker](const Node nd)
+                                  { return (labels_marker != 0 && nd == labels_marker) || !get_core_name(nd).empty(); });
 }
 
 size_t Zelph::cleanup_names() const
@@ -60,18 +65,19 @@ size_t Zelph::cleanup_names() const
     return _pImpl->cleanup_dangling_names();
 }
 
-// Erase the names of a whole batch of removed nodes in one pass over the
-// reverse name map -- what `remove_node`'s `deferred_names` collected.
+// Delete the names associated with an entire group of eliminated
+// nodes -- the ones gathered by `remove_node`'s `deferred_names`.
 void Zelph::remove_names_of(const adjacency_set& dead) const
 {
     _pImpl->remove_names_of(dead);
 }
 
-// How often the reverse name map was walked end to end. A node's reverse
-// entries can only be found BY VALUE, so the walk is unavoidable; what is
-// avoidable is doing it once per node instead of once per batch, which is
-// what made a full-dump prune run at one node per second. Hardware-
-// independent, so a test can hold that shape without a quiet machine.
+// How frequently the reverse name map was traversed from end to end. A
+// removal finds a node's reverse entries by means of its forward ones and
+// performs no traversal; only a session whose name sections were partially
+// loaded continues to traverse, once per node or batch, and that is what
+// this metric tracks. Independent of hardware, enabling a test to maintain
+// that shape even without a quiet machine.
 uint64_t Zelph::name_map_scans() const
 {
     return _pImpl->_name_map_scans.load(std::memory_order_relaxed);
@@ -81,13 +87,13 @@ uint64_t Zelph::name_map_scans() const
 // their names erased here, and the caller then owes one `remove_names_of` for
 // the whole batch.
 //
-// That is the only way a bulk removal can afford names at all. Erasing them
-// per node costs a walk of the reverse name map apiece, and on the full
-// Wikidata network that map holds ~204 million entries: the 6.2 million
-// removals of the full-dump prune measured 1.11 nodes per second with 97.7 %
-// of the time in that walk, which is two months for a script that has to
-// finish overnight. `.remove` keeps the per-node path, where one walk IS one
-// batch.
+// Erasing a node's names requires a single lookup per language, regardless of
+// approach. The batch becomes significant when a removal still needs to walk
+// the reverse name map following a partial load: one walk per command rather
+// than one per node. On the full Wikidata network, that map contains
+// approximately 204 million entries, and the prior approach of walking per
+// node limited the full-dump prune run to 1.11 nodes per second. A label that
+// several victims carry is settled one time, not one time for each victim.
 // Everything that removing `node` would take with it: the node itself, whatever
 // it is a PART of (transitively), and a container that loses a member. Adds to
 // `out` and explores nothing `out` already holds, so a caller may accumulate
@@ -1445,10 +1451,13 @@ void Zelph::mark_query_operands(const Node statement, const std::vector<Node>& c
     { return made.count(nd) == 0; };
 
     // A rule mentioned by the query outside every operator constitutes part
-    // of what it creates and thereby asserts, including conditions
-    // expressed explicitly, as zelph/rule-text leaves a mention inside a
-    // query: in "X knows ((a p b) => (c q d)), ¬(a p b)", `a p b` stays
-    // data just as `c q d` does.
+    // of what it creates and thereby asserts, as zelph/rule-text leaves a
+    // mention inside a query: in "X knows ((a p b) => (c q d)), ¬(a p b)",
+    // `a p b` stays data just as `c q d` does. An operator within the
+    // mentioned rule is still an operator, meaning its operand is a
+    // pattern: in "R knows ((X go Y, ¬(a p b)) => (X ok Y))" the walk
+    // through the rule stops at the negation, just as the walk outside it
+    // does.
     std::unordered_set<Node> entered;
     std::vector<Node>        mentions;
     const auto               stop_outside = [&](const Node nd)
@@ -1464,7 +1473,7 @@ void Zelph::mark_query_operands(const Node statement, const std::vector<Node>& c
     };
     const auto stop_in_mention = [&](const Node nd)
     {
-        if (beyond(nd)) return true;
+        if (beyond(nd) || is_condition_tag(nd)) return true;
         entered.insert(nd);
         return false;
     };
@@ -1581,25 +1590,7 @@ void Zelph::remove_rules() const
 
             _pImpl->remove(rule);
             if (!_pImpl->exists(rule)) removed = true;
-            // Clean up names
-            for (auto& lang_map : _pImpl->_name_of_node)
-            {
-                lang_map.second.erase(rule);
-            }
-            for (auto& lang_map : _pImpl->_node_of_name)
-            {
-                for (auto it = lang_map.second.begin(); it != lang_map.second.end();)
-                {
-                    if (it->second == rule)
-                    {
-                        it = lang_map.second.erase(it);
-                    }
-                    else
-                    {
-                        ++it;
-                    }
-                }
-            }
+            _pImpl->remove_node_names(rule);
         }
     }
 
@@ -1670,6 +1661,11 @@ size_t Zelph::save_predicate_slice(const std::string& filename, const std::vecto
 
     ankerl::unordered_dense::set<Node> keep{
         core.RelationTypeCategory, core.Causes, core.IsA, core.Unequal, core.Contradiction, core.Cons, core.Nil, core.PartOf, core.Conjunction, core.Negation};
+
+    // The labels a slice maintains are titled according to how the import
+    // named them, thus the node stating this goes along even though no
+    // kept fact arrives at it.
+    if (const Node labels_marker = get_node(wikidata_labels_marker_name(), "zelph", true); labels_marker != 0) keep.insert(labels_marker);
 
     size_t facts = 0;
 
@@ -1891,15 +1887,40 @@ size_t Zelph::save_predicate_slice(const std::string& filename, const std::vecto
     return facts;
 }
 
+// A load that advanced the epoch has discarded the graph, even if it
+// encountered failure following the file's header: the indexes read from the
+// graph are reconstructed using the data the load left, and the derived engine
+// loses memory of what it had retained regarding the old graph
+// (_on_graph_replaced). A load that encountered failure before interacting
+// with the graph introduces no alterations in this context.
+void Zelph::adopt_loaded_graph(const std::uint64_t epoch_before) const
+{
+    if (graph_epoch() == epoch_before) return;
+
+    _pImpl->rebuild_label_index();
+    rebuild_rule_pattern_index();
+    rebuild_refuted_index();
+    note_rule_text_changed();
+    if (_on_graph_replaced) _on_graph_replaced();
+}
+
 void Zelph::load_from_file(const std::string& filename) const
 {
     invalidate_fact_structures_cache();
 
-    bool       negation_conditions = true;
-    const bool template_ids        = _pImpl->loadFromFile(filename, negation_conditions);
-    rebuild_rule_pattern_index();
-    rebuild_refuted_index();
-    note_rule_text_changed();
+    const std::uint64_t epoch               = graph_epoch();
+    bool                negation_conditions = true;
+    bool                template_ids        = false;
+    try
+    {
+        template_ids = _pImpl->loadFromFile(filename, negation_conditions);
+    }
+    catch (...)
+    {
+        adopt_loaded_graph(epoch);
+        throw;
+    }
+    adopt_loaded_graph(epoch);
 
     // Only the complete network, and solely one whose file leaves the
     // template-id field as false: an engine before template IDs wrote it,
@@ -2046,10 +2067,17 @@ void Zelph::load_from_file(const std::string& filename, const BinChunkSelection&
 {
     invalidate_fact_structures_cache();
 
-    _pImpl->loadFromFile(filename, selection, skip_payload);
-    rebuild_rule_pattern_index();
-    rebuild_refuted_index();
-    note_rule_text_changed();
+    const std::uint64_t epoch = graph_epoch();
+    try
+    {
+        _pImpl->loadFromFile(filename, selection, skip_payload);
+    }
+    catch (...)
+    {
+        adopt_loaded_graph(epoch);
+        throw;
+    }
+    adopt_loaded_graph(epoch);
 }
 
 void Zelph::load_from_manifest(const std::string&       manifest_path,
@@ -2060,10 +2088,17 @@ void Zelph::load_from_manifest(const std::string&       manifest_path,
 {
     invalidate_fact_structures_cache();
 
-    _pImpl->loadFromManifest(manifest_path, selection, shard_root, bin_path_override, skip_payload);
-    rebuild_rule_pattern_index();
-    rebuild_refuted_index();
-    note_rule_text_changed();
+    const std::uint64_t epoch = graph_epoch();
+    try
+    {
+        _pImpl->loadFromManifest(manifest_path, selection, shard_root, bin_path_override, skip_payload);
+    }
+    catch (...)
+    {
+        adopt_loaded_graph(epoch);
+        throw;
+    }
+    adopt_loaded_graph(epoch);
 }
 #endif
 

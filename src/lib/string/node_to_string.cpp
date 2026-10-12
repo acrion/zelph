@@ -183,6 +183,65 @@ namespace
             if (scheme.name_chars.find(name[i]) == std::string::npos) return false;
         return true;
     }
+
+    // A path condition `((S p O) closure mode)` or a neural condition
+    // `((P) nn net)` that its sugar can write: `S p⁺ O`, `S p∗ O`,
+    // `≈net(P)`. The tags are recognized by the nodes that the zelph
+    // language names `closure` and `nn`, never by their spelling in the
+    // current language, where a node bearing that name is an ordinary
+    // predicate and its fact an ordinary condition. A name that the sugar
+    // would need to quote lacks a sugar form, and the fact keeps the form
+    // it is.
+    struct ConditionSugar
+    {
+        zelph::network::Node operand{0};
+        const char*          path_marker{nullptr}; // a path condition
+        zelph::network::Node net{0};               // a neural condition
+        std::string          net_name;
+    };
+
+    bool condition_sugar(const zelph::network::Zelph* const z, const zelph::network::Node node, const std::string& lang, ConditionSugar& out)
+    {
+        using zelph::network::Zelph;
+        if (node == 0 || !Zelph::is_hash(node) || Zelph::is_var(node) || !z->exists(node)) return false;
+
+        const zelph::network::FactStructure fs = zelph::network::get_preferred_structure(z, node, 3);
+        if (fs.predicate == 0 || fs.subject == 0 || Zelph::is_var(fs.subject) || fs.objects.size() != 1) return false;
+        if (z->predicate_of(fs.subject) == 0) return false;
+
+        const zelph::network::Node object = *fs.objects.begin();
+        if (fs.predicate == z->get_node("closure", "zelph"))
+        {
+            const char* marker = nullptr;
+            if (object == z->get_node("one-or-more", "zelph"))
+                marker = "\xE2\x81\xBA"; // ⁺
+            else if (object == z->get_node("zero-or-more", "zelph"))
+                marker = "\xE2\x88\x97"; // ∗
+            if (!marker) return false;
+
+            const zelph::network::FactStructure step = zelph::network::get_preferred_structure(z, fs.subject, 3);
+            if (step.predicate == 0 || Zelph::is_var(step.predicate) || step.objects.size() != 1) return false;
+            const std::string name = z->get_formatted_name(step.predicate, lang);
+            if (name.empty() || !zelph::string::prints_bare(name) || !zelph::string::prints_bare(name + marker)) return false;
+
+            out.operand     = fs.subject;
+            out.path_marker = marker;
+            return true;
+        }
+
+        if (fs.predicate == z->get_node("nn", "zelph"))
+        {
+            const std::string name = z->get_formatted_name(object, lang);
+            if (name.empty() || Zelph::is_var(object) || !zelph::string::prints_bare(name)) return false;
+
+            out.operand  = fs.subject;
+            out.net      = object;
+            out.net_name = name;
+            return true;
+        }
+
+        return false;
+    }
 }
 
 void zelph::string::node_to_string(const network::Zelph* const z, std::string& result, const std::string& lang, network::Node node, const int max_objects, const network::Variables& variables, network::Node parent, std::shared_ptr<std::unordered_set<network::Node>> history, SchemeContext* ctx)
@@ -238,6 +297,11 @@ void zelph::string::node_to_string(const network::Zelph* const z, std::string& r
     // the surface syntax "(A, B) => C" exactly there -- see as_rule_conditions
     // below.
     const bool rendered_as_top = !history;
+
+    // A query typed on its own line is also a condition
+    // (condition_to_string).
+    const bool typed_condition   = parent == 0 && ctx->typed_condition;
+    const bool in_condition_slot = typed_condition || ctx->condition_slot;
 
     if (!history) history = std::make_shared<std::unordered_set<network::Node>>();
 
@@ -851,6 +915,14 @@ void zelph::string::node_to_string(const network::Zelph* const z, std::string& r
         const bool as_rule_conditions = is_conjunction && !rendered_as_top && parent != 0
                                      && z->parse_relation(parent) == z->core.Causes;
 
+        // A query's condition list, typed on a separate line, displays the
+        // way it is typed: "A, B", with the members bare. Enclosing the
+        // line in outer parentheses transforms it into a term awaiting
+        // completion of its statement, while the brace form reads back as a
+        // set literal, which constitutes data.
+        const bool as_typed_conditions = is_conjunction && typed_condition;
+        const bool comma_list          = as_rule_conditions || as_typed_conditions;
+
         // A COLLECTION prints with its own marker, because that is what it
         // is: a container with an identity, which `{...}` re-entered would
         // not rebuild. A rule's conjunction set keeps the bare brace -- it
@@ -858,17 +930,19 @@ void zelph::string::node_to_string(const network::Zelph* const z, std::string& r
         // it.
         const bool bare_brace = z->is_set_constant(resolved) || is_conjunction;
 
-        result     = as_rule_conditions ? "(" : (bare_brace ? "{" : "@{");
+        result     = as_typed_conditions ? "" : (as_rule_conditions ? "(" : (bare_brace ? "{" : "@{"));
         bool first = true;
 
         // A rendering that already carries a scheme's own delimiters is
         // self-delimiting; wrapping it again would produce "($( ... ))".
         SchemeContext elem_ctx;
-        elem_ctx.tables = ctx->tables;
+        elem_ctx.tables         = ctx->tables;
+        elem_ctx.condition_slot = comma_list && in_condition_slot;
+        elem_ctx.bare_statement = as_typed_conditions;
 
         for (network::Node e : sorted_elements)
         {
-            if (!first) result += as_rule_conditions ? ", " : " ";
+            if (!first) result += comma_list ? ", " : " ";
             std::string elem_str;
             elem_ctx.self_delimited = false;
             node_to_string(z, elem_str, lang, e, max_objects, variables, resolved, child_history, &elem_ctx);
@@ -877,7 +951,7 @@ void zelph::string::node_to_string(const network::Zelph* const z, std::string& r
             // the bare S-P-O shape the surface syntax is written in. Inside
             // braces the space is the separator and a member carrying one
             // has to be bracketed.
-            if (!as_rule_conditions
+            if (!comma_list
                 && !elem_ctx.self_delimited
                 && !elem_str.empty()
                 && elem_str.find(' ') != std::string::npos
@@ -898,7 +972,7 @@ void zelph::string::node_to_string(const network::Zelph* const z, std::string& r
             result += elem_str;
             first = false;
         }
-        result += as_rule_conditions ? ")" : "}";
+        result += as_typed_conditions ? "" : (as_rule_conditions ? ")" : "}");
 
         return;
     }
@@ -929,13 +1003,16 @@ void zelph::string::node_to_string(const network::Zelph* const z, std::string& r
         network::adjacency_set conclusions;
         return resolve_var(z->parse_fact(parent, conclusions)) == resolved;
     };
-    // The parser permits `¬` exclusively within rule slots: the condition
-    // or consequence of a rule, a member of its condition set, or
-    // similarly within a rule nested therein. A plain statement refuses it
-    // at any level of nesting, including within the rule it mentions,
-    // hence above a rule whose condition prints as `¬(P)` only rules and
-    // condition sets may stand; otherwise, the fact form is the one that
-    // re-enters.
+    // The parser reads `¬` within rule slots: whether in the condition
+    // or consequence of a rule, as a member of its condition set, or within
+    // a rule nested therein. A rule that a plain statement mentions reads
+    // it as well, and there both spellings re-enter as the identical node;
+    // a rule that a typed rule holds as an argument accepts solely the fact
+    // form. The history is unordered and cannot distinguish between those
+    // two positions, thus above a rule whose condition prints as `¬(P)`
+    // only rules and condition sets may stand, and wherever a statement
+    // stands above it, the fact form is the one that re-enters in both
+    // cases.
     const auto only_rules_above = [&]
     {
         for (const network::Node h : *history)
@@ -943,9 +1020,6 @@ void zelph::string::node_to_string(const network::Zelph* const z, std::string& r
                 return false;
         return true;
     };
-    // A query typed on its own line is also a condition
-    // (condition_to_string).
-    const bool typed_condition = parent == 0 && ctx->typed_condition;
     if (parent != 0 || typed_condition)
     {
         const network::Node negated_pattern = z->negation_operand(resolved);
@@ -965,12 +1039,49 @@ void zelph::string::node_to_string(const network::Zelph* const z, std::string& r
             plain.tables         = ctx->tables;
             plain.no_scheme      = true;
             plain.bare_statement = true;
+            plain.condition_slot = in_condition_slot;
 
+            // The expression `¬≈net(P)` is typed in a form that lacks
+            // parentheses enclosing the neural condition, which
+            // inherently defines its own boundaries.
             std::string pattern;
             node_to_string(z, pattern, lang, negated_pattern, max_objects, variables, resolved, pattern_history, &plain);
-            result = "¬(" + pattern + ")";
+            result = plain.self_delimited ? "¬" + pattern : "¬(" + pattern + ")";
             return;
         }
+    }
+
+    // A path condition and a neural condition are also facts,
+    // `((S p O) closure mode)` and `((P) nn net)`, and when positioned as
+    // conditions, they print the way they are typed there: `S p⁺ O`,
+    // `S p∗ O`, `≈net(P)`. In all other contexts, they print as the facts
+    // they are. The premises of a justification are not treated as
+    // conditions; instead, the deduction line names the facts that a firing
+    // has uncovered.
+    ConditionSugar sugar;
+    if (in_condition_slot && condition_sugar(z, resolved, lang, sugar))
+    {
+        auto operand_history = std::make_shared<std::unordered_set<network::Node>>(*history);
+        operand_history->insert(resolved);
+
+        SchemeContext plain;
+        plain.tables         = ctx->tables;
+        plain.no_scheme      = true;
+        plain.bare_statement = true;
+        plain.path_marker    = sugar.path_marker;
+
+        std::string operand;
+        node_to_string(z, operand, lang, sugar.operand, max_objects, variables, resolved, operand_history, &plain);
+        if (sugar.path_marker)
+        {
+            result = parent != 0 && !ctx->bare_statement ? "(" + operand + ")" : operand;
+        }
+        else
+        {
+            result              = "≈" + mark_leaf(sugar.net, sugar.net_name) + "(" + operand + ")";
+            ctx->self_delimited = true;
+        }
+        return;
     }
 
     // 5. Proxy / Instance Detection
@@ -1260,10 +1371,16 @@ void zelph::string::node_to_string(const network::Zelph* const z, std::string& r
         child_ctx.self_delimited = false;
         child_ctx.right_side     = false;
         child_ctx.atomic         = false;
+
+        // The subject of a rule serves as its condition, provided that
+        // solely rules and condition lists are positioned above the rule
+        // (only_rules_above).
+        child_ctx.condition_slot = resolve_var(fact_predicate()) == z->core.Causes && only_rules_above();
         node_to_string(z, s_str, lang, subject, max_objects, variables, resolved, child_history, &child_ctx);
-        children_ok            = children_ok && child_ctx.expressible;
-        subject_atomic         = child_ctx.atomic;
-        const bool s_delimited = child_ctx.self_delimited;
+        child_ctx.condition_slot = false;
+        children_ok              = children_ok && child_ctx.expressible;
+        subject_atomic           = child_ctx.atomic;
+        const bool s_delimited   = child_ctx.self_delimited;
 
         bool needs_parens = false;
         if (!scheme_render && !s_delimited
@@ -1298,6 +1415,7 @@ void zelph::string::node_to_string(const network::Zelph* const z, std::string& r
         {
             // Relation has a name -> mark it manually, as we didn't recurse
             relation_name = mark_leaf(relation, raw_rel_name);
+            if (ctx->path_marker) relation_name += ctx->path_marker;
         }
         else
         {
@@ -1381,7 +1499,7 @@ void zelph::string::node_to_string(const network::Zelph* const z, std::string& r
         // keep the predicate a node reference, and the quoting rules could
         // not say anything about a name that starts with a colon, since
         // every self-fact looked like one.
-        result = ":" + mark_leaf(self_fact_rel, self_fact_pred) + " " + subject_name;
+        result = ":" + mark_leaf(self_fact_rel, self_fact_pred) + (ctx->path_marker ? ctx->path_marker : "") + " " + subject_name;
     else if (application)
         result = subject_name + "(" + objects_name + ")";
     else
@@ -1479,7 +1597,10 @@ void zelph::string::node_to_string(const network::Zelph* const z, std::string& r
 
 void zelph::string::condition_to_string(const network::Zelph* const z, std::string& result, const std::string& lang, const network::Node node, const int max_objects, const network::Variables& variables, const network::Node parent)
 {
-    if (parent != 0)
+    // A condition list is evaluated in lieu of a rule, under its own node,
+    // so an answer to a query with several conditions names that list as
+    // its parent.
+    if (parent != 0 && parent != node)
     {
         node_to_string(z, result, lang, node, max_objects, variables, parent);
         return;

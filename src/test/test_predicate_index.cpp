@@ -64,10 +64,13 @@ namespace
         fs::path bin;
     };
 
-    Fixture build_fixture()
+    // The setup contained within this file, along with `extra` positioned
+    // after the hub facts, resides in its own directory to ensure that no
+    // two fixtures ever utilize the same sidecar.
+    Fixture build_fixture(const char* directory = "zelph_pidx_test", const char* extra = "")
     {
         Fixture f;
-        f.root   = fs::temp_directory_path() / "zelph_pidx_test";
+        f.root   = fs::temp_directory_path() / directory;
         f.script = f.root / "hub.zph";
         f.bin    = f.root / "hub.bin";
 
@@ -81,6 +84,7 @@ namespace
             {
                 out << "a" << i << " p hub\n";
             }
+            out << extra;
         }
 
         zelph::io::OutputCollector  collector;
@@ -158,6 +162,43 @@ TEST_CASE("predicate index: a sidecar written by an older format is rebuilt, not
         CHECK_FALSE(any_event_contains(collector, "Loaded adjacency index"));
         CHECK(any_event_contains(collector, "Building adjacency index"));
         CHECK(any_output_contains(collector, "CLOSURE-" + std::to_string(kFacts)));
+    }
+
+    fs::remove_all(f.root);
+}
+
+// A self-fact represents a single-step loop, and the one-or-more closure of
+// its node contains the node itself. A closure is answered in one of two ways
+// -- via a direct walk beneath the scan budget, or through an index above it
+// -- with each way reading a relation independently. The index read the loop,
+// whereas the walk did not, meaning that within the same graph and over the
+// same predicate, `hub p hub` made hub part of its own closure, while `k p k`
+// left k out of its. Asked of both ways, during the session that builds the
+// sidecar and during the one that loads it.
+TEST_CASE("predicate index: a loop of one step is a path, through the index as through the direct walk")
+{
+    const Fixture f = build_fixture("zelph_pidx_loop_test", "hub p hub\nk p k\n");
+
+    for (const char* sidecar : {"Building adjacency index", "Loaded adjacency index"})
+    {
+        CAPTURE(sidecar);
+        zelph::io::OutputCollector  collector;
+        zelph::console::Interactive interactive(collector.sink());
+        interactive.process(".load \"" + f.bin.string() + "\"");
+
+        // hub carries additional facts beyond what the scan budget allows:
+        // the index.
+        interactive.process(R"(%(string "HUB-" (length (zelph/closure "hub" "p"))))");
+        interactive.process(R"(%(string "HUB-SOURCES-" (length (zelph/closure-sources "hub" "p"))))");
+        CHECK(any_event_contains(collector, sidecar));
+        CHECK(any_output_contains(collector, "HUB-1"));
+        CHECK(any_output_contains(collector, "HUB-SOURCES-" + std::to_string(kFacts + 1)));
+
+        // k holds a single fact: the direct walk.
+        interactive.process(R"(%(string "K-" (length (zelph/closure "k" "p"))))");
+        interactive.process(R"(%(string "K-SOURCES-" (length (zelph/closure-sources "k" "p"))))");
+        CHECK(any_output_contains(collector, "K-1"));
+        CHECK(any_output_contains(collector, "K-SOURCES-1"));
     }
 
     fs::remove_all(f.root);

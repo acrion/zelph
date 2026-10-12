@@ -102,10 +102,10 @@
 # that does not correspond to the 0-row outputs 1. The rule operates at
 # the lowest negation level; its out-1 facts serve as input to the
 # positive gate rules, and the two alternate on this level until a stable
-# state is reached. .strata lists G0 alongside the gate rules as
-# non-stratifiable: its analysis compares predicates, G0 negates an out
-# fact, and every gate table except neg contains only out facts (the
-# and/or/xor/mj3 rows include out 0).
+# state is reached. .strata lists G0 together with the gate rules as
+# non-stratifiable: its analysis does not compare whole patterns, G0
+# negates an out fact with output 0, and the gate rules derive out facts
+# where the output is a variable (the and/or/xor/mj3 rows include out 0).
 # G0 remains sound despite this because it is locally stratified: no rule
 # derives a ((A nand B) out 0) fact -- G0 exclusively produces out 1 --
 # thus the negated pattern matches only the axiom row above and does not

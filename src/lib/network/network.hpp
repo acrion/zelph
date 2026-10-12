@@ -427,15 +427,10 @@ namespace zelph::network
             _touched.clear();
         }
 
-        // Called by every load before it writes. A load that replaces the
-        // graph clears it, while a load that merges a file into the graph
-        // assigns to each node the file holds the edges contained within the
-        // file, possibly reducing the number of edges it previously held:
-        // either way, edges vanish without a record of removal, and every
-        // reader must re-read the data it keeps. Only a load that cleared the
-        // graph advanced the epoch, and a rule read for an explanation before
-        // a merging load was adopted afterwards whenever the edge counts it
-        // had read from matched.
+        // Called by every load before it writes. Each load supersedes the
+        // graph, causing edges to disappear without any trace of their
+        // removal, and requiring every reader to re-fetch the data it keeps;
+        // the epoch serves as the signal for this necessity.
         void note_load()
         {
             std::unique_lock<std::shared_mutex> lock_left(_smtx_left);
@@ -1054,6 +1049,20 @@ namespace zelph::network
             _active_cluster.store(nullptr, std::memory_order_release);
             _active_unmarked.store(nullptr, std::memory_order_release);
             _active_cluster_name.clear();
+        }
+
+        // Every cluster forgotten and none active, much like a new engine:
+        // what a load that replaces the graph leaves behind. A cluster lists
+        // node ids, and following the load, those ids name the nodes from the
+        // file, which a drop of the cluster would remove.
+        void forget_clusters()
+        {
+            std::lock_guard lock(_mtx_clusters);
+            _active_cluster.store(nullptr, std::memory_order_release);
+            _active_unmarked.store(nullptr, std::memory_order_release);
+            _active_cluster_name.clear();
+            _clusters.clear();
+            _cluster_unmarked.clear();
         }
 
         // A cluster records what it CREATED, which is what lets a drop promise

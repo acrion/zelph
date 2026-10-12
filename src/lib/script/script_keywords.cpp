@@ -25,17 +25,26 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #include "script/script_engine_impl.hpp"
 
+#include "network/reasoning.hpp"
 #include "string/string_utils.hpp"
 
 #include <janet.h>
 
 #include <cstddef>
 #include <cstdint>
+#include <exception>
 #include <mutex>
 #include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
+
+namespace
+{
+    // The cluster within which the islands of a statement run
+    // (ScriptEngine::Impl::expand_inline_keywords).
+    const char* const kIslandScratch = "__island";
+}
 
 namespace zelph
 {
@@ -99,11 +108,33 @@ namespace zelph
     std::string ScriptEngine::Impl::expand_inline_keywords(const std::string& input)
     {
         _scoped_vars_preloaded = false;
+        _island_created.clear();
 
         std::vector<std::pair<const std::string*, const KeywordEntry*>> inline_kws;
         for (const auto& [open, entry] : _keyword_handlers)
             if (entry.inline_mode) inline_kws.push_back({&open, &entry});
         if (inline_kws.empty()) return input;
+
+        // The islands operate within the scratch cluster, and the cluster
+        // that was active gets restored once the expansion ends -- the
+        // recording remains open until the parse determines the status of
+        // the line (end_island_recording). An island that fails leaves
+        // nothing that the preceding islands had built.
+        struct Recording
+        {
+            Impl&      impl;
+            const bool outer      = !impl._island_recording;
+            const int  exceptions = std::uncaught_exceptions();
+            ~Recording()
+            {
+                if (!outer || !impl._island_recording) return;
+                if (impl._island_previous.empty())
+                    impl._n->deactivate_cluster();
+                else
+                    impl._n->set_active_cluster(impl._island_previous);
+                if (std::uncaught_exceptions() > exceptions) impl.end_island_recording(false);
+            }
+        } recording{*this};
 
         std::string out;
         out.reserve(input.size());
@@ -160,6 +191,13 @@ namespace zelph
                 continue;
             }
 
+            if (!_island_recording)
+            {
+                _island_previous  = _n->active_cluster_name();
+                _island_recording = true;
+                _n->set_active_cluster(kIslandScratch);
+            }
+
             if (!_scoped_vars_preloaded)
             {
                 // One shared variable scope for the whole statement: a variable
@@ -205,6 +243,33 @@ namespace zelph
         }
 
         return out;
+    }
+
+    // The parse has reached its decision about the line for which its
+    // islands were expanded. What they built was intended solely for that
+    // line: the nodes created by the islands of a rejected line remained
+    // within the graph, and a rule applied to them fired even though no
+    // statement was accepted. The variables resolved by the islands go with
+    // them.
+    void ScriptEngine::Impl::end_island_recording(const bool keep)
+    {
+        if (!_island_recording) return;
+        _island_recording = false;
+
+        if (keep)
+        {
+            // Before the merge, read the accounting records that will be
+            // dropped.
+            _island_created = _n->cluster_nodes(kIslandScratch);
+            _n->merge_cluster(kIslandScratch, _island_previous);
+            return;
+        }
+
+        _n->drop_scratch_cluster(kIslandScratch);
+        _island_created.clear();
+        _scoped_vars_preloaded = false;
+        std::lock_guard<std::mutex> lock(_state_mutex);
+        _scoped_variables.clear();
     }
 
     Janet ScriptEngine::Impl::janet_cfun_zelph_register_keyword(int32_t argc, Janet* argv)

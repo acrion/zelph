@@ -26,6 +26,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include <doctest/doctest.h>
 
 #include "test_helpers.hpp"
+#include "wikidata_dump.hpp"
 
 #include "network/reasoning.hpp"
 
@@ -105,6 +106,102 @@ c p d
         collector.clear();
         interactive.process("S p O");
         CHECK(collect_answers(collector).size() == 2); });
+}
+
+// The identical merge on the route within a single language. ".name bob
+// john", with both names in the current language, was refused -- "Names
+// are unique per language; remove the other node" -- even though the
+// documentation and .help promise the merge and the detour via a second
+// language performed it. Removing the other node is the opposite of saying
+// that the two are a single entity.
+TEST_CASE("name merge: a name held in the same language merges the two nodes")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+bob likes ann
+bob knows carl
+(bob likes ann) since 2020
+john likes ann
+john owns car
+)");
+        auto* const z    = interactive.graph();
+        const Node  bob  = z->get_node("bob");
+        const Node  john = z->get_node("john");
+
+        collector.clear();
+        interactive.process(".name bob john");
+        CHECK(any_event_contains(collector, "Merging Node " + std::to_string(john) + " into Node " + std::to_string(bob)));
+
+        // The node identified as first survives under the requested name,
+        // while its old name has been removed.
+        CHECK(z->get_node("john") == bob);
+        CHECK(z->get_node("bob") == 0);
+
+        // The facts of both end on the survivor, with `bob likes ann` and
+        // `john likes ann` now forming a single statement, contained within
+        // one node.
+        collector.clear();
+        interactive.process("john P O");
+        CHECK(answers_contain(collector, "john likes ann"));
+        CHECK(answers_contain(collector, "john knows carl"));
+        CHECK(answers_contain(collector, "john owns car"));
+        CHECK(collect_answers(collector).size() == 3);
+
+        collector.clear();
+        interactive.process("S since O");
+        CHECK(answers_contain(collector, "(john likes ann) since 2020"));
+
+        const std::size_t before = node_count(collector, interactive);
+        process_lines(interactive, R"(
+john likes ann
+john owns car
+(john likes ann) since 2020
+)");
+        CHECK(node_count(collector, interactive) == before); });
+}
+
+// The merge gives the requested name to the surviving node, so the label of
+// the disappearing node in that language does not constitute a conflict. The
+// transfer of names reported one regardless, and contrary to the outcome:
+// after ".name bob john", it reported "Keeping existing name 'bob'", just one
+// step before 'bob' was overwritten. A conflict in ANOTHER language is
+// genuine and continues to be reported.
+TEST_CASE("name merge: the name the merge assigns is not reported as a conflict")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        auto* const z = interactive.graph();
+
+        SUBCASE("in the same language")
+        {
+            process_lines(interactive, R"(
+bob likes ann
+john owns car
+)");
+            const Node bob = z->get_node("bob");
+
+            collector.clear();
+            interactive.process(".name bob john");
+            CHECK_FALSE(any_event_contains(collector, "Keeping existing name"));
+            CHECK(z->get_name(bob, "zelph", false) == "john");
+        }
+        SUBCASE("across languages")
+        {
+            process_lines(interactive, R"(
+a p b
+c p d
+.name a en shared
+.name c en cc
+)");
+            const Node c = z->get_node("c");
+
+            collector.clear();
+            interactive.process(".name c en shared");
+            CHECK_FALSE(any_event_contains(collector, "Keeping existing name 'cc'"));
+            CHECK(any_event_contains(collector, "Keeping existing name 'c'"));
+            CHECK(z->get_name(c, "en", false) == "shared");
+        } });
 }
 
 TEST_CASE("name merge: a predicate merged into one of its own subjects stays readable")
@@ -351,6 +448,127 @@ zz q yy
         CHECK_FALSE(answers_contain(collector, "a likes zz")); });
 }
 
+// Within a single language, the merge is constrained in the same way as
+// across languages, and each refusal names the one that is in effect.
+// Previously, all of them read "Names are unique per language; remove the
+// other node", which is not the reason in any of these cases. A rejected
+// merge results in no change.
+TEST_CASE("name merge: in the same language, what cannot merge is refused with its reason")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+john owns car
+(X p Y) => (X q Y)
+(X r Y) => (X likes @{d})
+)");
+        auto* const z = interactive.graph();
+
+        Node collection = 0;
+        for (const Node r : z->get_rules())
+        {
+            adjacency_set consequences;
+            z->parse_fact(r, consequences);
+            adjacency_set objects;
+            z->parse_fact(*consequences.begin(), objects);
+            if (z->is_rule_template(*objects.begin())) collection = *objects.begin();
+        }
+        REQUIRE(collection != 0);
+        interactive.process(".name " + std::to_string(collection) + " tname");
+
+        const std::size_t before = node_count(collector, interactive);
+
+        SUBCASE("a core node's spelling")
+        {
+            CHECK_THROWS_WITH_AS(interactive.process(".name john nil"),
+                                 doctest::Contains("A core node's name cannot be given away"),
+                                 std::runtime_error);
+        }
+        SUBCASE("a variable and a non-variable")
+        {
+            CHECK_THROWS_WITH_AS(interactive.process(".name X john"),
+                                 doctest::Contains("one node is a variable, the other not"),
+                                 std::runtime_error);
+        }
+        SUBCASE("a collection of a rule's text")
+        {
+            CHECK_THROWS_WITH_AS(interactive.process(".name john tname"),
+                                 doctest::Contains("is a collection of a rule's text"),
+                                 std::runtime_error);
+            CHECK(z->get_node("tname") == collection);
+        }
+
+        CHECK(node_count(collector, interactive) == before);
+        collector.clear();
+        interactive.process("john owns O");
+        CHECK(answers_contain(collector, "john owns car")); });
+}
+
+// A rule's variable carries a display name exclusively: each statement
+// quantifies its own, and a node seeking that name takes the lookup without
+// merging ("names: .name takes a display name over from a variable"). The
+// merge in one language reaches it from neither side. When two variables
+// were involved, the request was refused with "Names are unique per
+// language", which is inaccurate among variables; the refusal occurs because
+// merging would make one rule's variable into another rule's.
+TEST_CASE("name merge: a variable's display name is not a merge")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+a p b
+(A p B) => (A q B)
+(C r D) => (C s D)
+)");
+
+        collector.clear();
+        interactive.process(".name a A");
+        CHECK(any_output_contains(collector, "display name of a variable"));
+        CHECK_FALSE(any_event_contains(collector, "Merging"));
+
+        CHECK_THROWS_WITH_AS(interactive.process(".name C D"),
+                             doctest::Contains("Merging them would make the variable of one statement the variable of another"),
+                             std::runtime_error);
+
+        // Both rules keep their variables and continue to fire.
+        process_lines(interactive, "x r y\n");
+        interactive.run(true, false, false);
+        collector.clear();
+        interactive.process("S q O");
+        CHECK(answers_contain(collector, R"("A" q b)"));
+        collector.clear();
+        interactive.process("S s O");
+        CHECK(answers_contain(collector, "x s y")); });
+}
+
+// The new name is a NAME. Previously, it was processed just like the node
+// argument, meaning "14" referred to node 14 whenever no node bore the name
+// "14" -- which blocked the rename with "already in use by node 14", and
+// would now have merged a node the user never named.
+TEST_CASE("name merge: a number given as the new name is a name, not a node id")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+bob likes ann
+john owns car
+)");
+        auto* const       z    = interactive.graph();
+        const Node        bob  = z->get_node("bob");
+        const Node        john = z->get_node("john");
+        const std::string id   = std::to_string(john);
+
+        collector.clear();
+        interactive.process(".name bob " + id);
+        CHECK_FALSE(any_event_contains(collector, "Merging"));
+        CHECK(z->get_node(id) == bob);
+        CHECK(z->get_node("john") == john);
+
+        collector.clear();
+        interactive.process("john owns O");
+        CHECK(answers_contain(collector, "john owns car")); });
+}
+
 TEST_CASE("name merge: the repaired graph survives a save/load round trip")
 {
     const std::filesystem::path file = std::filesystem::temp_directory_path() / "zelph_name_merge.bin";
@@ -388,6 +606,49 @@ x rel {a b}
     CHECK(node_count(collector, interactive) == before);
 }
 
+// The same applies to merging within a single language, where the survivor
+// is renamed instead of receiving a second name: the requested name is
+// preserved, while the old one is not brought back upon loading.
+TEST_CASE("name merge: a merge in the same language survives a save/load round trip")
+{
+    const std::filesystem::path file = std::filesystem::temp_directory_path() / "zelph_name_merge_same_language.bin";
+    std::filesystem::remove(file);
+
+    {
+        zelph::io::OutputCollector  collector;
+        zelph::console::Interactive interactive(collector.sink());
+        process_lines(interactive, R"(
+bob likes ann
+(bob likes ann) since 2020
+john likes ann
+john owns car
+)");
+        interactive.process(".name bob john");
+        interactive.process(".save \"" + file.string() + "\"");
+    }
+
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+    interactive.process(".load \"" + file.string() + "\"");
+    std::filesystem::remove(file);
+
+    CHECK(interactive.graph()->get_node("bob") == 0);
+
+    collector.clear();
+    interactive.process("john P O");
+    CHECK(answers_contain(collector, "john likes ann"));
+    CHECK(answers_contain(collector, "john owns car"));
+    CHECK(collect_answers(collector).size() == 2);
+
+    collector.clear();
+    interactive.process("S since O");
+    CHECK(answers_contain(collector, "(john likes ann) since 2020"));
+
+    const std::size_t before = node_count(collector, interactive);
+    interactive.process("(john likes ann) since 2020");
+    CHECK(node_count(collector, interactive) == before);
+}
+
 TEST_CASE("name merge: merging INTO a core node keeps the core node")
 {
     // The other direction, which the merge has always taken: a core node is
@@ -415,6 +676,158 @@ contradiction is unsatisfiable
         const std::size_t before = node_count(collector, interactive);
         interactive.process("contradiction is unsatisfiable");
         CHECK(node_count(collector, interactive) == before); });
+}
+
+// In the same direction within a single language: the core node is named
+// first and takes the name, while the node that holds the name disappears
+// into it.
+TEST_CASE("name merge: merging INTO a core node in the same language keeps the core node")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+.lang en
+contradiction is unsatisfiable
+)");
+        auto* const z    = interactive.graph();
+        const Node  bang = z->get_core_node("!");
+
+        interactive.process(".name ! contradiction");
+        CHECK(z->get_node("contradiction", "en") == bang);
+
+        interactive.process(".lang zelph");
+        collector.clear();
+        interactive.process("! P O");
+        CHECK(answers_contain(collector, "! is unsatisfiable")); });
+}
+
+// A core node's spelling ("~", "in", "nil", ...) denotes the core node in
+// every language, thus it cannot serve as a name a user might assign to
+// their own node. When applied across languages, it merged the node INTO the
+// core node -- core nodes never disappear -- and the merged node's names
+// then spelled the core node: following ".name prep3 en ~", every `~` fact
+// printed as `prep3`, and "X ~ preposition" answered "prep3 prep3
+// preposition". Within a single language, the same request was refused with
+// "remove the other node", a directive no one can fulfil for a core node.
+// `.name ! en contradiction` above represents the opposite direction, the
+// core node taking a name, and remains valid.
+TEST_CASE("name merge: a core node's spelling is not given away, in any language")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("prep3 ~ preposition");
+        auto* const z     = interactive.graph();
+        const Node  prep3 = z->get_node("prep3");
+        const Node  tilde = z->get_core_node("~");
+
+        const std::size_t before = node_count(collector, interactive);
+
+        SUBCASE("across languages")
+        {
+            collector.clear();
+            CHECK_THROWS_WITH_AS(interactive.process(".name prep3 en ~"),
+                                 doctest::Contains("A core node's name cannot be given away"),
+                                 std::runtime_error);
+            // The merge is declared after it has taken place, meaning a
+            // refused one is never declared at all.
+            CHECK_FALSE(any_event_contains(collector, "Merging"));
+        }
+        SUBCASE("across languages, into a language nothing is named in yet")
+        {
+            CHECK_THROWS_WITH_AS(interactive.process(".name prep3 ace in"),
+                                 doctest::Contains("A core node's name cannot be given away"),
+                                 std::runtime_error);
+        }
+        SUBCASE("in the same language")
+        {
+            CHECK_THROWS_WITH_AS(interactive.process(".name prep3 nil"),
+                                 doctest::Contains("A core node's name cannot be given away"),
+                                 std::runtime_error);
+        }
+        // The two library calls that perform a merge based on a name
+        // both reject it in the same manner, with the second doing so
+        // before altering any name.
+        SUBCASE("through the library")
+        {
+            CHECK_THROWS_WITH_AS(z->set_name(prep3, "~", "en", true),
+                                 doctest::Contains("A core node's name cannot be given away"),
+                                 std::runtime_error);
+            interactive.process(".name prep3 en prepen");
+            CHECK_THROWS_WITH_AS(z->set_name("~", "prepen", "en"),
+                                 doctest::Contains("A core node's name cannot be given away"),
+                                 std::runtime_error);
+            CHECK(z->get_name(prep3, "en", false) == "prepen");
+        }
+
+        CHECK(node_count(collector, interactive) == before);
+        CHECK(z->get_node("prep3") == prep3);
+        CHECK(z->get_name(tilde, "zelph", false) == "~");
+        CHECK(z->get_name(tilde, "en", false) == "~");
+
+        collector.clear();
+        interactive.process("X ~ preposition");
+        CHECK(answers_contain(collector, "prep3 ~ preposition"));
+
+        // The limit is one that .help .name states.
+        collector.clear();
+        interactive.process(".help .name");
+        CHECK(any_output_contains(collector, "names it in every language and is never given")); });
+}
+
+// Two core nodes are both nodes the engine relies on, meaning neither can be
+// absorbed into the other. Across languages they merged all the same once
+// one of the nodes bore a name that the other had been assigned: following
+// ".name ! en contradiction", ".name ~ en contradiction" merged `~` into
+// `!`, causing every subsequent statement to fail with "requested right node
+// 3 does not exist".
+TEST_CASE("name merge: two core nodes are never merged")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+.lang en
+contradiction is unsatisfiable
+.lang zelph
+.name ! en contradiction
+)");
+        auto* const z     = interactive.graph();
+        const Node  tilde = z->get_core_node("~");
+        const Node  bang  = z->get_core_node("!");
+
+        SUBCASE("across languages")
+        {
+            CHECK_THROWS_WITH_AS(interactive.process(".name ~ en contradiction"),
+                                 doctest::Contains("both are core nodes"),
+                                 std::runtime_error);
+        }
+        SUBCASE("in the same language")
+        {
+            interactive.process(".lang en");
+            CHECK_THROWS_WITH_AS(interactive.process(".name ~ contradiction"),
+                                 doctest::Contains("both are core nodes"),
+                                 std::runtime_error);
+            interactive.process(".lang zelph");
+        }
+        SUBCASE("through the library")
+        {
+            // `!` carries a name in the current language, `~` a
+            // different one in another, and the call names `~` with
+            // the name `!` holds.
+            process_lines(interactive, R"(
+.name ! bang
+.name ~ de tilde
+)");
+            CHECK_THROWS_WITH_AS(z->set_name("bang", "tilde", "de"),
+                                 doctest::Contains("both are core nodes"),
+                                 std::runtime_error);
+        }
+
+        CHECK(z->exists(tilde));
+        CHECK(z->exists(bang));
+        CHECK_NOTHROW(interactive.process("a b c"));
+        collector.clear();
+        interactive.process("X ~ ->");
+        CHECK(answers_contain(collector, "b ~ ->")); });
 }
 
 TEST_CASE("name merge: a merge that changes nothing structurally is still safe")
@@ -515,6 +928,191 @@ Q30 P279 Q10
         interactive.process(".name P279 wikidata P279");
         interactive.process("S \"P279\" e1");
         CHECK(answers_contain(collector, "Q30 P279 \"Q10 - e1\"")); });
+}
+
+TEST_CASE("name merge: every name writer keeps the two name maps consistent")
+{
+    // A removal finds the names that reference a specific node (name ->
+    // node) by examining the names stored within the node (node -> name),
+    // performing a single lookup per language rather than traversing the
+    // whole reverse mapping. This approach remains valid only if each name
+    // -> node entry is matched by a corresponding node -> name entry, hence
+    // this process iterates over every writer of both maps and checks the
+    // invariant following each update. A writer that violates this
+    // condition results in a removed node's name resolving to an identifier
+    // that no longer exists.
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+    const auto                  check = [&](const char* writer)
+    {
+        INFO(writer);
+        CHECK(interactive.graph()->name_maps_consistent());
+    };
+
+    interactive.process("a p b");
+    check("Zelph::node");
+
+    interactive.process(".name a de aDE");
+    check(".name in another language");
+
+    interactive.process(".name b bb");
+    check(".name in the same language");
+
+    interactive.process("(X p Y) => (Y q X)");
+    interactive.process("X p Y");
+    check("the display names of variables");
+
+    interactive.process(".name a X");
+    check(".name of an atom to a name a variable displays");
+
+    interactive.process("c r d");
+    interactive.graph()->set_name(interactive.graph()->get_node("c"), "aDE", "de", false);
+    check("set_name without a merge");
+
+    merge_by_name(interactive, "c", "d");
+    check("a merge");
+
+    namespace fs        = std::filesystem;
+    const fs::path file = fs::temp_directory_path() / "zelph_name_maps_consistent.bin";
+    interactive.process(".save \"" + file.string() + "\"");
+    interactive.process(".new");
+    interactive.process(".load \"" + file.string() + "\"");
+    check("a load");
+    fs::remove(file);
+}
+
+TEST_CASE("name merge: a merge and a takeover keep the label index exact")
+{
+    // The carriers associated with a shared label are maintained alongside
+    // the two name maps, and each writer of these maps must ensure they
+    // remain synchronized: a merge moves a carrier's label to the surviving
+    // node or drops it, a takeover moves the name → node entry, a rename and
+    // .delname take the label from a node. A carrier missing from the index
+    // corresponds to a label that ceases to resolve when its holder vanishes;
+    // an excess carrier signifies a node that receives a label it does not
+    // carry.
+    using namespace wikidata_dump;
+    const auto dump = write_lines("zelph_label_merge",
+                                  {entity("Q8441", text("en", "man")),
+                                   entity("Q29719014", text("en", "man")),
+                                   entity("Q709369", text("en", "man"))});
+
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+    interactive.process(".load \"" + dump.string() + "\"");
+    auto* const graph = interactive.graph();
+
+    const auto check = [&](const char* writer)
+    {
+        INFO(writer);
+        CHECK(graph->label_index_consistent());
+        CHECK(graph->name_maps_consistent());
+    };
+    check("the import");
+
+    interactive.process(".lang zelph");
+    interactive.process("mine p q");
+    interactive.process(".name mine en man");
+    check(".name merging a node into the holder");
+    CHECK(ids_of(interactive, graph->nodes_named("man", "en")) == std::vector<std::string>{"Q8441", "Q709369", "Q29719014"});
+
+    interactive.process("theirs p q");
+    interactive.process(".name theirs en husband");
+    interactive.process(".name theirs wikidata Q709369");
+    check(".name merging a carrier into a node with another English name");
+    CHECK(ids_of(interactive, graph->nodes_named("man", "en")) == std::vector<std::string>{"Q8441", "Q29719014"});
+
+    interactive.process("other p q");
+    graph->set_name(graph->get_node("other", "zelph"), "man", "en", false);
+    check("set_name taking a shared label over");
+    CHECK(graph->get_node("man", "en") == graph->get_node("other", "zelph"));
+
+    interactive.process(".lang en");
+    interactive.process(".name man boy");
+    check(".name renaming the holder");
+    CHECK(holder_of(interactive, "man") == "Q29719014");
+
+    interactive.process(".delname man");
+    check(".delname of the holder");
+    CHECK(holder_of(interactive, "man").empty());
+
+    remove_dump(dump);
+}
+
+TEST_CASE("name merge: a merge in the same language keeps the label index exact")
+{
+    // .name onto a name currently held by another node in the current
+    // language merges the two nodes, and the node that vanishes may carry a
+    // shared label: as its holder when the name corresponds to that label, or
+    // as one of several carriers when the name is its Wikidata ID. Either
+    // way, the survivor assumes the vanished node's names, and with them its
+    // place in the index.
+    using namespace wikidata_dump;
+    const auto dump = write_lines("zelph_label_same_language_merge",
+                                  {entity("Q8441", text("en", "man")),
+                                   entity("Q29719014", text("en", "man")),
+                                   entity("Q709369", text("en", "man"))});
+
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+    interactive.process(".load \"" + dump.string() + "\"");
+    auto* const graph = interactive.graph();
+
+    const auto check = [&](const char* writer)
+    {
+        INFO(writer);
+        CHECK(graph->label_index_consistent());
+        CHECK(graph->name_maps_consistent());
+    };
+
+    interactive.process(".lang en");
+    interactive.process("mine p q");
+    const Node mine = graph->get_node("mine", "en");
+    interactive.process(".name mine man");
+    check(".name merging the holder into a node of the same language");
+    CHECK(graph->get_node("man", "en") == mine);
+    CHECK(ids_of(interactive, graph->nodes_named("man", "en")) == std::vector<std::string>{"Q8441", "Q709369", "Q29719014"});
+
+    interactive.process(".lang wikidata");
+    interactive.process("theirs p q");
+    const Node theirs = graph->get_node("theirs", "wikidata");
+    interactive.process(".name theirs Q709369");
+    check(".name merging a carrier that does not hold the label");
+    CHECK(graph->get_name(theirs, "en", false) == "man");
+    CHECK(graph->get_node("man", "en") == mine);
+    CHECK(graph->nodes_named("man", "en") == std::vector<Node>{mine, theirs, entity_node(interactive, "Q29719014")});
+
+    remove_dump(dump);
+}
+
+TEST_CASE("names: a session without shared labels builds no index")
+{
+    // Only an imported Wikidata dump assigns a single label to several
+    // nodes; all other writers either transfer a name or perform a merge. A
+    // network lacking such a label maintains an empty index, as does a load
+    // of such a network, which checks the two map sizes per language and
+    // walks nothing when they agree.
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+    interactive.process("a p b");
+    interactive.process(".name a de aDE");
+    interactive.process("(X p Y) => (Y q X)");
+
+    auto* graph = interactive.graph();
+    CHECK(graph->label_index_consistent());
+    CHECK(graph->nodes_named("a") == std::vector<Node>{graph->get_node("a")});
+    CHECK(graph->nodes_named("X") == std::vector<Node>{}); // a variable does not serve as a carrier
+
+    namespace fs        = std::filesystem;
+    const fs::path file = fs::temp_directory_path() / "zelph_no_label_index.bin";
+    interactive.process(".save \"" + file.string() + "\"");
+    interactive.process(".new");
+    interactive.process(".load \"" + file.string() + "\"");
+
+    graph = interactive.graph();
+    CHECK(graph->label_index_consistent());
+    CHECK(graph->nodes_named("aDE", "de") == std::vector<Node>{graph->get_node("a")});
+    fs::remove(file);
 }
 
 TEST_CASE("name merge: a repair of cluster knowledge still rolls back")

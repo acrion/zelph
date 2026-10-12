@@ -255,7 +255,7 @@ TEST_CASE("slice: a question asked before the save does not travel with it")
         collector.clear();
         interactive.process("S P279 Q30");
         interactive.process("T P279⁺ Q30");
-        CHECK(any_output_contains(collector, "closure one-or-more"));
+        CHECK(any_output_contains(collector, "T P279⁺ Q30"));
 
         collector.clear();
         interactive.process(".save-predicates \"" + after_file.string() + "\" P279");

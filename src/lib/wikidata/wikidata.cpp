@@ -43,6 +43,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include <map>
 #include <mutex>
 #include <sstream>
+#include <string_view>
 #include <thread>
 #include <unordered_set>
 #include <vector>
@@ -69,6 +70,31 @@ namespace
                 continue;
             }
             if (line[i] == '"') return i;
+        }
+        return std::string::npos;
+    }
+
+    // The position of the brace that closes the JSON object whose opening
+    // brace is located at `open`. Entire strings are ignored, meaning a brace
+    // contained within a label does not count.
+    size_t find_json_object_end(const std::string& line, const size_t open)
+    {
+        size_t depth = 0;
+        for (size_t i = line.find_first_of("\"{}", open); i != std::string::npos; i = line.find_first_of("\"{}", i + 1))
+        {
+            if (line[i] == '"')
+            {
+                i = find_json_string_end(line, i + 1);
+                if (i == std::string::npos) return std::string::npos;
+            }
+            else if (line[i] == '{')
+            {
+                ++depth;
+            }
+            else if (--depth == 0)
+            {
+                return i;
+            }
         }
         return std::string::npos;
     }
@@ -377,6 +403,11 @@ void Wikidata::import_all(const std::string& constraints_dir)
             }
             else
             {
+                // Says that each item kept its label and the lowest-ranked
+                // carrier holds it (Zelph::assign_label_ranked), a claim
+                // that a network imported beforehand cannot say.
+                _pImpl->_n->node(network::Zelph::wikidata_labels_marker_name(), "zelph");
+
                 _pImpl->_n->diagnostic_stream() << "Import completed successfully (" << _pImpl->_n->count() << " nodes)." << std::endl;
                 _pImpl->_n->end_bulk_import();
 
@@ -820,35 +851,42 @@ void Wikidata::process_import(const std::string& line,
 #if ZELPH_WIKIDATA_IMPORT_DIAGNOSTICS
         const auto label_begin = SteadyClock::now();
 #endif
+        // Only the object containing labels is subject to searching.
+        // Previously, the search process extended from the id to the end of
+        // the line, causing an item lacking a label in the specified language
+        // to proceed through its descriptions, aliases, and claims.
+        //
+        // An item that bears the identical name across all languages retains
+        // it under `mul` alone -- Douglas Adams (Q42), Albert Einstein, Marie
+        // Curie -- and would get no name in the language at all without it.
+        static const std::string labels_tag("\"labels\":{");
         static const std::string language_tag("{\"language\":\"" + additional_language_to_import + "\",\"value\":\"");
-        const size_t             language0 = line.find(language_tag, id1 + 7);
-        if (language0 != std::string::npos)
+        static const std::string mul_tag("{\"language\":\"mul\",\"value\":\"");
+
+        const size_t labels0 = line.find(labels_tag);
+        const size_t labels1 = labels0 == std::string::npos ? std::string::npos
+                                                            : find_json_object_end(line, labels0 + labels_tag.size() - 1);
+        if (labels1 != std::string::npos)
         {
-            if (language0 > line.find("\"labels\":{"))
+            const auto value_of = [&](const std::string& tag) -> bool
             {
-                const size_t aliases = line.find("\"aliases\":{", id1 + 7);
+                const size_t found = std::string_view(line).substr(labels0, labels1 - labels0).find(tag);
+                if (found == std::string_view::npos) return false;
 
-                if (aliases == std::string::npos || language0 < aliases)
-                {
-                    const size_t descriptions = line.find("\"descriptions\":{", id1 + 7);
+                const size_t language0 = labels0 + found;
+                const size_t value0    = language0 + tag.size();
+                const size_t value1    = find_json_string_end(line, value0);
+                if (value1 == std::string::npos || value1 > labels1) return false;
 
-                    if (descriptions == std::string::npos || language0 < descriptions)
-                    {
-                        const size_t value0 = language0 + language_tag.size();
-                        const size_t value1 = find_json_string_end(line, value0);
+                id1 = value1;
+                // The dump escapes every non-ASCII character, so the label
+                // has to be decoded here -- otherwise the node carries the
+                // escape sequences instead of the letters they stand for.
+                name_in_additional_language = string::unicode::unescape(line.substr(value0, value1 - value0));
+                return true;
+            };
 
-                        if (value1 != std::string::npos)
-                        {
-                            id1 = value1;
-                            // The dump escapes every non-ASCII character, so
-                            // the label has to be decoded here -- otherwise
-                            // the node carries the escape sequences instead
-                            // of the letters they stand for.
-                            name_in_additional_language = string::unicode::unescape(line.substr(value0, value1 - value0));
-                        }
-                    }
-                }
-            }
+            if (!value_of(language_tag)) value_of(mul_tag);
         }
 #if ZELPH_WIKIDATA_IMPORT_DIAGNOSTICS
         if (diag) diag->parse_label_ns += to_ns(SteadyClock::now() - label_begin);
@@ -1041,7 +1079,7 @@ void Wikidata::process_import(const std::string& line,
 #ifdef SINGLE_THREADED_IMPORT
         assert(lock.owns_lock());
 #endif
-        _pImpl->_n->set_name(subject, name_in_additional_language, additional_language_to_import, false);
+        _pImpl->_n->assign_label_ranked(subject, name_in_additional_language, additional_language_to_import);
 #if ZELPH_WIKIDATA_IMPORT_DIAGNOSTICS
         if (diag)
         {

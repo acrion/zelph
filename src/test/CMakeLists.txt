@@ -219,6 +219,8 @@ if (ZELPH_TARGET_IS_X86_64 AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     else ()
         set(ZELPH_ARCH_CHECK "${CMAKE_SOURCE_DIR}/tools/check_arch_baseline.py")
 
+        find_program(ZELPH_LLVM_OBJDUMP NAMES llvm-objdump)
+
         include(CheckCXXCompilerFlag)
         string(MAKE_C_IDENTIFIER "ZELPH_SUPPORTS_MARCH_${ZELPH_X86_BASELINE}" ZELPH_TEST_BASELINE_VAR)
         check_cxx_compiler_flag("-march=${ZELPH_X86_BASELINE}" ${ZELPH_TEST_BASELINE_VAR})
@@ -238,6 +240,22 @@ if (ZELPH_TARGET_IS_X86_64 AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
                                  "-march=${ZELPH_X86_BASELINE}")
             zelph_add_check_test(arch_baseline_accepts_the_floor "${ZELPH_ARCH_CHECK}"
                     "$<TARGET_FILE:zelph_arch_probe_baseline> --floor ${ZELPH_X86_BASELINE}" 0)
+
+            # rdrand is above x86-64-v3 and keeps the legacy encoding: the
+            # check identifies it via its name, and llvm-objdump spells the
+            # name with an operand size suffix (rdrandl).
+            if (ZELPH_X86_BASELINE STREQUAL "x86-64-v3")
+                zelph_add_arch_probe(zelph_arch_probe_legacy_extension arch_probe_legacy_extension.cpp
+                                     "-march=${ZELPH_X86_BASELINE}")
+                zelph_add_check_test(arch_baseline_refuses_a_legacy_extension "${ZELPH_ARCH_CHECK}"
+                        "$<TARGET_FILE:zelph_arch_probe_legacy_extension> --floor ${ZELPH_X86_BASELINE}" 1
+                        "rdrand is above the floor")
+                if (ZELPH_LLVM_OBJDUMP)
+                    zelph_add_check_test(arch_baseline_refuses_a_legacy_extension_read_by_llvm_objdump "${ZELPH_ARCH_CHECK}"
+                            "$<TARGET_FILE:zelph_arch_probe_legacy_extension> --floor ${ZELPH_X86_BASELINE} --objdump ${ZELPH_LLVM_OBJDUMP}" 1
+                            "rdrandl is above the floor")
+                endif ()
+            endif ()
         endif ()
 
         if (ZELPH_SUPPORTS_MAVX512F)
@@ -245,6 +263,44 @@ if (ZELPH_TARGET_IS_X86_64 AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
             zelph_add_check_test(arch_baseline_refuses_avx512 "${ZELPH_ARCH_CHECK}"
                     "$<TARGET_FILE:zelph_arch_probe_avx512> --floor ${ZELPH_X86_BASELINE}" 1
                     "above ${ZELPH_X86_BASELINE}")
+
+            # llvm-objdump prints its lines with an alternate format, and
+            # the check once read none of them: the AVX-512 probe passed.
+            if (ZELPH_LLVM_OBJDUMP)
+                zelph_add_check_test(arch_baseline_refuses_avx512_read_by_llvm_objdump "${ZELPH_ARCH_CHECK}"
+                        "$<TARGET_FILE:zelph_arch_probe_avx512> --floor ${ZELPH_X86_BASELINE} --objdump ${ZELPH_LLVM_OBJDUMP}" 1
+                        "above ${ZELPH_X86_BASELINE}")
+            endif ()
+        endif ()
+
+        # Data within the code section, the shape of MSVC's jump tables, caused
+        # the Windows test binary to fail the check due to two (bad) sequences.
+        # The check identifies them as data solely after its disassembler has
+        # decoded an EVEX sample, a step that GNU objdump performs yet
+        # llvm-objdump, without access to raw input, cannot show.
+        execute_process(COMMAND "${ZELPH_OBJDUMP}" --version OUTPUT_VARIABLE ZELPH_OBJDUMP_VERSION ERROR_QUIET)
+        if (${ZELPH_TEST_BASELINE_VAR} AND ZELPH_OBJDUMP_VERSION MATCHES "GNU objdump")
+            zelph_add_arch_probe(zelph_arch_probe_code_section_data arch_probe_code_section_data.cpp
+                                 "-march=${ZELPH_X86_BASELINE}")
+            zelph_add_check_test(arch_baseline_takes_undecodable_bytes_for_data "${ZELPH_ARCH_CHECK}"
+                    "$<TARGET_FILE:zelph_arch_probe_code_section_data> --floor ${ZELPH_X86_BASELINE}" 0
+                    "taken for data")
+
+            # The identical bytes, read by a disassembler that has not shown
+            # it knows EVEX, where (bad) could be an instruction too new for
+            # it. This one refuses the sample just as llvm-objdump does, and
+            # otherwise responds in the manner of objdump.
+            file(CONFIGURE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/objdump_without_sample.sh" CONTENT [[#!/bin/sh
+for argument in "$@"; do
+    [ "$argument" = "binary" ] && exit 1
+done
+exec "@ZELPH_OBJDUMP@" "$@"
+]] @ONLY)
+            file(CHMOD "${CMAKE_CURRENT_BINARY_DIR}/objdump_without_sample.sh"
+                 PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE)
+            zelph_add_check_test(arch_baseline_counts_undecodable_bytes_for_an_unproven_disassembler "${ZELPH_ARCH_CHECK}"
+                    "$<TARGET_FILE:zelph_arch_probe_code_section_data> --floor ${ZELPH_X86_BASELINE} --objdump ${CMAKE_CURRENT_BINARY_DIR}/objdump_without_sample.sh" 1
+                    "EVEX encoded")
         endif ()
 
         # The one that guards the release. The two probes above only establish

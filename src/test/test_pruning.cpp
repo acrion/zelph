@@ -26,10 +26,12 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include <doctest/doctest.h>
 
 #include "test_helpers.hpp"
+#include "wikidata_dump.hpp"
 
 #include "network/reasoning.hpp"
 
 #include <filesystem>
+#include <regex>
 #include <set>
 
 using namespace zelph::test;
@@ -186,22 +188,163 @@ TEST_CASE("pruning: a batch loses its names in every language, and only its own"
         interactive.process(".node SurvDE"); });
 }
 
-TEST_CASE("pruning: what a prune costs in name-map walks does not grow with its victims")
+TEST_CASE("pruning: pruning the holder of a shared label re-elects the lowest surviving carrier")
 {
-    // A guard on a COST, not on a result, and the reason it exists is
-    // measured: `remove_node` erased names per node, each erase walking the
-    // whole reverse map end to end, so pruning the full Wikidata dump ran at
-    // 1.11 nodes per second with 97.7 % of the time in that walk -- two
-    // months for a script that has to finish overnight. Nothing about the
-    // OUTCOME changes when that shape comes back, which is precisely why the
-    // tests above cannot see it.
+    // Every item possessing a Wikidata label carries it, and the label
+    // resolves to the one ranked first. The published networks undergo
+    // pruning, and the holder was typically among those that went, while
+    // other carriers stayed: "man", "city", "Paris", and "John" resolved to
+    // nothing in -small, and "Berlin" would have kept 56 carriers and no
+    // holder. The name -> node entry is directed to the carrier ranked first
+    // among those left.
+    using namespace wikidata_dump;
+    const auto dump = write_lines("zelph_prune_holder",
+                                  {entity("Q8441", text("en", "man"), claim("P31", "Q100")),
+                                   entity("Q29719014", text("en", "man"), claim("P31", "Q101")),
+                                   entity("Q709369", text("en", "man"), claim("P31", "Q102"))});
+
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+    interactive.process(".load \"" + dump.string() + "\"");
+    auto* const graph = interactive.graph();
+    REQUIRE(holder_of(interactive, "man") == "Q8441");
+
+    interactive.process(".lang wikidata");
+    interactive.process(".prune-nodes A P31 Q100");
+
+    CHECK(holder_of(interactive, "man") == "Q709369");
+    CHECK(ids_of(interactive, graph->nodes_named("man", "en")) == std::vector<std::string>{"Q709369", "Q29719014"});
+    CHECK(graph->label_index_consistent());
+
+    interactive.process(".lang en");
+    collector.clear();
+    interactive.process(".node man");
+    CHECK(any_event_contains(collector, "Q709369"));
+
+    SUBCASE("a label left with one carrier leaves the index")
+    {
+        interactive.process(".lang wikidata");
+        interactive.process(".prune-nodes A P31 Q102");
+
+        CHECK(holder_of(interactive, "man") == "Q29719014");
+        CHECK(ids_of(interactive, graph->nodes_named("man", "en")) == std::vector<std::string>{"Q29719014"});
+        CHECK(graph->label_index_consistent());
+    }
+
+    remove_dump(dump);
+}
+
+TEST_CASE("pruning: a label keeps resolving through .save, .load, a prune and .cleanup")
+{
+    // The networks that have been published are cut the way this case cuts
+    // one, with each stage in a process of its own: the import saves; a prune
+    // phase that loads, prunes, and saves; the final stage that loads, runs
+    // .cleanup, and saves. The carriers of a label are not saved as such, so
+    // each load finds them, and the label must move to the next carrier in
+    // every removal the recipe uses: .prune-nodes, and .cleanup taking a
+    // holder a prune left isolated.
+    using namespace wikidata_dump;
+    namespace fs = std::filesystem;
+
+    const auto     dump     = write_lines("zelph_prune_chain",
+                                          {entity("Q8441", text("en", "man"), claim("P31", "Q100")),
+                                           entity("Q29719014", text("en", "man"), claim("P31", "Q101")),
+                                           entity("Q709369", text("en", "man"), claim("P31", "Q102"))});
+    const fs::path imported = fs::temp_directory_path() / "zelph_prune_chain_imported.bin";
+    const fs::path pruned   = fs::temp_directory_path() / "zelph_prune_chain_pruned.bin";
+
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+    interactive.process(".load \"" + dump.string() + "\"");
+    interactive.process(".save \"" + imported.string() + "\"");
+    interactive.process(".new");
+    interactive.process(".load \"" + imported.string() + "\"");
+    interactive.process(".lang wikidata");
+    REQUIRE(holder_of(interactive, "man") == "Q8441");
+
+    SUBCASE(".prune-nodes")
+    {
+        interactive.process(".prune-nodes A P31 Q100");
+    }
+
+    SUBCASE(".cleanup of the holder a prune left isolated")
+    {
+        interactive.process(".prune-facts Q8441 P31 Q100");
+        interactive.process(".cleanup");
+        CHECK(entity_node(interactive, "Q8441") == 0);
+        CHECK(interactive.graph()->get_node(zelph::network::Zelph::wikidata_labels_marker_name(), "zelph", true) != 0);
+    }
+
+    CHECK(holder_of(interactive, "man") == "Q709369");
+
+    interactive.process(".save \"" + pruned.string() + "\"");
+    interactive.process(".new");
+    interactive.process(".load \"" + pruned.string() + "\"");
+    CHECK(holder_of(interactive, "man") == "Q709369");
+    CHECK(ids_of(interactive, interactive.graph()->nodes_named("man", "en")) == std::vector<std::string>{"Q709369", "Q29719014"});
+    CHECK(interactive.graph()->label_index_consistent());
+
+    fs::remove(imported);
+    fs::remove(pruned);
+    remove_dump(dump);
+}
+
+TEST_CASE("pruning: after a partial load a removal still erases a name whose forward entry was not loaded")
+{
+    // A removal finds a node's reverse name entries (name -> node) by
+    // leveraging its forward ones (node -> name): each writer maintains the
+    // latter for every former. A partial load does not: it reads the two name
+    // sections independently, and `nameOfNode=none` causes all reverse
+    // entries to be included while omitting any forward ones. When removing a
+    // node, one must still walk the reverse map as previously, otherwise the
+    // entry persists beyond the node's lifetime, and the name ends up
+    // resolving to an ID that no longer exists.
     //
-    // What is asserted is the shape rather than a number: a prune costs the
-    // same few walks whether it kills one node or twenty. The constant part
-    // is the command's own housekeeping (the pattern node it materialised),
-    // which is per command and therefore harmless.
+    // In a partial session, the REPL blocks removals; the engine API does
+    // not, and the caller safeguarded by this is an embedder that loads a
+    // slice and removes from it.
+    namespace fs        = std::filesystem;
+    const fs::path file = fs::temp_directory_path() / "zelph_partial_names_removal.bin";
+
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+    interactive.process("alpha rel beta");
+    interactive.process("gamma rel beta");
+    interactive.process(".save \"" + file.string() + "\"");
+    interactive.process(".load-partial \"" + file.string() + "\" nameOfNode=none");
+
+    auto* const graph = interactive.graph();
+    REQUIRE(graph != nullptr);
+    const zelph::network::Node alpha = graph->get_node("alpha", "zelph");
+    REQUIRE(alpha != 0);
+    REQUIRE(graph->get_name(alpha, "zelph", false).empty());
+
+    const uint64_t before = graph->name_map_scans();
+    graph->remove_node(alpha);
+    CHECK(graph->name_map_scans() > before);
+    CHECK(graph->get_node("alpha", "zelph") == 0);
+    CHECK(graph->get_node("gamma", "zelph") != 0);
+
+    fs::remove(file);
+}
+
+TEST_CASE("pruning: a prune walks no name map")
+{
+    // A guard positioned on a COST, not on a result. It pinned a fixed count
+    // of reverse name map traversals per command, the August fix for a
+    // full-dump prune operating at 1.11 nodes per second because `remove_node`
+    // walked the whole map once per node (two months for a script required to
+    // finish overnight). Removal now reads a node's own names via the forward
+    // map, meaning a prune performs zero walks, regardless of whether it kills
+    // one node or twenty; a walk returning is the regression this case is
+    // meant to detect. The OUTCOME remains unchanged when that shape
+    // reappears, which is precisely why the tests above fail to detect it.
     //
-    // The counter is hardware-independent, so this needs no quiet machine.
+    // The fact that the counter is wired at all is held by the partial-load
+    // case mentioned earlier, the sole state that continues to walk.
+    //
+    // The counter operates without reliance on specific hardware, thus
+    // eliminating the need for a quiet machine.
     run_both_modes([](auto& collector, auto& interactive)
                    {
         (void)collector;
@@ -212,17 +355,51 @@ TEST_CASE("pruning: what a prune costs in name-map walks does not grow with its 
 
         const uint64_t before_small = graph->name_map_scans();
         interactive.process(".prune-nodes A rel small");
-        const uint64_t small = graph->name_map_scans() - before_small;
+        CHECK(graph->name_map_scans() == before_small);
 
         for (int i = 0; i < 20; ++i)
             interactive.process("n" + std::to_string(i) + " rel big");
 
         const uint64_t before_big = graph->name_map_scans();
         interactive.process(".prune-nodes A rel big");
-        const uint64_t big = graph->name_map_scans() - before_big;
+        CHECK(graph->name_map_scans() == before_big);
+        CHECK_THROWS_AS(interactive.process(".node n7"), std::runtime_error); });
+}
 
-        REQUIRE(small > 0); // the counter is wired at all
-        CHECK(big == small); });
+TEST_CASE("pruning: removing the last name of a language erases the language")
+{
+    // A language remains registered as long as either name map knows it, and a
+    // registered language encompasses more than just a line in .stat: when
+    // `wikidata` is registered, it causes every node bearing an `en` name to
+    // display as "Q… - label". Previously, a prune that took the last node
+    // named in a language would leave both maps of that language intact,
+    // though empty, yet still registered.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("alpha rel beta");
+        interactive.process(".name alpha de AlphaDE");
+
+        const auto languages = [&]
+        {
+            collector.clear();
+            interactive.process(".stat");
+            for (const auto& event : collector.events())
+            {
+                const std::string text = normalize(event.text);
+                const auto        pos  = text.find("Languages: ");
+                if (pos != std::string::npos) return std::stoi(text.substr(pos + 11));
+            }
+            return -1;
+        };
+
+        const int before = languages();
+        REQUIRE(before >= 2); // zelph and de
+
+        interactive.process(".prune-nodes A rel beta");
+        CHECK(languages() == before - 1);
+
+        interactive.process(".lang de");
+        CHECK_THROWS_AS(interactive.process(".node AlphaDE"), std::runtime_error); });
 }
 
 TEST_CASE("pruning: .prune-nodes insists on the one variable it deletes by")
@@ -334,6 +511,243 @@ z (a p b) w
         interactive.process("S P O");
         CHECK(answers_contain(collector, "a p b"));
         CHECK(answers_contain(collector, "z (a p b) w")); });
+}
+
+TEST_CASE("cleanup: a fact whose subject is its predicate is not a broken fact")
+{
+    // In `p p b`, a single pair of edges connecting the fact to `p` carries
+    // both its subject and its relation. During the search for a subject, the
+    // zombie scan bypassed the relation, discovered no subject, and purged a
+    // complete fact.
+    SUBCASE("in the session that wrote it")
+    {
+        run_both_modes([](auto& collector, auto& interactive)
+                       {
+            interactive.process("p p b");
+            collector.clear();
+            interactive.process(".cleanup");
+            CHECK(any_output_contains(collector, "Purged 0 zombie facts"));
+
+            collector.clear();
+            interactive.process("S p O");
+            CHECK(answers_contain(collector, "p p b")); });
+    }
+
+    // A network that has been loaded retrieves the fact's structure back
+    // from its edges, which must yield the same answer as the structure the
+    // session stored.
+    SUBCASE("after .save and .load")
+    {
+        const std::filesystem::path out = std::filesystem::temp_directory_path() / "zelph_cleanup_self_predicate.bin";
+        std::filesystem::remove(out);
+
+        zelph::io::OutputCollector  collector;
+        zelph::console::Interactive interactive(collector.sink());
+        interactive.process("p p b");
+        interactive.process(".save " + out.string());
+        interactive.process(".new");
+        interactive.process(".load " + out.string());
+        std::filesystem::remove(out);
+
+        collector.clear();
+        interactive.process(".cleanup");
+        CHECK(any_output_contains(collector, "Purged 0 zombie facts"));
+
+        collector.clear();
+        interactive.process("S p O");
+        CHECK(answers_contain(collector, "p p b"));
+    }
+}
+
+// `.cleanup` removes a predicate that no longer serves as a relation for
+// any fact, and removing its node takes every fact of which the node is a
+// component. A rule is built from facts, thus a predicate node that was
+// solely held by a rule vanished along with the rule -- or the rule lost a
+// part and read as something else.
+TEST_CASE("cleanup: a rule keeps every node it is built from")
+{
+    const auto listed = [](const zelph::console::Interactive& interactive, zelph::io::OutputCollector& collector)
+    {
+        collector.clear();
+        interactive.process(".list-rules");
+        std::string text;
+        for (const auto& e : collector.events())
+            if (e.channel == zelph::io::OutputChannel::Out) text += e.text + "\n";
+        return text;
+    };
+
+    // `x (a p b) y` establishes `(a p b)` as a relation type. After this fact
+    // is pruned, nothing uses `(a p b)` as a relation any more, and only the
+    // rule holds it.
+    const auto check = [&](const std::string& rule, const std::string& expected)
+    {
+        CAPTURE(rule);
+        zelph::io::OutputCollector  collector;
+        zelph::console::Interactive interactive(collector.sink());
+        process_lines(interactive, rule + "\nx (a p b) y\n.prune-facts x (a p b) y\n");
+        const std::string before = listed(interactive, collector);
+        REQUIRE(before.find(expected) != std::string::npos);
+
+        interactive.process(".cleanup");
+        CHECK(listed(interactive, collector) == before);
+    };
+
+    SUBCASE("a condition")
+    {
+        check("(a p b) => (c q d)", "(a p b) => (c q d)");
+    }
+    SUBCASE("a consequence")
+    {
+        check("(c q d) => (a p b)", "(c q d) => (a p b)");
+    }
+    SUBCASE("a member of a condition set")
+    {
+        check("(X go Y, a p b) => (X ok Y)", "(a p b)");
+    }
+    SUBCASE("a statement nested in a condition")
+    {
+        check("((a p b) says Z) => (Z ok yes)", "((a p b) says Z) => (Z ok yes)");
+    }
+    SUBCASE("the operand of a negated condition")
+    {
+        check("(X go Y, ¬(a p b)) => (X ok Y)", "¬(a p b)");
+    }
+    SUBCASE("the operand of a neural condition")
+    {
+        check("(X go Y, ≈knet(a p b)) => (X ok Y)", "≈knet(a p b)");
+    }
+    SUBCASE("the operand of a path condition")
+    {
+        check("((a p b) r⁺ Y) => (Y ok yes)", "((a p b) r⁺ Y)");
+        check("((a p b) r∗ Y) => (Y ok yes)", "((a p b) r∗ Y)");
+    }
+    SUBCASE("a rule another rule derived")
+    {
+        check("(X gen Y) => ((a p b) => (X q Y))\nk gen m", "(a p b) => (k q m)");
+    }
+
+    // The node need not be a statement: `p` functions as a relation type via
+    // `a p b`, and once that fact went, removing `p` turned `(X is p)` into
+    // `(X is X)`, a rule that fires on different data.
+    SUBCASE("an atom the rule names outside the relation")
+    {
+        zelph::io::OutputCollector  collector;
+        zelph::console::Interactive interactive(collector.sink());
+        process_lines(interactive, "(X is p) => (X ok yes)\na p b\n.prune-facts a p b\n");
+        const std::string before = listed(interactive, collector);
+        REQUIRE(before.find("(X is p)") != std::string::npos);
+
+        interactive.process(".cleanup");
+        CHECK(listed(interactive, collector) == before);
+    }
+
+    // The scan does not count `(p p X)` as a use of `p`, since the single
+    // pair of edges to the fact conveys both subject and relation, hence
+    // .cleanup removed `p` and the rule's condition, with no prune applied
+    // beforehand.
+    SUBCASE("a condition whose subject is its relation")
+    {
+        zelph::io::OutputCollector  collector;
+        zelph::console::Interactive interactive(collector.sink());
+        interactive.process("(p p X) => (X ok yes)");
+        const std::string before = listed(interactive, collector);
+
+        interactive.process(".cleanup");
+        CHECK(listed(interactive, collector) == before);
+
+        process_lines(interactive, "p p b\n");
+        collector.clear();
+        interactive.process("S ok O");
+        CHECK(answers_contain(collector, "b ok yes"));
+    }
+
+    // A rule mentioned by a statement constitutes data, not a rule in force,
+    // and the statement keeps its components just as it keeps those of any
+    // other fact.
+    SUBCASE("a rule a statement mentions")
+    {
+        zelph::io::OutputCollector  collector;
+        zelph::console::Interactive interactive(collector.sink());
+        process_lines(interactive, "x says ((a p b) => (c q d))\nu (a p b) v\n.prune-facts u (a p b) v\n.cleanup\n");
+        collector.clear();
+        interactive.process("S says O");
+        CHECK(answers_contain(collector, "x says ((a p b) => (c q d))"));
+    }
+
+    // A rule concerning a predicate that currently has no fact utilizing it:
+    // its condition is a use of the predicate, thus the predicate stays, and
+    // the rule fires upon the first fact.
+    SUBCASE("a rule over a predicate no fact uses yet")
+    {
+        zelph::io::OutputCollector  collector;
+        zelph::console::Interactive interactive(collector.sink());
+        interactive.process("(X p Y) => (X q Y)");
+        const std::string before = listed(interactive, collector);
+
+        interactive.process(".cleanup");
+        CHECK(listed(interactive, collector) == before);
+
+        process_lines(interactive, "a p b\n");
+        collector.clear();
+        interactive.process("S q O");
+        CHECK(answers_contain(collector, "a q b"));
+    }
+}
+
+// The same removal broke data: a fact naming the predicate lost a part,
+// and a statement used as a relation, which constitutes a fact
+// independently, was erased despite being asserted.
+TEST_CASE("cleanup: a predicate a statement still holds is not unused")
+{
+    SUBCASE("a statement about the predicate")
+    {
+        zelph::io::OutputCollector  collector;
+        zelph::console::Interactive interactive(collector.sink());
+        process_lines(interactive, "a p b\np is transitive\n.prune-facts a p b\n.cleanup\n");
+        collector.clear();
+        interactive.process("S is O");
+        CHECK(answers_contain(collector, "p is transitive"));
+    }
+
+    // `x (a p b) y` claims `(a p b)` as well, and the prune leaves that claim.
+    SUBCASE("a statement used as a predicate")
+    {
+        zelph::io::OutputCollector  collector;
+        zelph::console::Interactive interactive(collector.sink());
+        process_lines(interactive, "x (a p b) y\n.prune-facts x (a p b) y\n");
+        collector.clear();
+        interactive.process("S p O");
+        REQUIRE(answers_contain(collector, "a p b"));
+
+        interactive.process(".cleanup");
+        collector.clear();
+        interactive.process("S p O");
+        CHECK(answers_contain(collector, "a p b"));
+    }
+
+    // As in a rule's `(p p X)`, the nested `(r r c)` does not contribute to
+    // the tally of `r` usage, and `r` was eliminated from beneath it.
+    SUBCASE("a nested fact whose subject is its relation")
+    {
+        zelph::io::OutputCollector  collector;
+        zelph::console::Interactive interactive(collector.sink());
+        process_lines(interactive, "x says (r r c)\n.cleanup\n");
+        collector.clear();
+        interactive.process("S says O");
+        CHECK(answers_contain(collector, "x says (r r c)"));
+    }
+
+    // Purpose of the removal: a predicate that had its final fact disappear
+    // and now is held solely by its own declaration.
+    SUBCASE("a predicate nothing holds still goes")
+    {
+        zelph::io::OutputCollector  collector;
+        zelph::console::Interactive interactive(collector.sink());
+        process_lines(interactive, "a p b\n.prune-facts a p b\n");
+        collector.clear();
+        interactive.process(".cleanup");
+        CHECK(any_output_contains(collector, "Removed 1 unused predicates"));
+    }
 }
 
 TEST_CASE("removal: a fact using a composite predicate is not part of it")
@@ -1448,6 +1862,89 @@ a s b
             interactive.process("S p O");
             CHECK(answers_contain(collector, "a p b"));
         }
+    }
+}
+
+// Documented and known behaviour, maintained deliberately. The variable
+// form of `.prune-facts` eliminates the facts it matched and leaves
+// untouched anything that holds them, in contrast to the ground form,
+// which runs the cascade of `remove_node`. A contradiction record is a set
+// holding the facts it pertains to, thus it stays, without the removed
+// fact, and the run that asserting the fact again starts cannot write the
+// record anew: the prior membership continues to occupy its node. The
+// error names that node, and `.remove` with its identifier takes it and
+// the record away. Implementing a cascade in the variable form would
+// change the bulk prune path used to construct the published Wikidata
+// networks; `rules.md` and `.help .prune-facts` describe the behaviour
+// instead.
+TEST_CASE("pruning: the variable form leaves a contradiction record behind")
+{
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+    process_lines(interactive, R"(
+(X p Y, X r Y) => !
+a r b
+a p b
+)");
+
+    // The reference: the ground form takes the record along, and the
+    // contradiction is reported once more.
+    SUBCASE("the ground form takes the record along")
+    {
+        interactive.process(".prune-facts a p b");
+        collector.clear();
+        interactive.process("S in O");
+        CHECK(collect_answers(collector).empty());
+
+        collector.clear();
+        process_lines(interactive, "a p b\n");
+        CHECK(any_event_contains(collector, "Found one or more contradictions"));
+    }
+
+    // The error that asserting the fact once more ends in.
+    const auto assert_again = [&]
+    {
+        try
+        {
+            interactive.process("a p b");
+        }
+        catch (const std::exception& e)
+        {
+            return std::string(e.what());
+        }
+        return std::string();
+    };
+
+    SUBCASE("the variable form leaves the record without the fact")
+    {
+        interactive.process(".prune-facts A p b");
+        collector.clear();
+        interactive.process("S in O");
+        CHECK(answers_contain(collector, "(a r b) in @{(a r b)}"));
+    }
+
+    SUBCASE("asserting the fact again then fails, naming a node")
+    {
+        interactive.process(".prune-facts A p b");
+        CHECK(std::regex_search(assert_again(), std::regex(R"(node [0-9]+ already exists)")));
+    }
+
+    SUBCASE(".remove of that node takes the record, and the contradiction is found anew")
+    {
+        interactive.process(".prune-facts A p b");
+        const std::string error = assert_again();
+        std::smatch       named;
+        REQUIRE(std::regex_search(error, named, std::regex(R"(node ([0-9]+) already exists)")));
+
+        interactive.process(".remove " + named[1].str());
+        collector.clear();
+        interactive.process(".run");
+        CHECK(any_event_contains(collector, "Found one or more contradictions"));
+
+        collector.clear();
+        interactive.process("S in O");
+        CHECK(answers_contain(collector, "(a p b) in {(a p b) (a r b)}"));
+        CHECK_FALSE(answers_contain(collector, "(a r b) in @{(a r b)}"));
     }
 }
 

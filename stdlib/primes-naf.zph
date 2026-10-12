@@ -7,14 +7,14 @@
 # against the complete divisor scan.
 #
 # .strata lists that rule as not stratifiable, together with the whole
-# arithmetic. The analysis compares predicates, and the verdict rule (N
-# testprime N, N isprime N) => ((N testprime N) = prime) creates an = fact,
-# the predicate for each arithmetic result the scan reads, and contains (N
-# testprime N), which starts the scan. Neither can produce a fact upon
-# which the negation relies: the = fact has (N testprime N) as its subject,
-# never one of the arithmetic terms the scan reads, and (N testprime N) is
-# already present, as the rule's own premise. Thus, every hasdivisor fact
-# for N is derived before the negation is tested, and .semi-naive check
+# arithmetic. The analysis does not compare whole patterns, and the verdict
+# rule (N testprime N, N isprime N) => ((N testprime N) = prime) creates an =
+# fact, serving as the predicate for each arithmetic result the scan reads,
+# and contains (N testprime N), which starts the scan. Neither can produce a
+# fact upon which the negation relies: the = fact has (N testprime N) as its
+# subject, never one of the arithmetic terms the scan reads, and (N testprime
+# N) is already present, as the rule's own premise. Thus, every hasdivisor
+# fact for N is derived before the negation is tested, and .semi-naive check
 # verifies it at every execution.
 # 
 # Companion script: primes.zph solves

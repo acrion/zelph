@@ -62,7 +62,7 @@ namespace zelph::console
             "  (from the shell) zelph <script> [args...] – Run a script as a SESSION: exactly as if its lines had been typed. Same resolution, any file name",
             "  .provides <id> [id2 ...]                  – Claim module IDs in the import registry",
 #ifndef __EMSCRIPTEN__
-            "  .load <file>                              – Load a saved network (.bin) or import Wikidata JSON dump (creates .bin cache)",
+            "  .load <file>                              – Replace the network by a saved one (.bin), or add a Wikidata JSON dump (creates .bin cache)",
             "  .load-partial <file|manifest> [...]       – Load selected chunks as a read-only partial view (see .help .load-partial)",
             "  .save <file.bin>                          – Save the current network to a binary file",
             "  .save-predicates <file.bin> <pred> [...]  – Save only the facts of the given predicates (a slice)",
@@ -127,6 +127,7 @@ namespace zelph::console
             "  .semi-naive [on|off|check]                – Show or set the fixpoint evaluation strategy (default: on)",
             "  .fact-stores [on|off]                     – Show or disable the fact-path acceleration stores (memory vs. speed)",
             "  .contradiction-records [on|off]           – Show or disable writing each contradiction into the graph (memory vs. repeated reports)",
+            "  .negation-records [on|off]                – Show or set recording what negations derived, to warn when a later fact defeats one (default: off)",
             "  .explain-budget [<units>|default|unlimited] – Show or set the work .explain may spend on the complete proof under a depth limit (default: 80000)",
             "",
             "Logging & Profiling",
@@ -245,8 +246,10 @@ namespace zelph::console
                       "IS the hash of what it is built from, so every fact built on the one that\n"
                       "disappears is re-created under the id its new components give it, folding\n"
                       "into an equal fact where the graph already holds one. Core nodes are never\n"
-                      "the ones that disappear, and a variable and a non-variable cannot merge at\n"
-                      "all, nor can a collection of a rule's text and any other node.\n"
+                      "the ones that disappear, so two of them cannot merge, and a core node's\n"
+                      "spelling (~, in, nil, ...) names it in every language and is never given\n"
+                      "to another node. A variable and a non-variable cannot merge at all, nor\n"
+                      "can a collection of a rule's text and any other node.\n"
                       "\n"
                       "A name a rule's VARIABLE displays is not in the way: the node takes the\n"
                       "name over, the variable goes on rendering under it, and nothing merges.\n"
@@ -256,7 +259,9 @@ namespace zelph::console
             {".delname", ".delname <node|id> [lang]\n"
                          "Removes the name of the node in the current language (or the specified language if provided).\n"
                          "The <node|id> can be a name (in current language) or numeric node ID.\n"
-                         "If the node had no name in the target language, nothing happens."},
+                         "If the node had no name in the target language, nothing happens.\n"
+                         "A name that other nodes carry as well -- a label several Wikidata items\n"
+                         "share -- then resolves to the one of them that ranks first (see .help .load)."},
 
             {".list", ".list <count>\n"
                       "Lists the first N existing nodes in the network (in internal map iteration order).\n"
@@ -547,13 +552,18 @@ namespace zelph::console
                         "rules of the cycle included, and alternate within their level, which is\n"
                         "sound only when each negation is settled within one positive saturation;\n"
                         ".semi-naive check reports a fact whose negated premise has come to hold.\n"
-                        "The analysis compares predicates, not patterns, so a cycle that only the\n"
-                        "arguments break -- a rule negating (X out 0) that derives (X out 1) --\n"
-                        "is reported as well.\n"
+                        "The analysis compares predicates, each with the object of a pattern\n"
+                        "when that object is a constant: a rule negating (X ~ married) waits for\n"
+                        "the rules deriving (X ~ married) or (X ~ C), not for one deriving\n"
+                        "(X ~ bachelor). It does not compare whole patterns, so a cycle that only\n"
+                        "the subjects break is reported as well: a rule negating\n"
+                        "((A nand B) out 0) that derives out facts, and one reading them that\n"
+                        "derives ((A and B) out V).\n"
                         "A variable in predicate position counts as every predicate, except where\n"
                         "a rule only extends predicates it has read, as (R is transitive, A R B,\n"
                         "B R C) => (A R C) does: whatever derives (R is transitive) is then placed\n"
-                        "before every negation. An inverse or sub-property rule takes its\n"
+                        "before every negation, and objects are not compared while such a rule\n"
+                        "is in force. An inverse or sub-property rule takes its\n"
                         "predicate from an argument and counts as every predicate; written as a\n"
                         "rule that derives rules, it keeps the levels. A rule that derives a rule\n"
                         "counts as deriving what the conclusion of the rule it writes derives, and\n"
@@ -666,10 +676,30 @@ namespace zelph::console
                           "The registry is cleared by .new."},
 #ifndef __EMSCRIPTEN__
             {".load", ".load <file>\n"
-                      "Loads a previously saved network state.\n"
-                      "- If <file> ends with '.bin': loads the serialized network directly (fast).\n"
-                      "- If <file> ends with '.json' or '.json.bz2' (Wikidata dump): imports the data and automatically creates a '.bin' cache file\n"
-                      "  in the same directory for faster future loads."},
+                      "Loads a saved network, or imports a Wikidata dump.\n"
+                      "- If <file> ends with '.bin': the file replaces the session's network.\n"
+                      "  Every node, name, rule and cluster of the session goes, and so does\n"
+                      "  what refers to them: the records of .negation-records, the input focus\n"
+                      "  of .deductions, and what .run-delta seeds from, so the next .run-delta\n"
+                      "  is a full pass.\n"
+                      "- If <file> ends with '.json' or '.json.bz2' (Wikidata dump): imports the\n"
+                      "  data and ADDS it to the session's network, then saves the whole network\n"
+                      "  as a '.bin' cache file in the same directory. While that cache exists,\n"
+                      "  .load of the dump reads the cache instead, and the cache replaces the\n"
+                      "  session's network as a '.bin' does.\n"
+                      "  Every entity is named by its ID in language 'wikidata' and by its\n"
+                      "  English label in 'en', or by its 'mul' label when it has no English\n"
+                      "  one. Every entity keeps its label; a label several entities share\n"
+                      "  resolves to the one that ranks first: a property before an item, then\n"
+                      "  the lowest number. A node named 'wikidata:labels-v2' in language\n"
+                      "  'zelph' says so.\n"
+                      "What is not part of the network stays: Janet definitions and registered\n"
+                      "keywords, the import registry, .lang and the other settings. A Janet value\n"
+                      "that held a node names whatever has its id in the loaded network, or\n"
+                      "nothing. A module imported before the load still counts as imported,\n"
+                      "although what it wrote into the network is gone; .new clears both.\n"
+                      "Auto-run is switched off. A file that fails after its header leaves part\n"
+                      "of it; .new starts over."},
 
             {".load-partial", ".load-partial <file.bin|manifest.json> [selectors...] [options...]\n"
                               "\n"
@@ -774,6 +804,12 @@ namespace zelph::console
                              "what removing that holder takes along -- but nothing a rule is built from;\n"
                              "a holder that is itself part of a rule loses its claim the same way and\n"
                              "stays.\n"
+                             "A matched fact that is no part of a rule goes in the ground form together\n"
+                             "with what holds it, as with .remove; the variable form removes the matched\n"
+                             "facts alone, and what holds one of them stays. A contradiction record\n"
+                             "about such a fact is one: asserting the fact again then fails with an\n"
+                             "error naming a node, '.remove <that id>' takes it and the record away, and\n"
+                             "the next run reports the contradiction anew.\n"
                              "Reports how many matching facts were removed; what went with them is not\n"
                              "counted."},
 
@@ -796,7 +832,9 @@ namespace zelph::console
                              "reading, which is what keeps '.prune-nodes A rel b' the single fact form.\n"
                              "WARNING: This is highly destructive! A deleted node takes everything\n"
                              "it is a PART of with it -- see .help .remove -- including facts and\n"
-                             "rules that have nothing to do with the pattern, and its names.\n"
+                             "rules that have nothing to do with the pattern, and its names. A name\n"
+                             "that surviving nodes carry as well -- a label several Wikidata items\n"
+                             "share -- moves to the one of them that ranks first (see .help .load).\n"
                              "Relation nodes left isolated by the deletion are removed by .cleanup.\n"
                              "Like .prune-facts, it removes CLAIMS only -- see .help .prune-facts.\n"
                              "Reports removed facts and nodes. From 100000 victims upwards it also\n"
@@ -807,16 +845,25 @@ namespace zelph::console
             {".cleanup", ".cleanup\n"
                          "Removes all nodes that have no connections (isolated nodes).\n"
                          "Also cleans up associated entries in name mappings.\n"
+                         "Before that it purges facts that lost a part (zombie facts) and removes\n"
+                         "the relation nodes no fact uses any more -- but none that something else\n"
+                         "still holds: a rule built from it, a statement about it, or the node\n"
+                         "being a statement itself.\n"
                          "The engine's core nodes are exempt: several of them ('!', 'nil',\n"
-                         "'conjunction', 'negation') carry no edges until something uses them."},
+                         "'conjunction', 'negation') carry no edges until something uses them.\n"
+                         "So is the node named 'wikidata:labels-v2' in language 'zelph', which a\n"
+                         "Wikidata import writes to say how it named its entities. A name that\n"
+                         "surviving nodes carry as well moves to the one of them that ranks first\n"
+                         "when its node goes (see .help .load)."},
 
             {".new", ".new\n"
                      "Clears the complete network, including node names. Re-initializes core nodes.\n"
                      "Also clears the import registry, so all scripts can be imported again.\n"
                      "The engine is created anew, so everything it holds returns to its default:\n"
                      "the settings .parallel, .anchors, .semi-naive, .fact-stores,\n"
-                     ".contradiction-records, .explain-budget, .lang, .log and .log-janet, the\n"
-                     "clusters, and every Janet definition. What belongs to the session stays:\n"
+                     ".contradiction-records, .negation-records, .explain-budget, .lang, .log\n"
+                     "and .log-janet, the records of .negation-records, the clusters, and every\n"
+                     "Janet definition. What belongs to the session stays:\n"
                      ".deductions, .auto-run and .timer keep their mode.\n"
                      "A module loaded with .import cannot run it: a module does not clear the\n"
                      "session that loads it. A script run as 'zelph script.zph' can, and its\n"
@@ -1001,6 +1048,38 @@ namespace zelph::console
                                        "  on  – the default\n"
                                        "See also: .run-export, which records every contradiction a run\n"
                                        "encounters whether or not the line was printed."},
+            {".negation-records", ".negation-records [on|off]\n"
+                                  "Shows or sets whether a run warns when a later fact defeats a\n"
+                                  "conclusion drawn under a negated condition. A negation is tested once,\n"
+                                  "against the facts present then, and facts only accumulate: when the\n"
+                                  "fact it found absent arrives later, the conclusion stays, and whatever\n"
+                                  "it blocks is not derived. With records on, every fact that a rule with\n"
+                                  "a negated condition derives is recorded with that rule and its\n"
+                                  "bindings. After each run the records are re-tested as check mode does\n"
+                                  "it (see '.help .semi-naive'), and every fact whose negated premise now\n"
+                                  "holds, and which nothing else derives, is named in a warning beside the\n"
+                                  "rule that derived it. The run succeeds, and the fact stays.\n"
+                                  "The warning names the fact that has lost its support, not what that\n"
+                                  "fact blocks: a conclusion it keeps from being derived is not named, nor\n"
+                                  "is a fact derived from it by a rule without a negation.\n"
+                                  "  (no argument) – show the current state\n"
+                                  "  on  – record and warn. Each such fact costs one record in memory:\n"
+                                  "        72 bytes in an array that grows by doubling, plus 48 per\n"
+                                  "        variable binding. Measured, about 250 bytes for a rule that\n"
+                                  "        binds one variable and about 60 more per further variable, so a\n"
+                                  "        million such facts take roughly 0.25 to 0.4 GB. After every run,\n"
+                                  "        each record whose rule negates a predicate that gained facts\n"
+                                  "        since the last check is tested again, about a microsecond per\n"
+                                  "        record: a million of them add about a second to such a run,\n"
+                                  "        and with auto-run on, to each statement that adds a fact to a\n"
+                                  "        negated predicate. The records are not facts: a saved network\n"
+                                  "        does not hold them, and a .load that replaces the network\n"
+                                  "        discards them while the switch stays on.\n"
+                                  "  off – the default; drops the records, unless check mode, which keeps\n"
+                                  "        them for its own test, is on. Nothing is recorded or re-tested.\n"
+                                  "In check mode the same facts fail the run instead.\n"
+                                  "From Janet, (zelph/negation-records) reads and sets the switch, and\n"
+                                  "(zelph/defeated) returns what the latest run named."},
             {".explain-budget", ".explain-budget [<units>|default|unlimited]\n"
                                 "Shows or sets how much work .explain may spend searching for the\n"
                                 "complete proof under a depth limit before it searches within the\n"

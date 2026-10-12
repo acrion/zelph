@@ -548,9 +548,10 @@ namespace zelph::console
                 {
                     // The stored node is the rule's tag fact, so node_to_string
                     // writes the verbose "((C P279 T) closure one-or-more)" form
-                    // -- the same one .list-rules prints and the same one that
-                    // re-enters as this rule. The bindings turn it into the path
-                    // that was actually walked. [closure] and not [axiom]: nobody
+                    // -- the very fact that a deduction line names as its
+                    // premise, while the rule's text writes the condition as
+                    // "C P279⁺ T". The bindings turn it into the path that was
+                    // actually walked. [closure] and not [axiom]: nobody
                     // asserted the path, the engine walked it, and a proof that
                     // claims otherwise is a category error of exactly the kind a
                     // mathematical reader checks.

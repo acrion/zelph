@@ -249,7 +249,11 @@ extern "C"
 
     /* Load a saved network (.bin) or import a data dump, exactly as the
        .load command does - including format detection and the checks that
-       come with it. */
+       come with it. A stored network takes the place of the graph, and the
+       variables zelph_variable remembered by name are discarded alongside
+       it; a dump is added to the graph. A node or net handle maintained
+       through the load names whatever carries the same identifier
+       afterwards, or nothing. */
     ZELPH_EXPORT int32_t zelph_load(zelph_engine* engine, const char* path);
 
     /* Save the graph, exactly as the .save command does. The path must end

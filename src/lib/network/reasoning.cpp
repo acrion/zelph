@@ -53,6 +53,43 @@ Reasoning::Reasoning(const io::OutputHandler& output)
     , _prof{this}
     , _seminaive_check{default_seminaive_check()}
 {
+    _on_graph_replaced = [this]
+    { forget_graph_state(); };
+}
+
+// All data the engine retains between commands concerning graph node
+// identifiers. Once a load has replaced the graph, those identifiers either
+// refer to the file's nodes or denote nothing. The input focus would serve as
+// the basis for deductions regarding whichever node took an ID the session had
+// typed; the delta record would seed a run using facts no longer present, so
+// it is marked as invalid, and the next .run-delta is a full pass; the
+// negation records, including those from check mode, would report the defeat
+// of a conclusion the loaded graph had never drawn; and the list
+// zelph/defeated returns, the compiled nets, the nets and conditions already
+// reported, and the rules explain() read would all point to the old graph. The
+// settings remain unchanged, with .negation-records included. _nn_pred and its
+// siblings are re-consulted at the start of each run and need nothing here.
+void Reasoning::forget_graph_state()
+{
+    _input_captured.clear();
+    _input_focus.clear();
+    {
+        std::lock_guard<std::mutex> lock(_mtx_delta_since_run);
+        _delta_since_run.clear();
+        _delta_valid = false;
+    }
+    {
+        std::lock_guard<std::mutex> lock(_mtx_negation_records);
+        std::vector<NegationRecord>().swap(_negation_records);
+    }
+    _negating_rules.clear();
+    _check_touched.clear();
+    _check_touched_all = false;
+    _defeated_negations.clear();
+    _nn_cache.clear();
+    _nn_reported.clear();
+    _refused_conditions.clear();
+    _explain_rules.reset();
 }
 
 void Reasoning::set_export_file(const std::string& path)
@@ -282,6 +319,7 @@ void Reasoning::run(const bool print_deductions, const bool export_derivations, 
     _contradiction        = false;
     _total_matches        = 0;
     _total_contradictions = 0;
+    _defeated_negations.clear();
     // Only the summary reads this, and only a non-silent run prints one --
     // which matters, because auto-run calls this per input line and the count
     // is a pass over the whole refuted index.
@@ -306,11 +344,11 @@ void Reasoning::run(const bool print_deductions, const bool export_derivations, 
 
     if (_seminaive && !suppress_repetition)
     {
-        // Check mode re-tests the negations whose predicates have acquired
-        // new facts -- the ones generated directly by the run are collected
-        // by the delta observer, while those created since the previous run
-        // are these.
-        if (_seminaive_check)
+        // A run that keeps negation records re-tests the negations whose
+        // predicates have acquired new facts -- the ones generated directly
+        // by the run are collected by the delta observer, whereas those
+        // created since the previous run are these.
+        if (keeps_negation_records())
         {
             if (!delta_valid) _check_touched_all = true;
             for (const auto& [f, p] : carried)
@@ -322,7 +360,7 @@ void Reasoning::run(const bool print_deductions, const bool export_derivations, 
 
         seminaive_violations = run_fixpoint_seminaive(silent, seed_only ? &carried : nullptr);
 
-        if (_seminaive_check) negations_lost = recheck_negations();
+        if (keeps_negation_records()) negations_lost = recheck_negations();
     }
     else if (suppress_repetition)
     {
@@ -400,6 +438,7 @@ void Reasoning::run(const bool print_deductions, const bool export_derivations, 
             std::vector<bool> negates;
             std::vector<Node> positive_rules;
             std::vector<Node> deferred_rules;
+            if (keeps_negation_records()) _negating_rules.clear();
             for (Node rule : _pImpl->get_left(core.Causes))
             {
                 // A rule that some other statement merely MENTIONS was never
@@ -416,6 +455,14 @@ void Reasoning::run(const bool print_deductions, const bool export_derivations, 
                 (deferred ? deferred_rules : positive_rules).push_back(rule);
                 all_rules.push_back(rule);
                 negates.push_back(deferred);
+
+                // The entries identify the rule based on the parent that
+                // deduce() takes in, as in run_fixpoint_seminaive.
+                if (deferred && keeps_negation_records())
+                {
+                    _negating_rules[rule]      = rule;
+                    _negating_rules[condition] = rule;
+                }
             }
 
             const NegationLevels           stratified = negation_levels(all_rules);
@@ -470,17 +517,26 @@ void Reasoning::run(const bool print_deductions, const bool export_derivations, 
         } while (_pImpl->get_left(core.Causes).size() != rules_before);
 
         _done = false;
+
+        // Nothing here notes which predicates acquired new facts, thus
+        // each record undergoes re-testing.
+        if (keeps_negation_records())
+        {
+            _check_touched_all = true;
+            negations_lost     = recheck_negations();
+        }
     }
 
-    // Check mode re-reads a negation record solely when a predicate its rule
-    // negates has acquired new facts since the last check, and only a
-    // check-mode semi-naive execution logs those predicates. Every other run
-    // -- a .run-once, or a run conducted while check mode is inactive --
-    // accepts incoming facts and those derived during the run without logging
-    // them, causing the subsequent check run to re-test every record. Records
-    // are present exclusively where check mode created them, so this
-    // behaviour incurs no cost outside check mode.
-    if (!_seminaive || suppress_repetition || !_seminaive_check) _check_touched_all = true;
+    // A negation record is re-read solely when a predicate its rule negates
+    // has gained fresh facts since the last check, and only a semi-naive
+    // execution that keeps records logs those predicates. Every other run --
+    // a .run-once, or a run conducted while records are not being kept --
+    // accepts incoming facts and those derived during the run without
+    // recording them, resulting in the subsequent run that re-tests having to
+    // re-test every record. Records exist solely where check mode or
+    // .negation-records created them, hence this behaviour incurs no overhead
+    // elsewhere.
+    if (!_seminaive || suppress_repetition || !keeps_negation_records()) _check_touched_all = true;
 
     if (!silent)
         diagnostic_stream() << "Reasoning complete. Total unification matches processed: " << _total_matches
@@ -560,11 +616,19 @@ void Reasoning::run(const bool print_deductions, const bool export_derivations, 
 
     if (!negations_lost.empty())
     {
-        out_finding("Negation check: " + std::to_string(negations_lost.size())
-                        + " fact(s) no longer justified -- a negated premise they were derived under now holds:",
-                    true);
+        // Outside check mode, the identical list triggers a warning: the
+        // facts remain, and the run completes successfully.
+        const std::string count = std::to_string(negations_lost.size());
+        if (_seminaive_check)
+            out_finding("Negation check: " + count + " fact(s) no longer justified -- a negated premise they were derived under now holds:", true);
+        else
+            out_finding("Warning: " + count + " fact(s) no longer justified -- a negated premise they were derived under now holds, "
+                                              "and nothing else derives them; they stay:",
+                        true);
         for (const NegationRecord& record : negations_lost)
         {
+            _defeated_negations.emplace_back(record.fact, record.rule);
+
             std::string fact_text;
             std::string rule_text;
             string::node_to_string(this, fact_text, _lang, record.fact, 3);
@@ -585,7 +649,7 @@ void Reasoning::run(const bool print_deductions, const bool export_derivations, 
                 + " extra pass(es) after the delta drained. The final graph is complete, but delta "
                   "seeding missed at least one derivation. Please report this rule set at https://github.com/acrion/zelph/issues.";
     }
-    if (!negations_lost.empty())
+    if (!negations_lost.empty() && _seminaive_check)
     {
         // There is no issue with the evaluation strategies presented here --
         // both produce identical facts. What check mode reports is that the
@@ -792,7 +856,7 @@ void Reasoning::end_input_capture()
     // session. Imported scripts never reach this path (imports suspend
     // input capture), and nodes materialized DURING reasoning are never
     // captured at all -- so accumulation cannot degenerate into
-    // everything-is-focused. The set is cleared by .reset and on mode
+    // everything-is-focused. The set is cleared by .new and on mode
     // changes, not per run.
     std::unordered_set<Node> covered;
     for (const Node f : _input_captured)

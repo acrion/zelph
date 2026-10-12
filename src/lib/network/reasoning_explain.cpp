@@ -174,8 +174,8 @@ namespace zelph::network
         // to the graph (Zelph::watch_removals), and a node that has undergone
         // a removal since is re-read; a removal elsewhere imposes no cost,
         // nor does a prune incur any expense for it. `epoch` belongs to the
-        // graph, advancing with every load, one that merges a file into the
-        // session as well (Network::note_load).
+        // graph and advances with every load, each of which replaces it
+        // (Network::note_load).
         struct Source
         {
             Node                                      node{0};

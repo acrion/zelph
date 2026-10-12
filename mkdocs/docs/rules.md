@@ -113,7 +113,7 @@ A contradiction is **reported, not enforced**. The facts that triggered it stay 
 
 What _is_ written is the contradiction itself: the set of the facts that matched, entered as **refuted** – "these statements do not hold together". Nothing is retracted by it. Every member stays asserted and keeps answering queries, including the conjunctive one; the set is the only node created, and a condition that matched no fact, such as an `!=` guard, contributes nothing to it.
 
-That record is what makes a contradiction reported **once**. A set constant is defined by its members, so the same contradiction always yields the same node, and the next run finds it already present – the same way a derived fact remains silent on the second occurrence because the graph holds it. Two consequences worth knowing: the record ceases when the facts it pertains to are removed, so a contradiction emerges as a new discovery if those facts return; and it is indexed upon those facts rather than upon the rule, so two rules contradicting on the same statements report only once between them.
+That record is what makes a contradiction reported **once**. A set constant is defined by its members, so the same contradiction always yields the same node, and the next run finds it already present – the same way a derived fact remains silent on the second occurrence because the graph holds it. Two consequences worth knowing: the record ceases when the facts it pertains to are removed, so a contradiction emerges as a new discovery if those facts return (the variable form of `.prune-facts` is the exception; see [Node Clusters](#node-clusters-transactional-workspaces)); and it is indexed upon those facts rather than upon the rule, so two rules contradicting on the same statements report only once between them.
 
 `.contradiction-records off` turns the record off, and the repetition with it. The cost it trades away is one set node per distinct contradiction, which is six figures on a Wikidata-scale audit.
 
@@ -483,6 +483,33 @@ cluster removes what caused it:
 .cluster-drop demo               # ... and takes it back out again
 ```
 
-(`.prune-facts` on the offending fact does the same job when a cluster is
-too coarse. Either way the record goes with the facts it is about, so the
-same contradiction is a fresh finding if they ever return.)
+Using `.prune-facts` on the offending fact achieves the same job when a cluster is overly coarse, in its ground form, which names that single fact. Either way, the record accompanies the facts it pertains to, so the identical contradiction becomes a new discovery if they ever return.
+
+The variable form fails to carry the record along. `.prune-facts A p b` removes the facts it matches and leaves untouched anything that contains them, with the record being a set that holds them: it remains behind, stripped of the removed fact. Asserting the fact stores it anew, yet the subsequent run is unable to write the record anew – what remains of the prior version occupies its node – and every later run fails the same way so long as the fact persists. `.remove` applied to the node the error names takes both the leftover and the record away, and the contradiction surfaces once more:
+
+```
+zelph> (X p Y, X r Y) => !
+zelph> a r b
+zelph> a p b
+! ⇐ {(a p b) (a r b)}
+Found one or more contradictions!
+zelph> .prune-facts A p b
+Pruned 1 matching facts.
+Consider running .cleanup.
+zelph> S in O
+Answer: (a r b) in @{(a r b)}
+zelph> a p b
+Error in line "a p b": fact(): node 7124081455368737282 already exists, but no
+statement can be read from its edges, and they do not hold "(a p b) in
+@{(a r b)}". A fact's node is the 62-bit hash of its statement, so this is a
+partially loaded view, a damaged file, or two statements whose hashes are
+equal. The statement was not stored.
+zelph> .remove 7124081455368737282
+Removed node 7124081455368737282 and 3 node(s) it was part of (names cleaned).
+Consider running .cleanup afterwards if needed.
+zelph> a p b
+! ⇐ {(a p b) (a r b)}
+Found one or more contradictions!
+```
+
+Dropping a cluster where the contradiction was triggered also eliminates the record, regardless of which form of `.prune-facts` ran within it.

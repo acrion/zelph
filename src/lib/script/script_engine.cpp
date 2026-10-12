@@ -156,6 +156,7 @@ void ScriptEngine::process_janet(const std::string& code, bool is_zelph_ast)
     // statement's.
     Impl::ParsedStatement statement;
     statement.asks = preloaded && _pImpl->has_scoped_variables();
+    if (is_zelph_ast) statement.island_created = std::exchange(_pImpl->_island_created, {});
     const Impl::StatementScope current(_pImpl->_statement, is_zelph_ast ? &statement : nullptr);
 
     // Parser-generated code builds a statement's SUBTERMS using the same
@@ -250,11 +251,14 @@ void ScriptEngine::process_janet(const std::string& code, bool is_zelph_ast)
                 // A query's echo corresponds to its condition, expressed
                 // exactly as it is typed: a negation on its own line prints
                 // as "¬(X p b)", which re-enters as the identical query.
+                // A ground comma list, which asserts each of its members,
+                // echoes back as the very same comma list.
                 const bool asks = _pImpl->has_scoped_variables();
                 if (_pImpl->echo_enabled())
                 {
-                    std::string output;
-                    if (asks)
+                    const network::Zelph* const z = _pImpl->_n;
+                    std::string                 output;
+                    if (asks || z->check_fact(n, z->core.IsA, {z->core.Conjunction}).is_known())
                         string::condition_to_string(_pImpl->_n, output, _pImpl->_n->lang(), n, 3);
                     else
                         string::node_to_string(_pImpl->_n, output, _pImpl->_n->lang(), n, 3);
@@ -382,7 +386,8 @@ network::Node ScriptEngine::evaluate_expression(const std::string& janet_code, c
 
     // A pattern that a command evaluates does not constitute a user's
     // statement, and the mentions within it mark nothing: what they recorded
-    // is discarded.
+    // is discarded, as is the list of what its islands built.
+    _pImpl->_island_created.clear();
     Impl::ParsedStatement      pattern;
     const Impl::StatementScope current(_pImpl->_statement, &pattern);
 
@@ -418,6 +423,11 @@ void ScriptEngine::set_script_args(const std::vector<std::string>& args)
         janet_array_push(jargs, janet_cstringv(arg.c_str()));
     }
     janet_table_put(_pImpl->_janet_env, janet_ckeywordv("args"), janet_wrap_array(jargs));
+}
+
+void ScriptEngine::clear_scoped_variables()
+{
+    _pImpl->clear_scoped_variables();
 }
 
 void ScriptEngine::set_import_handler(ImportHandler handler)
@@ -561,11 +571,15 @@ void ScriptEngine::drop_inline_janet()
 //   - `code` is received devoid of its comments (string::strip_comments),
 //     meaning that a '#' here constitutes part of a name, just as it does
 //     within the grammar.
-bool ScriptEngine::is_zelph_complete(const std::string& code)
+//   - `balanced` reports whether each bracket and quotation mark has a
+//     corresponding closing counterpart.
+static bool looks_complete(const std::string& code, bool& balanced)
 {
     int  depth     = 0;
     bool in_string = false;
     bool escape    = false;
+    bool stray     = false; // a closing bracket without a corresponding opening one
+    balanced       = false;
 
     int         top_tokens      = 0;
     bool        in_top_token    = false;
@@ -619,6 +633,7 @@ bool ScriptEngine::is_zelph_complete(const std::string& code)
         else if (c == ')' || c == '}')
         {
             depth--;
+            if (depth < 0) stray = true;
             if (depth == 0) in_top_token = false;
         }
         else if (is_ws)
@@ -636,7 +651,15 @@ bool ScriptEngine::is_zelph_complete(const std::string& code)
         }
     }
 
-    if (depth != 0 || in_string) return false;
+    // A closing bracket that has no corresponding opening one cannot be
+    // balanced by any subsequent line, so waiting for one caused every
+    // following line to be absorbed: "a p b)" took the next statement into
+    // itself, and the input concluded while still within it. The statement
+    // is complete as it stands, and the parser says what is wrong with it.
+    if (stray) return true;
+
+    balanced = depth == 0 && !in_string;
+    if (!balanced) return false;
     if (top_tokens == 0) return false;
 
     const size_t first_char_idx = code.find_first_not_of(" \t\r\n\v\f");
@@ -725,4 +748,21 @@ bool ScriptEngine::is_zelph_complete(const std::string& code)
         return false;
     }
     return true;
+}
+
+// The scanner tracks chunks separated by whitespace, while the grammar counts
+// values, and a single value may extend across multiple chunks: "<a b>", "¬
+// (a p b)", and "≈net (a p b)" each constitute one value, as does "@{a b}",
+// even though its first character is not among those the scanner looks for.
+// Each of these was treated as the beginning of a statement and SWALLOWED THE
+// NEXT LINE, as a "?" prefix in front of any of them did as well. A text the
+// scanner deems incomplete is thus submitted to the grammar once its brackets
+// and quotation marks are properly closed, with the grammar's interpretation
+// determining completeness (Impl::reads_complete). The scanner continues to
+// serve as the fast path: a line composed of three chunks is considered
+// complete without requiring a parse.
+bool ScriptEngine::is_zelph_complete(const std::string& code) const
+{
+    bool balanced = false;
+    return looks_complete(code, balanced) || (balanced && _pImpl->reads_complete(code));
 }

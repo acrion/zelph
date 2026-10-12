@@ -598,6 +598,25 @@ TEST_CASE("help: .timer is documented and listed with the session commands")
     CHECK(any_output_contains(collector, ".timer keep their mode"));
 }
 
+// The identical four places for an engine setting, which .new returns
+// to its default and whose help names it.
+TEST_CASE("help: .negation-records is documented and listed with the engine settings")
+{
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+    interactive.process(".help .negation-records");
+    CHECK(any_output_contains(collector, ".negation-records [on|off]"));
+    CHECK_FALSE(any_event_contains(collector, "Unknown command"));
+
+    collector.clear();
+    interactive.process(".help");
+    CHECK(any_output_contains(collector, ".negation-records [on|off]"));
+
+    collector.clear();
+    interactive.process(".help .new");
+    CHECK(any_output_contains(collector, ".contradiction-records, .negation-records,"));
+}
+
 // When a statement extends across multiple lines, the terminal displays
 // dots in place of the prompt, ensuring that an unfinished statement no
 // longer appears as if the REPL has frozen. The binary requests this
@@ -732,12 +751,19 @@ TEST_CASE("commands: an argument a command does not take is an error")
         interactive.process(".lang en"); });
 }
 
-TEST_CASE("naming: renaming a node to the name it already has is a no-op")
+TEST_CASE("naming: renaming a node to its own name is a no-op, to another node's name a merge")
 {
     // The uniqueness check did not exclude the node itself, so ".name a a"
     // failed with "Name 'a' is already in use by node 11" -- where node 11
     // is 'a'. An idempotent operation should say so, not complain about
     // the very node it was pointed at.
+    //
+    // This case also pinned that a genuine collision is refused ("already in
+    // use"). Such rejection conflicts with the merge that the documentation
+    // and .help describe, which the route across languages has consistently
+    // carried out, meaning a name currently held by a different node merges
+    // the two within a single language as well (see test_name_merge.cpp), and
+    // the final block verifies the merge.
     run_both_modes([](auto& collector, auto& interactive)
                    {
         interactive.process("a rel x");
@@ -751,11 +777,85 @@ TEST_CASE("naming: renaming a node to the name it already has is a no-op")
         interactive.process("a rel X");
         CHECK(answers_contain(collector, "a rel x"));
 
-        // A genuine collision is still refused.
+        // A real collision merges: `b` disappears into `a`, which
+        // thereafter bears the name `b`.
         interactive.process("b rel y");
-        CHECK_THROWS_WITH_AS(interactive.process(".name a b"),
-                             doctest::Contains("already in use"),
-                             std::runtime_error); });
+        collector.clear();
+        interactive.process(".name a b");
+        CHECK(any_event_contains(collector, "Merging Node"));
+
+        collector.clear();
+        interactive.process("b rel X");
+        CHECK(answers_contain(collector, "b rel x"));
+        CHECK(answers_contain(collector, "b rel y")); });
+}
+
+TEST_CASE("naming: a name that exists only in another language is not reported missing")
+{
+    // `.name <node> <new_name>` checks for the node solely within the current
+    // language. For a node named only in a different language it responded
+    // with "Node 'bob' does not exist" -- sending the user to search for a
+    // typo despite the node being present. The message says where the name is
+    // stored and explains how to reach the node from this location, reserving
+    // "does not exist" for names that are absent in every language.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("bob likes ann");
+        auto* const       z   = interactive.graph();
+        const std::string bob = std::to_string(z->get_node("bob"));
+        interactive.process(".lang en");
+
+        std::string message;
+        try
+        {
+            interactive.process(".name bob robert");
+        }
+        catch (const std::runtime_error& e)
+        {
+            message = e.what();
+        }
+        CHECK(message.find("No node is named 'bob' in the current language 'en'; the name belongs to node " + bob + " in 'zelph'.")
+              != std::string::npos);
+        CHECK(message.find("\".name " + bob + " robert\" names it in 'en'") != std::string::npos);
+        CHECK(message.find("\".name " + bob + " zelph robert\" renames it in 'zelph'") != std::string::npos);
+        CHECK(message.find("\".lang zelph\"") != std::string::npos);
+
+        CHECK_THROWS_WITH_AS(interactive.process(".name nobody robert"),
+                             doctest::Contains("Node 'nobody' does not exist"),
+                             std::runtime_error);
+
+        // Both ways out that the message names function.
+        interactive.process(".name " + bob + " robert");
+        CHECK(z->get_node("robert", "en") == z->get_node("bob", "zelph"));
+        interactive.process(".name " + bob + " zelph rob");
+        CHECK(z->get_node("rob", "zelph") == z->get_node("robert", "en")); });
+}
+
+TEST_CASE("naming: a node created across languages is told apart from a namesake")
+{
+    // Under `.lang en`, the command `.name bob fr robert` results in a NEW
+    // node -- `bob` is designated exclusively within `zelph`, so neither
+    // `bob` nor `robert` appears in the language the command names it in.
+    // The report stated this fact and nothing more, giving the impression
+    // that the name was unattached; the user, intending to refer to the
+    // existing `bob`, only discovered afterwards that there are two of them.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("bob likes ann");
+        const std::string bob = std::to_string(interactive.graph()->get_node("bob"));
+        interactive.process(".lang en");
+
+        collector.clear();
+        interactive.process(".name bob fr robert");
+        CHECK(any_output_contains(collector, "does not exist yet in either language => created it"));
+        CHECK(any_output_contains(collector, "'bob' also names node " + bob + " in 'zelph'; the node created here is a different one."));
+
+        // The report remains unchanged if there is no
+        // namesake.
+        collector.clear();
+        interactive.process(".name carl fr charles");
+        CHECK(any_output_contains(collector, "created it"));
+        CHECK_FALSE(any_output_contains(collector, "also names")); });
 }
 
 TEST_CASE("commands: predicate usage counts uses AS a predicate, not facts about it")

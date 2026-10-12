@@ -27,6 +27,8 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #include "test_helpers.hpp"
 
+#include "network/reasoning.hpp"
+
 using namespace zelph::test;
 
 TEST_CASE("clusters: drop removes cluster-created facts, keeps prior knowledge")
@@ -48,6 +50,36 @@ tmp1 relT tmp2
         collector.clear();
         interactive.process("X relK Y");
         CHECK(answers_contain(collector, "keep1 relK keep2")); });
+}
+
+TEST_CASE("clusters: a dropped cluster walks no name map")
+{
+    // Removing a node previously required traversing the whole reverse name
+    // map to find the entries referencing it, performed once for each node:
+    // on the full Wikidata network, approximately 200 million entries per
+    // node within a dropped cluster. A dry run in a scratch cluster, a
+    // question's cluster, and the scratch drop of zelph/dedup-rule all drop
+    // clusters, thus each incurs a cost proportional to the graph's size.
+    // Removal now reads the node's own names. The counter is independent of
+    // hardware, so this does not require a quiet machine.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        (void)collector;
+        auto* const graph = interactive.graph();
+        REQUIRE(graph != nullptr);
+
+        process_lines(interactive, R"(
+keep1 relK keep2
+.cluster exp
+tmp1 relT tmp2
+tmp3 relT tmp4
+)");
+        const uint64_t before = graph->name_map_scans();
+        interactive.process(".cluster-drop exp");
+        CHECK(graph->name_map_scans() == before);
+        CHECK_THROWS_AS(interactive.process(".node tmp1"), std::runtime_error);
+        CHECK_THROWS_AS(interactive.process(".node tmp4"), std::runtime_error);
+        interactive.process(".node keep1"); });
 }
 
 TEST_CASE("clusters: a node the drop removed is no fallback for .node, .mermaid or .explain")

@@ -349,8 +349,8 @@ TEST_CASE("path condition: a path with a free end is a question and answers one"
 
         interactive.process("S P279⁺ d");
 
-        CHECK(any_output_contains(collector, "(a P279 d) closure one-or-more"));
-        CHECK(any_output_contains(collector, "(c P279 d) closure one-or-more")); });
+        CHECK(answers_contain(collector, "a P279⁺ d"));
+        CHECK(answers_contain(collector, "c P279⁺ d")); });
 }
 
 // In a query, a ground path functions identically to a ground path within a
@@ -510,6 +510,11 @@ namespace
     // rule can bind an end without saying which node it is interested in.
     constexpr const char* kCycle =
         "a ~ cls\nb ~ cls\nc ~ cls\na P279 b\nb P279 a\nc P279 d\n";
+
+    // k carries a single-step loop, m and n form a two-cycle, and each
+    // possesses an anchor (x rel k, y rel m) enabling a rule to bind an end.
+    constexpr const char* kLoop =
+        "k P279 k\nx rel k\nm P279 n\nn P279 m\ny rel m\n";
 } // namespace
 
 // ":pred X" is the self-fact "(X pred X)", and a marker on the predicate token
@@ -562,6 +567,107 @@ TEST_CASE("path condition: the reflexive self-path holds for every node")
 
         interactive.process("S reaches-self O");
         CHECK(collect_answers(collector).size() == 3); });
+}
+
+// A self-referential fact, where the subject equals its object, constitutes a
+// one-step loop, and a one-step loop is a path of length one. The walk that
+// answers a closure on a small graph read such a fact as lacking an object --
+// a self-fact keeps its object within the subject's own entry -- thus,
+// following `k P279 k`, `k P279⁺ T` reached nothing, whereas `k P279∗ T`
+// answered k by its zero steps. The adjacent two-cycle demonstrates that a
+// longer loop back to the start was always read.
+TEST_CASE("path condition: a loop of one step is a path of length one, walked forward and backward")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        feed(interactive, kLoop);
+        collector.clear();
+
+        interactive.process("(X rel S, S P279⁺ T) => (X above T)");
+        CHECK(any_output_contains(collector, "(x above k)"));
+        CHECK(any_output_contains(collector, "(y above m)"));
+        CHECK(any_output_contains(collector, "(y above n)"));
+
+        interactive.process("(X rel T, S P279⁺ T) => (S below X)");
+        CHECK(any_output_contains(collector, "(k below x)"));
+        CHECK(any_output_contains(collector, "(m below y)"));
+        CHECK(any_output_contains(collector, "(n below y)")); });
+}
+
+// When both ends are bound, the condition is the reachability test, and the
+// loop has to pass it: the cycle test `S P279⁺ S` failed to include k, and its
+// negation took k for a node that does not reach itself. w possesses no edge
+// at all, thus the negation holds for it.
+TEST_CASE("path condition: a loop of one step passes the reachability test, and fails its negation")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        feed(interactive, kLoop);
+        interactive.process("z rel w");
+        collector.clear();
+
+        interactive.process("(X rel S, S P279⁺ S) => (X loops S)");
+        CHECK(any_output_contains(collector, "(x loops k)"));
+        CHECK(any_output_contains(collector, "(y loops m)"));
+        CHECK_FALSE(any_output_contains(collector, "(z loops w)"));
+
+        interactive.process("(X rel S, ¬(S P279⁺ S)) => (X acyclic S)");
+        CHECK_FALSE(any_output_contains(collector, "(x acyclic k)"));
+        CHECK_FALSE(any_output_contains(collector, "(y acyclic m)"));
+        CHECK(any_output_contains(collector, "(z acyclic w)")); });
+}
+
+// A query evaluates the identical condition list that a rule evaluates, thus
+// reaches the loop the same way. Asserted by the number of answers, which
+// remains unaffected by the manner in which an answer is printed. With ∗ the
+// loop adds nothing: zero steps and one step reach the same node.
+TEST_CASE("path condition: a query reaches a loop of one step, in both directions")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        feed(interactive, kLoop);
+
+        for (const char* query : {"k P279⁺ X", "X P279⁺ k", "k P279∗ X"})
+        {
+            CAPTURE(query);
+            collector.clear();
+            interactive.process(query);
+            CHECK(collect_answers(collector).size() == 1);
+        }
+
+        collector.clear();
+        interactive.process("X rel Y, k P279⁺ k");
+        CHECK(collect_answers(collector).size() == 2);
+
+        collector.clear();
+        interactive.process("X rel Y, ¬(k P279⁺ k)");
+        CHECK(collect_answers(collector).empty()); });
+}
+
+// A walk that passes through its own predicate node met the predicate's
+// declaration `q ~ ->` on the way. This fact has the predicate as its
+// subject, hence the direct walk read it as an additional step: `q q⁺ X`
+// answered `->` beside z, and a rule over the path derived
+// `(x above ->)`. The index build already distinguished the declaration by
+// its hash.
+TEST_CASE("path condition: a walk through its own predicate node does not step along the predicate's declaration")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("q q z");
+        interactive.process("x rel q");
+
+        collector.clear();
+        interactive.process("q q⁺ X");
+        const std::vector<std::string> answers = collect_answers(collector);
+        CHECK(answers.size() == 1);
+        for (const std::string& answer : answers)
+            CHECK(answer.find("->") == std::string::npos);
+
+        collector.clear();
+        interactive.process("(R rel S, S q⁺ T) => (R above T)");
+        CHECK(any_output_contains(collector, "(x above z)"));
+        CHECK_FALSE(any_output_contains(collector, "(x above ->)")); });
 }
 
 TEST_CASE("path condition: a ground self-path outside a rule is refused")
@@ -832,4 +938,21 @@ TEST_CASE("path condition: .explain marks a zero-step path as walked too")
         collector.clear();
         interactive.process(".explain (x reaches d)");
         CHECK(any_output_contains(collector, "(a P279 d) closure zero-or-more  [closure]")); });
+}
+
+// `.explain` reconstructs the walk a path condition followed. Around a loop of
+// one step, that walk amounts to a single fact, where both the subject and the
+// object correspond to the starting point of the walk.
+TEST_CASE("path condition: .explain reconstructs a walk around a loop of one step")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        feed(interactive, kLoop);
+        interactive.process("(X rel S, S P279⁺ T) => (X above T)");
+
+        collector.clear();
+        interactive.process(".explain (x above k)");
+        CHECK_FALSE(any_output_contains(collector, "no derivation found"));
+        CHECK(any_output_contains(collector, "x rel k  [axiom]"));
+        CHECK(any_output_contains(collector, "[closure]")); });
 }

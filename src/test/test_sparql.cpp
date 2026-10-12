@@ -426,6 +426,32 @@ TEST_CASE("sparql: transitive path + with bound object (backward closure)")
         CHECK(any_output_contains(collector, "-- 3 result(s) --")); });
 }
 
+// SPARQL's `p+` walks the same closure as the `⁺` in a path condition,
+// meaning a single-step loop constitutes a path of length one in that context
+// too: `Q7 P279 Q7` situates Q7 within its own `P279+` closure, in either
+// direction and with both ends open.
+TEST_CASE("sparql: a loop of one step is a path of length one")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        load_sparql(interactive);
+        process_lines(interactive, R"(
+    .lang wikidata
+    Q7 P279 Q7
+    )");
+
+        for (const char* query : {"SELECT ?c WHERE { wd:Q7 wdt:P279+ ?c . }",
+                                  "SELECT ?i WHERE { ?i wdt:P279+ wd:Q7 . }",
+                                  "SELECT ?a ?b WHERE { ?a wdt:P279+ ?b . }"})
+        {
+            CAPTURE(query);
+            collector.clear();
+            run_sparql(interactive, query);
+            CHECK(any_output_contains(collector, "Q7"));
+            CHECK(any_output_contains(collector, "-- 1 result(s) --"));
+        } });
+}
+
 TEST_CASE("sparql: reflexive path * with bound object (example query 8)")
 {
     // ?i wdt:P279* wd:Q24027515 - the "sixth-order classes" query shape.

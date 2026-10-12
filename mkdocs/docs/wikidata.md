@@ -218,14 +218,37 @@ or directly the resuling bin file:
 .load download/wikidata-20250127-all.bin
 ```
 
+When a dump is imported, the session’s current network gains the data, combining any entity encountered twice through its Wikidata ID, and subsequently stores the whole network as a `.bin` cache. A `.bin` file, including the cache, supersedes the session’s network: after the cache is present, loading the dump via `.load` retrieves it, and the network becomes the one preserved in the cache.
+
 You can download various zelph `.bin` files directly from [Hugging Face](https://huggingface.co/datasets/acrion/zelph).
 
-Each imported entity is named twice: by its ID (`Q5`, `P279`) in the `wikidata`
-language and by its English label in the `en` language. The dump writes labels
-with JSON escapes (`B\u00fcdner`), which the import decodes, so the node is
-named `Büdner` and can be found under that name. A `.bin` file written by a
-zelph older than 1.0.0 stores the undecoded form instead; re-import the dump if
-you need the labels themselves rather than only the IDs.
+Every entity imported bears two names: its identifier (`Q5`, `P279`) in the `wikidata` language and its English label in the `en` language. An entity missing an English label is named using its `mul` label, the one Wikidata keeps for a term consistent across all languages; Douglas Adams (Q42) possesses solely this one. The dump writes labels with JSON escapes (`B\u00fcdner`), which the import process decodes, resulting in the node being named `Büdner` and searchable under that name. A `.bin` file written by a zelph version prior to 1.0.0 retains the undecoded form; re-import the dump if you need the labels themselves rather than just the IDs.
+
+### Labels that several entities share
+
+Many entities have the same label. "man" refers to the adult male (Q8441), yet also denotes the Unix command used to display manual pages (Q709369) and a genetic element in the fruit fly (Q29719014), with over a hundred entries bearing the label "Berlin". Each of these items carries the label as its `en` name, and the name resolves to the entity ranked first: a property preceding an item, followed by the smallest numerical value. The ranking is determined solely by the IDs, meaning the order in which the dump lists the entities is irrelevant.
+
+When a removal takes the entity a shared label resolves to, the label shifts to the subsequent entity in the sequence. This applies to `.prune-nodes`, to `.cleanup` acting on an entity that `.prune-facts` has left devoid of facts, to `.remove`, and to `.delname`. The published networks are cut in this manner, advancing one step per process, and a load finds the carriers of a label by referencing the names contained within the file. A `.load-partial` that omits certain name chunks is unable to identify all of them.
+
+A transcript on a dump comprising seven lines, `man.json`: the three entries marked "man", the items "human" (Q5) and "software" (Q7397), and the properties "subclass of" (P279) and "instance of" (P31). Only Q8441 and Q709369 carry a statement in this context. Following `.load man.json`:
+
+```
+zelph-> .lang en
+en-> man "subclass of" X
+Answer: "Q8441 - man" "P279 - subclass of" "Q5 - human"
+en-> man "instance of" X
+en-> .lang wikidata
+wikidata-> .prune-nodes A P279 Q5
+Pruned 3 matching facts and 1 nodes.
+Consider running .cleanup.
+wikidata-> .lang en
+en-> man "instance of" X
+Answer: "Q709369 - man" "P31 - instance of" "Q7397 - software"
+```
+
+The term "man" resolved to Q8441, which lacks any "instance of" statement; after the prune removed Q8441, the resolution shifts to Q709369.
+
+The import writes a node titled `wikidata:labels-v2` within the `zelph` language to indicate how its labels were allocated. `.cleanup` retains this node even though no references point to it, and `.save-predicates` takes it into the slice. A network lacking this node was imported by an older version of zelph: in that case, a shared label is assigned to whichever entity the import processed last, leaving the other entities with that label without an English name, and an entity whose sole label resides under `mul` possesses no English name either.
 
 ### Advanced Commands
 

@@ -522,6 +522,12 @@ A program can initiate threads independently using `ev/thread`, `ev/spawn-thread
 - **`(zelph/run-delta)`**  
   Run inference seeded by the facts created since the previous run, exactly like the `.run-delta` command. Returns `nil`. Main thread only. Rejected when a rule is under construction. See [Reasoning incrementally](#reasoning-incrementally).
 
+- **`(zelph/defeated)`**  
+  Returns the facts that the most recent execution determined to be no longer justified, presented as an array of `[fact rule]` tuples. Each fact was derived by its rule under a negated condition, the very pattern that the condition negates now holds, and nothing else derives the fact. These are the facts that the run’s warning identifies when `.negation-records` is active, or that its error names in check mode (refer to [Stratified Evaluation](logic.md#stratified-evaluation)). They remain within the graph. Following a run that identifies nothing, the array is empty, and a load that replaces the graph also empties it. In a session, a Janet line accesses this list before the auto-run triggered after the line, which constitutes an independent run. Main thread only.
+
+- **`(zelph/negation-records &opt on)`**  
+  Fetches the current state of the `.negation-records` switch, or sets it to `true` or `false` to control whether a run logs every fact that a rule with a negated condition produces – enabling later runs to reference the facts whose negated condition has become satisfied. Returns the resulting state; if no argument is provided, no modification occurs. Any input other than a boolean is rejected, meaning that the string `"off"` does not activate the records merely by being truthy. Off by default, as each record consumes memory (refer to [Stratified Evaluation](logic.md#stratified-evaluation)); switching it off drops the records, unless check mode keeps them. This switch is a session-level configuration: when a load replaces the graph, the setting persists but the records are discarded, as they refer to the nodes of the replaced graph. Available only in the main thread.
+
 Auto-run is tied to _processing an input line_: it fires after a statement, and after a Janet block closes. Code that only calls the Janet API — a program driving zelph as a library, or a long-running script that keeps asserting facts between queries — never triggers it, and so has to run the engine itself.
 
 Given this script:
@@ -609,6 +615,23 @@ Two kinds of rule continue to be evaluated classically during a seeded run, with
 
 Using `.import math`, the simplifier’s identity fallback `(T red C, ¬(T rw S)) => (T simp C)` functions as such a rule, meaning that during a seeded run within a `math` session, every reduced term is still examined.
 
+#### Negation levels
+
+- **`(zelph/strata)`**  
+  The [negation levels](logic.md#stratified-evaluation) of the rules currently active, as revealed by `.strata`, without running anything. Returns an array containing one table for each rule, arranged in no specific sequence: `:rule` denotes the rule node, `:level` indicates its negation level, indexed starting at 1 just as `.strata` does, and omitted for rules lacking a negated condition, `:component` assigns a shared identifier to all rules within a single strongly connected component, and `:stratifiable` is set to `false` for any rule within a component that negates what it derives. A program that writes rules can therefore allow the engine to decide whether a valid ordering exists, while the engine also considers every other rule in force. Available only on the main thread.
+
+The first two rules below create a loop involving a negation – a bachelor wearing a ring is considered married, which the first rule negates – thus both report `stratifiable false`; the third waits for them at level 2:
+
+```
+zelph> (X ~ man, ¬(X ~ married)) => (X ~ bachelor)
+zelph> (X ~ bachelor, X wears ring) => (X ~ married)
+zelph> (X ~ man, ¬(X ~ bachelor)) => (X ~ husband)
+zelph> %(each e (zelph/strata) (zelph/out (string (e :rule) " -- level " (or (e :level) "none") ", stratifiable " (e :stratifiable))))
+(¬(X ~ bachelor), (X ~ man)) => (X ~ husband) -- level 2, stratifiable true
+((X wears ring), (X ~ bachelor)) => (X ~ married) -- level none, stratifiable false
+(¬(X ~ married), (X ~ man)) => (X ~ bachelor) -- level 1, stratifiable false
+```
+
 #### Scoped work: clusters
 
 Apart from clusters, the Janet API does not eliminate anything: the graph expands exclusively. A program that asserts a fact base, reasons about it, and reads the conclusions cannot take the fact base out again, thus every question it ever poses remains – and the pattern "one fact base per document, per position, per request" accumulates without bound.
@@ -637,7 +660,7 @@ The scratch-space pattern, which is what makes assert–reason–read–discard 
 
 Unlike `.cluster` and `.cluster-drop`, these print nothing. That is deliberate: a caller that scopes one question per iteration of its own loop invokes them thousands of times, and the commands' status lines would be noise on the caller's own output channel rather than information. The return values carry what a program actually wants to know.
 
-Clusters are session state and are not persisted by `zelph/save`.
+Clusters are session state and are not persisted by `zelph/save`, and a load that replaces the graph forgets them all.
 
 #### Persistence
 
@@ -645,10 +668,10 @@ Clusters are session state and are not persisted by `zelph/save`.
   Save the current network to a binary file, exactly like the `.save` command. The filename must end with `.bin`. Returns `nil`. Main thread only. Blocked during rule construction.
 
 - **`(zelph/load file)`**  
-  Load a previously saved network state, exactly like the `.load` command:
-  - If `file` ends with `.bin`, the serialized network is loaded directly (fast).
-  - If `file` ends with `.json` or `.json.bz2` (Wikidata dump), the data is imported and a `.bin` cache file is created in the same directory for faster future loads.  
-    In the interactive REPL, loading disables auto-run (large datasets). Inside a module (`.import`) auto-run is already suspended for the duration of the load and restored afterwards. A script named on the command line is a session, so there `.load` disables auto-run exactly as it does in the REPL — see [Scripts and Modules](modules.md). Returns `nil`. Main thread only. Rejected when a rule is currently under construction.
+  Load a previously saved network, or import a dump, in the same manner as the `.load` command:
+  - When `file` has the extension `.bin`, the saved network replaces the graph (rapid): all nodes, names, rules, and clusters are removed, along with anything that refers to them, including negation records and the data that `zelph/run-delta` relies on.
+  - When `file` ends in `.json` or `.json.bz2` (a Wikidata dump), the data is brought in and merged into the graph, and the resulting graph is saved as a `.bin` cache file in the same directory. As long as this cache persists, subsequent loads of the dump will read from the cache, which functions equivalently to a `.bin` file in replacing the graph.  
+    The Janet environment remains unchanged, as do registered keywords and the import registry. A Janet value that referred to a node before the load is not refreshed: it points to whatever entity has the same ID in the newly loaded graph, or to nothing, and a variable previously named by a symbol like `'X` within the same block becomes a new one after the load. In the interactive REPL, loading disables auto-run (large datasets). Inside a module (`.import`) auto-run is already suspended for the duration of the load and restored afterwards. A script named on the command line is a session, so there `.load` disables auto-run exactly as it does in the REPL — see [Scripts and Modules](modules.md). Returns `nil`. Main thread only. Rejected when a rule is currently under construction.
 
 #### Neural network functions
 
@@ -749,7 +772,7 @@ whole subtree is expressible in it; otherwise the default rendering is used.
   verbose. Registered predicates always render as `S P S`. The registration
   is **additive** across calls, so stacked modules can each register their
   own operators; it affects display only — `:+ &1` remains valid _input_ —
-  and is session state like the digit alphabet (cleared by `.reset`, not
+  and is session state like the digit alphabet (cleared by `.new`, not
   persisted). The arithmetic modules register their operators (`+`, `-`,
   `d+`, ...), `stdlib/eml.zph` registers `eml`. Main thread only.
 
@@ -1285,7 +1308,7 @@ The previously stated rules are universally applicable (they work on any list, n
 
 This is the mechanism behind zelph's [SPARQL support](sparql.md): the `sparql` keyword is an ordinary registered handler, not a built-in.
 
-`zelph/register-keyword` features a second, three-argument variant tailored for **inline keywords** ("expression islands"): `(zelph/register-keyword open close handler)`. Each time `open` surfaces within a zelph statement (outside quoted atoms and comments), the segment up to `close`, with zelph comments already removed, is passed to `handler`, which must return a `zelph/node`; this node then replaces the island within the statement and can therefore occupy any position requiring a value – subjects, objects, nested facts, rule conditions, or consequences. Should the handler return `:incomplete`, the island extends to the subsequent `close`, enabling nested delimiters within the island's syntax to function intuitively; handlers must refrain from constructing graph structure until they have accepted their input. zelph's comment convention governs the entire statement, including the island's content: a `#` positioned at the start of a line or following a space or tab starts a comment extending to the line's end, thus preventing island grammars from employing such `#`; a `#` embedded within a token (`x#y`) or within a quoted atom reaches the handler unaltered. Variables created within an island share the scope of the enclosing statement. This is the host mechanism behind the stdlib's term islands (`$( ... )`), whose syntax is defined by a standard Janet PEG located in a `.zph` module – the language evolves through scripts, not via C++ extensions.
+`zelph/register-keyword` features a second, three-argument variant tailored for **inline keywords** ("expression islands"): `(zelph/register-keyword open close handler)`. Each time `open` surfaces within a zelph statement (outside quoted atoms and comments), the segment up to `close`, with zelph comments already removed, is passed to `handler`, which must return a `zelph/node`; this node then replaces the island within the statement and can therefore occupy any position requiring a value – subjects, objects, nested facts, rule conditions, or consequences. Should the handler return `:incomplete`, the island extends to the subsequent `close`, enabling nested delimiters within the island's syntax to function intuitively; handlers must refrain from constructing graph structure until they have accepted their input. zelph's comment convention governs the entire statement, including the island's content: a `#` positioned at the start of a line or following a space or tab starts a comment extending to the line's end, thus preventing island grammars from employing such `#`; a `#` embedded within a token (`x#y`) or within a quoted atom reaches the handler unaltered. Variables created within an island share the scope of the enclosing statement. The components that the islands of a statement construct are considered constructed by that statement: a ground term constructed within a rule by an island, or located under a condition operator in a query, functions as a pattern, as the rest of what is written there does, while a line rejected by the parser retains none of the constructions its islands built. This is the host mechanism behind the stdlib's term islands (`$( ... )`), whose syntax is defined by a standard Janet PEG located in a `.zph` module – the language evolves through scripts, not via C++ extensions.
 
 ## Summary: zelph Syntax and Janet Equivalents
 
@@ -1318,6 +1341,8 @@ This is the mechanism behind zelph's [SPARQL support](sparql.md): the `sparql` k
 | `.run`                          | `(zelph/run)`                                       | Run forward chaining to a fixed point                                       |
 | `.run-once`                     | `(zelph/run-once)`                                  | Run a single inference pass                                                 |
 | `.run-delta`                    | `(zelph/run-delta)`                                 | Run inference seeded only by the facts added since the last run             |
+| `.strata`                       | `(zelph/strata)`                                    | Array of negation levels for the rules, with a single table dedicated to each rule |
+| `.negation-records on`          | `(zelph/negation-records true)`                     | Switch the negation records on; without an argument, read the switch        |
 | `.cluster <name>`               | `(zelph/cluster "name")`                            | Activate a cluster; returns the active name, or `nil` for the default       |
 | `.cluster-drop <name>`          | `(zelph/cluster-drop "name")`                       | Roll back everything created in the cluster; returns the node count removed |
 | `.cluster` (listing)            | `(zelph/clusters)`                                  | Array of `[name node-count]` tuples                                         |

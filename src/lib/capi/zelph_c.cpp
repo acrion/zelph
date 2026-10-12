@@ -480,10 +480,18 @@ int32_t zelph_load(zelph_engine* engine, const char* path)
 
     if (const int32_t refused = require_owner(engine, "zelph_load"); refused != ZELPH_OK) return refused;
 
-    return guarded([&]
-                   {
+    // A network file replaces the graph, and the identifier of a variable
+    // remembered by name subsequently belongs to the graph that was loaded:
+    // the variable counter from the file reassigns it, causing two names to
+    // reference the same variable. A dump imported without a cache extends the
+    // graph, so only a load that advanced the epoch forgets them.
+    const std::uint64_t epoch  = engine->interactive.graph()->graph_epoch();
+    const int32_t       status = guarded([&]
+                                         {
         engine->interactive.execute_command({".load", path});
         return succeed(); });
+    if (engine->interactive.graph()->graph_epoch() != epoch) engine->variables.clear();
+    return status;
 }
 
 int32_t zelph_save(zelph_engine* engine, const char* path)

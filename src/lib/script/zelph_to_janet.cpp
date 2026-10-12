@@ -255,10 +255,54 @@ namespace zelph
         return true;
     }
 
+    // The rules that a value mentions, each one positioned where it
+    // appears: what resides within a rule is its own (a rule generator's
+    // inner rule among them).
+    static void mentioned_rules(Janet node, std::vector<Janet>& rules)
+    {
+        const Janet* data;
+        int32_t      len;
+        if (!janet_indexed_view(node, &data, &len) || len < 1) return;
+        if (!janet_checktype(data[0], JANET_KEYWORD)) return;
+
+        const std::string type = reinterpret_cast<const char*>(janet_unwrap_keyword(data[0]));
+        if ((type == "nested" || type == "condition") && len > 3 && is_atom(data[2], "=>"))
+        {
+            rules.push_back(node);
+            return;
+        }
+
+        for (int32_t i = 1; i < len; ++i)
+            mentioned_rules(data[i], rules);
+    }
+
     std::string ScriptEngine::parse_zelph_to_janet(const std::string& input, const bool pattern) const
     {
-        const std::string expanded = _pImpl->expand_inline_keywords(input);
+        // The islands are expanded first, so what they construct exists
+        // before the parser's decision about the line; this construction is
+        // retained solely for a line that the parser accepts
+        // (Impl::end_island_recording).
+        //
+        // A handler that parses a statement of its own does so inside the
+        // recording associated with the line its island belongs to, and
+        // leaves the decision to the parse that opened it.
+        const bool  outer = !_pImpl->_island_recording;
+        std::string code;
+        try
+        {
+            code = transform_statement(_pImpl->expand_inline_keywords(input), pattern);
+        }
+        catch (...)
+        {
+            if (outer) _pImpl->end_island_recording(false);
+            throw;
+        }
+        if (outer) _pImpl->end_island_recording(!code.empty());
+        return code;
+    }
 
+    std::string ScriptEngine::transform_statement(const std::string& expanded, const bool pattern) const
+    {
         JanetSymbol      match_sym = janet_csymbol("zelph-safe-parse");
         Janet            match_fun_out;
         JanetBindingType bt = janet_resolve(_pImpl->_janet_env, match_sym, &match_fun_out);
@@ -386,14 +430,186 @@ namespace zelph
             }
         };
 
-        const auto refuse_in_mention = [](const NestedOp op)
+        // An operator within a rule that a rule holds as an argument --
+        // "(Z says ((X p Y, ¬(X q Y)) => (X r Y))) => (Z ok k)". A statement
+        // or a query can mention that rule with its operators; a rule
+        // matches it (in a condition) or writes it (in a consequence) as a
+        // pattern, and the sugar is not read there. Typically the operator
+        // stands at the top of a condition of the rule that is held, where
+        // it belongs, thus "applies to a whole condition" named a mistake
+        // the line did not make. The written-out spelling is accepted
+        // there: it is the node the sugar builds, and the one a mention
+        // prints.
+        const auto refuse_in_held_rule = [](const NestedOp op, const bool in_condition)
         {
             if (op == NestedOp::None) return;
-            const std::string name = op == NestedOp::Negation ? "\"¬\""
-                                   : op == NestedOp::Approx   ? "\"≈\""
-                                                              : "\"⁺\" or \"∗\"";
-            throw std::runtime_error(name + " stands inside a rule that this line mentions, and condition operators in a "
-                                            "mentioned rule are not supported. Write the rule on a line of its own.");
+
+            const std::string role = in_condition ? "matches" : "writes";
+            std::string       ops;
+            std::string       mention;
+            std::string       written;
+            switch (op)
+            {
+            case NestedOp::Negation:
+                ops     = "\"¬\" inside it is";
+                mention = "\"x about ((X p Y, ¬(X q Y)) => (X r Y))\"";
+                written = "write the condition as the fact \"¬\" builds, \"((P) ~ negation)\" for \"¬(P)\"";
+                break;
+            case NestedOp::Approx:
+                ops     = "\"≈\" inside it is";
+                mention = "\"x about ((X p Y, ≈net(X q Y)) => (X r Y))\"";
+                written = "write the condition as the fact \"≈\" builds, \"((P) nn net)\" for \"≈net(P)\"";
+                break;
+            case NestedOp::Path:
+                ops     = "\"⁺\" and \"∗\" inside it are";
+                mention = "\"x about ((X p⁺ Y) => (X r Y))\"";
+                written = "write the condition as the fact \"⁺\" or \"∗\" builds, \"((S p O) closure one-or-more)\" for "
+                          "\"S p⁺ O\" and \"((S p O) closure zero-or-more)\" for \"S p∗ O\"";
+                break;
+            case NestedOp::None:
+                break;
+            }
+            throw std::runtime_error("A rule that a rule holds as an argument is a pattern the outer rule " + role + ", and " + ops
+                                     + " not supported there. A plain statement or a query may mention such a rule -- "
+                                     + mention + ". Inside a rule, " + written + ", which is the spelling such a mention prints.");
+        };
+
+        // The slots of a rule, interpreted identically regardless of where
+        // the rule appears: typed on a line of its own, or mentioned by
+        // another statement (refuse_in_mentions).
+        //
+        // `¬` is a CONDITION operator. As a consequence it used to be
+        // ignored outright: "(A p B) => ¬(A q B)" derived (x q y) -- the
+        // exact opposite of what the rule says, without a word. What a
+        // derived negation should mean is a separate question (zelph can
+        // hold a fact as known-wrong, via the probability argument of
+        // fact()); until it is answered, saying so beats guessing.
+        const auto refuse_rule_slots = [&](const std::vector<Janet>& fact_args)
+        {
+            for (std::size_t i = 2; i < fact_args.size(); ++i)
+            {
+                if (is_negation_ast(fact_args[i]))
+                    throw std::runtime_error(
+                        "\"¬\" is a condition operator and has no meaning as a consequence: "
+                        "a rule derives what holds, not what does not. To say that the two "
+                        "may not hold together, write a contradiction rule -- "
+                        "\"(A p B, A q B) => !\".");
+
+                // The other two condition operators reached the consequence
+                // slot unchecked and each failed its own way: a path
+                // consequence was listed by .list-rules and derived nothing
+                // at all, and both would have written their tag fact -- and
+                // with it the one-step fact underneath it -- into the graph
+                // as a claim nobody made.
+                if (Impl::is_path_ast(fact_args[i]))
+                    throw std::runtime_error(
+                        "\"⁺\" and \"∗\" are condition operators and have no meaning as a "
+                        "consequence: reachability is what the engine WALKS, not what a rule "
+                        "asserts. Derive the one-step fact instead, and let the path condition "
+                        "read it.");
+
+                if (is_approx_ast(fact_args[i]))
+                    throw std::runtime_error(
+                        "\"≈\" is a condition operator and has no meaning as a consequence: "
+                        "a rule cannot assert what a network believes. Consult the net in a "
+                        "condition and derive an ordinary fact from it.");
+
+                // Expressed as the fact it builds, each of the three
+                // refers to the identical node, and when derived it
+                // asserted what that node concerns: "(A p B) => ((A q
+                // B) ~ negation)" derived `a q b`, the precise fact it
+                // says is absent, and one argument lower "(A p B) =>
+                // (x says ((A q B) ~ negation))" performed the same
+                // action.
+                switch (_pImpl->written_out_condition_op(fact_args[i]))
+                {
+                case NestedOp::Negation:
+                    throw std::runtime_error(
+                        "\"((P) ~ negation)\" is the condition \"¬(P)\" written out, and has no meaning in a "
+                        "consequence either: a rule derives what holds, not what does not, and deriving "
+                        "this fact would claim P. To say that the two may not hold together, write a "
+                        "contradiction rule -- \"(A p B, A q B) => !\".");
+                case NestedOp::Path:
+                    throw std::runtime_error(
+                        "\"((S p O) closure one-or-more)\" is the condition \"S p⁺ O\" written out "
+                        "(\"zero-or-more\" is \"S p∗ O\"), and has no meaning in a consequence either: "
+                        "reachability is what the engine WALKS, and deriving this fact would claim the one "
+                        "step S p O. Derive the one-step fact instead, and let the path condition read it.");
+                case NestedOp::Approx:
+                    throw std::runtime_error(
+                        "\"((P) nn net)\" is the condition \"≈net(P)\" written out, and has no meaning in a "
+                        "consequence either: a rule cannot assert what a network believes, and deriving "
+                        "this fact would claim P. Consult the net in a condition and derive an ordinary "
+                        "fact from it.");
+                case NestedOp::None:
+                    break;
+                }
+            }
+
+            // The three above ask about the top of a slot, which is where
+            // an operator belongs and therefore the only place anyone
+            // thought to look. One argument further in it was neither read
+            // nor reported: the rule was built without it and printed back
+            // without it. Both slots are walked now -- a condition keeps
+            // its own operator layers, everything under them and the whole
+            // of a consequence keeps none. A nested "=>" opens its slots
+            // again, so a rule generator's inner rule is untouched.
+            for (std::size_t i = 0; i < fact_args.size(); ++i)
+            {
+                if (i == 1) continue; // the arrow
+
+                // A slot of a rule is a statement, and the AST says which
+                // slot this is -- so a fragment too short to be one is
+                // named by its role rather than by its position in a
+                // generated call. Only a `(...)` group is checked here: a
+                // comma list carries its own conditions and names them
+                // one by one, and a bare atom in a slot is a different
+                // mistake with a message of its own.
+                if (const int vals = script::nested_value_count(fact_args[i]); vals >= 0 && vals < 3)
+                {
+                    const Janet* slot_data;
+                    int32_t      slot_len;
+                    if (janet_indexed_view(fact_args[i], &slot_data, &slot_len) && slot_len >= 2)
+                    {
+                        std::vector<Janet> slot_args;
+                        for (int32_t j = 1; j < slot_len; ++j)
+                            slot_args.push_back(slot_data[j]);
+                        // One value in parentheses is plain grouping --
+                        // "(:isprime N)" is a whole statement -- so only
+                        // two of them are short.
+                        if (slot_args.size() == 2)
+                            script::refuse_short_statement(i == 0 ? "the condition" : "the consequence", slot_args);
+                    }
+                }
+
+                // An operator placed incorrectly within the rule's own slots
+                // is reported accordingly; one that stands solely inside a
+                // rule the slot holds as an argument has a reason of its own.
+                refuse_misplaced(Impl::misplaced_condition_op(fact_args[i], i == 0, false, true));
+                refuse_in_held_rule(Impl::misplaced_condition_op(fact_args[i], i == 0), i == 0);
+            }
+        };
+
+        // A rule that a line mentions -- "x about ((X p Y, ¬(X q Y)) => (X r
+        // Y))" -- features the same slots as any other rule: an operator
+        // must reside at the top of one of its conditions and is rejected
+        // elsewhere, just as in a typed rule. Mentioning the rule does not
+        // put it in force; instead, it is recorded as data, with its ground
+        // parts serving as patterns (zelph/rule-text). Previously, it was
+        // outright rejected, even though the inner rule within a rule
+        // generator accepted the operator, and a set holding the rule
+        // accepted it anywhere, including within its consequence.
+        const auto refuse_in_mentions = [&](const Janet node)
+        {
+            std::vector<Janet> rules;
+            mentioned_rules(node, rules);
+            for (const Janet r : rules)
+            {
+                const Janet* data;
+                int32_t      len;
+                janet_indexed_view(r, &data, &len);
+                refuse_rule_slots(std::vector<Janet>(data + 1, data + len));
+            }
         };
 
         // A condition set expressed using curly brackets constitutes a SET,
@@ -529,8 +745,8 @@ namespace zelph
                                 refuse_written_out(_pImpl->explicit_condition_op(inner_data + 1, inner_len - 1));
                                 for (int32_t i = 1; i < inner_len; ++i)
                                 {
-                                    refuse_in_mention(Impl::mentioned_rule_op(inner_data[i]));
-                                    refuse_in_assertion(Impl::nested_condition_op(inner_data[i]));
+                                    refuse_in_mentions(inner_data[i]);
+                                    refuse_in_assertion(Impl::nested_condition_op(inner_data[i], false));
                                     refuse_written_out(_pImpl->written_out_condition_op(inner_data[i]));
                                 }
                             }
@@ -560,14 +776,15 @@ namespace zelph
                                 "\"¬\" in a query negates a condition, so it needs one -- a pattern such as "
                                 "\"¬(X p b)\".");
 
-                        refuse_in_mention(Impl::mentioned_rule_op(root_data[1]));
+                        refuse_in_mentions(root_data[1]);
                         if (focused_negation(root_data[1], true)) refuse_focused_negation();
-                        refuse_misplaced(Impl::misplaced_condition_op(root_data[1], true, false), true);
+                        refuse_misplaced(Impl::misplaced_condition_op(root_data[1], true, true), true);
 
                         const Impl::BlockScope query(_pImpl->_query_code, true);
                         const bool             carries = Impl::nested_condition_op(root_data[1], false) != NestedOp::None
                                                       || _pImpl->written_out_condition_op(root_data[1]) != NestedOp::None
-                                                      || Impl::writes_path_marker(root_data[1]);
+                                                      || Impl::writes_path_marker(root_data[1])
+                                                      || _pImpl->mentions_condition_op(root_data[1]);
                         return query_code(_pImpl->transform_arg(root_data[1]), carries);
                     }
 
@@ -583,6 +800,7 @@ namespace zelph
                     if (!pattern)
                     {
                         const bool own_path = val_type == "selffact" && Impl::is_path_ast(root_data[1]);
+                        refuse_in_mentions(root_data[1]);
                         refuse_in_assertion(Impl::nested_condition_op(own_path ? val_data[2] : root_data[1], false));
                         refuse_written_out(_pImpl->written_out_condition_op(root_data[1]));
                     }
@@ -623,112 +841,9 @@ namespace zelph
                 // (Zelph::negation_operand).
                 const bool negation_layer = fact_args.size() == 3 && is_name(fact_args[1], "~") && is_name(fact_args[2], "negation");
 
-                // `¬` is a CONDITION operator. As a consequence it used to be
-                // ignored outright: "(A p B) => ¬(A q B)" derived (x q y) -- the
-                // exact opposite of what the rule says, without a word. What a
-                // derived negation should mean is a separate question (zelph can
-                // hold a fact as known-wrong, via the probability argument of
-                // fact()); until it is answered, saying so beats guessing.
                 if (rule)
                 {
-                    for (std::size_t i = 2; i < fact_args.size(); ++i)
-                    {
-                        if (is_negation_ast(fact_args[i]))
-                            throw std::runtime_error(
-                                "\"¬\" is a condition operator and has no meaning as a consequence: "
-                                "a rule derives what holds, not what does not. To say that the two "
-                                "may not hold together, write a contradiction rule -- "
-                                "\"(A p B, A q B) => !\".");
-
-                        // The other two condition operators reached the consequence
-                        // slot unchecked and each failed its own way: a path
-                        // consequence was listed by .list-rules and derived nothing
-                        // at all, and both would have written their tag fact -- and
-                        // with it the one-step fact underneath it -- into the graph
-                        // as a claim nobody made.
-                        if (Impl::is_path_ast(fact_args[i]))
-                            throw std::runtime_error(
-                                "\"⁺\" and \"∗\" are condition operators and have no meaning as a "
-                                "consequence: reachability is what the engine WALKS, not what a rule "
-                                "asserts. Derive the one-step fact instead, and let the path condition "
-                                "read it.");
-
-                        if (is_approx_ast(fact_args[i]))
-                            throw std::runtime_error(
-                                "\"≈\" is a condition operator and has no meaning as a consequence: "
-                                "a rule cannot assert what a network believes. Consult the net in a "
-                                "condition and derive an ordinary fact from it.");
-
-                        // Expressed as the fact it builds, each of the three
-                        // refers to the identical node, and when derived it
-                        // asserted what that node concerns: "(A p B) => ((A q
-                        // B) ~ negation)" derived `a q b`, the precise fact it
-                        // says is absent, and one argument lower "(A p B) =>
-                        // (x says ((A q B) ~ negation))" performed the same
-                        // action.
-                        switch (_pImpl->written_out_condition_op(fact_args[i]))
-                        {
-                        case NestedOp::Negation:
-                            throw std::runtime_error(
-                                "\"((P) ~ negation)\" is the condition \"¬(P)\" written out, and has no meaning in a "
-                                "consequence either: a rule derives what holds, not what does not, and deriving "
-                                "this fact would claim P. To say that the two may not hold together, write a "
-                                "contradiction rule -- \"(A p B, A q B) => !\".");
-                        case NestedOp::Path:
-                            throw std::runtime_error(
-                                "\"((S p O) closure one-or-more)\" is the condition \"S p⁺ O\" written out "
-                                "(\"zero-or-more\" is \"S p∗ O\"), and has no meaning in a consequence either: "
-                                "reachability is what the engine WALKS, and deriving this fact would claim the one "
-                                "step S p O. Derive the one-step fact instead, and let the path condition read it.");
-                        case NestedOp::Approx:
-                            throw std::runtime_error(
-                                "\"((P) nn net)\" is the condition \"≈net(P)\" written out, and has no meaning in a "
-                                "consequence either: a rule cannot assert what a network believes, and deriving "
-                                "this fact would claim P. Consult the net in a condition and derive an ordinary "
-                                "fact from it.");
-                        case NestedOp::None:
-                            break;
-                        }
-                    }
-
-                    // The three above ask about the top of a slot, which is where
-                    // an operator belongs and therefore the only place anyone
-                    // thought to look. One argument further in it was neither read
-                    // nor reported: the rule was built without it and printed back
-                    // without it. Both slots are walked now -- a condition keeps
-                    // its own operator layers, everything under them and the whole
-                    // of a consequence keeps none. A nested "=>" opens its slots
-                    // again, so a rule generator's inner rule is untouched.
-                    for (std::size_t i = 0; i < fact_args.size(); ++i)
-                    {
-                        if (i == 1) continue; // the arrow
-
-                        // A slot of a rule is a statement, and the AST says which
-                        // slot this is -- so a fragment too short to be one is
-                        // named by its role rather than by its position in a
-                        // generated call. Only a `(...)` group is checked here: a
-                        // comma list carries its own conditions and names them
-                        // one by one, and a bare atom in a slot is a different
-                        // mistake with a message of its own.
-                        if (const int vals = script::nested_value_count(fact_args[i]); vals >= 0 && vals < 3)
-                        {
-                            const Janet* slot_data;
-                            int32_t      slot_len;
-                            if (janet_indexed_view(fact_args[i], &slot_data, &slot_len) && slot_len >= 2)
-                            {
-                                std::vector<Janet> slot_args;
-                                for (int32_t j = 1; j < slot_len; ++j)
-                                    slot_args.push_back(slot_data[j]);
-                                // One value in parentheses is plain grouping --
-                                // "(:isprime N)" is a whole statement -- so only
-                                // two of them are short.
-                                if (slot_args.size() == 2)
-                                    script::refuse_short_statement(i == 0 ? "the condition" : "the consequence", slot_args);
-                            }
-                        }
-
-                        refuse_misplaced(Impl::misplaced_condition_op(fact_args[i], i == 0));
-                    }
+                    refuse_rule_slots(fact_args);
                 }
                 else if (asks)
                 {
@@ -737,19 +852,19 @@ namespace zelph
                     // itself: an operator can reside at its top -- the
                     // negation it is written out as, a path marker on its
                     // predicate -- and never within it, exactly as in a rule's
-                    // condition. A rule it references keeps the refusal it has
-                    // within a plain statement. The comma list expressed in
+                    // condition. A rule it mentions possesses the slots of any
+                    // rule (refuse_in_mentions). The comma list expressed in
                     // full, "*{...} ~ conjunction", functions as a condition
                     // list, and each of its members qualifies as a condition.
                     for (const Janet& arg : fact_args)
-                        refuse_in_mention(Impl::mentioned_rule_op(arg));
+                        refuse_in_mentions(arg);
 
                     const Janet* members;
                     int32_t      count;
                     if (explicit_conjunction(tree->data[0], members, count))
                     {
                         for (int32_t i = 0; i < count; ++i)
-                            refuse_misplaced(Impl::misplaced_condition_op(members[i], true, false), true);
+                            refuse_misplaced(Impl::misplaced_condition_op(members[i], true, true), true);
                     }
                     else if (negation_layer && is_statement_ast(fact_args[0]))
                     {
@@ -759,12 +874,12 @@ namespace zelph
                             && janet_checktype(subject[0], JANET_KEYWORD)
                             && std::string(reinterpret_cast<const char*>(janet_unwrap_keyword(subject[0]))) == "focused")
                             refuse_focused_negation();
-                        refuse_misplaced(Impl::misplaced_condition_op(fact_args[0], true, false), true);
+                        refuse_misplaced(Impl::misplaced_condition_op(fact_args[0], true, true), true);
                     }
                     else
                     {
                         for (const Janet& arg : fact_args)
-                            refuse_misplaced(Impl::nested_condition_op(arg), true);
+                            refuse_misplaced(Impl::nested_condition_op(arg, false), true);
                     }
                 }
                 else if (!pattern)
@@ -785,11 +900,12 @@ namespace zelph
                     // has been asserted. Its two siblings are asked here for the
                     // same reason and by the same walk -- see nested_condition_op
                     // for what each of them did instead of being reported. A rule
-                    // referenced by the statement is also traversed.
+                    // the statement mentions possesses the slots characteristic
+                    // of any rule (refuse_in_mentions).
                     for (const Janet& arg : fact_args)
                     {
-                        refuse_in_mention(Impl::mentioned_rule_op(arg));
-                        refuse_in_assertion(Impl::nested_condition_op(arg));
+                        refuse_in_mentions(arg);
+                        refuse_in_assertion(Impl::nested_condition_op(arg, false));
                     }
 
                     // Expressed in full, the three instances refer to
@@ -832,7 +948,8 @@ namespace zelph
                                        || (Impl::atom_text(fact_args[1], token) && Impl::split_path_marker(token, base, mode));
                     for (const Janet& arg : fact_args)
                         carries = carries || Impl::nested_condition_op(arg, false) != NestedOp::None
-                               || _pImpl->written_out_condition_op(arg) != NestedOp::None || Impl::writes_path_marker(arg);
+                               || _pImpl->written_out_condition_op(arg) != NestedOp::None || Impl::writes_path_marker(arg)
+                               || _pImpl->mentions_condition_op(arg);
                     return query_code(call, carries);
                 }
 
@@ -848,16 +965,16 @@ namespace zelph
             const Janet list = tree->data[0];
             const bool  asks = island_asks || names_query_variable(list);
 
-            if (!pattern || asks) refuse_in_mention(Impl::mentioned_rule_op(list));
+            if (!pattern || asks) refuse_in_mentions(list);
 
             if (asks)
             {
                 if (focused_negation(list, true)) refuse_focused_negation();
-                refuse_misplaced(Impl::misplaced_condition_op(list, true, false), true);
+                refuse_misplaced(Impl::misplaced_condition_op(list, true, true), true);
             }
             else if (!pattern)
             {
-                refuse_in_assertion(Impl::nested_condition_op(list));
+                refuse_in_assertion(Impl::nested_condition_op(list, false));
                 refuse_written_out(_pImpl->written_out_condition_op(list));
 
                 // A member's own predicate is not considered an argument,
@@ -872,7 +989,7 @@ namespace zelph
             const std::string      code    = _pImpl->transform_arg(list);
             const bool             carries = Impl::nested_condition_op(list, false) != NestedOp::None
                                           || _pImpl->written_out_condition_op(list) != NestedOp::None
-                                          || Impl::writes_path_marker(list);
+                                          || Impl::writes_path_marker(list) || _pImpl->mentions_condition_op(list);
             return asks ? query_code(code, carries) : code;
         }
 
@@ -883,11 +1000,9 @@ namespace zelph
     // inline-keyword islands are not expanded: a text that the grammar
     // parses solely post-expansion does not register an operator in this
     // context.
-    bool ScriptEngine::carries_condition_operator(const std::string& input, bool* is_rule) const
+    bool ScriptEngine::carries_condition_operator(const std::string& input) const
     {
         using NestedOp = Impl::NestedOp;
-
-        if (is_rule) *is_rule = false;
 
         Janet match_fun_out;
         if (janet_resolve(_pImpl->_janet_env, janet_csymbol("zelph-safe-parse"), &match_fun_out) != JANET_BINDING_DEF) return false;
@@ -904,9 +1019,9 @@ namespace zelph
         int32_t      root_len;
         if (!janet_indexed_view(tree->data[0], &root_data, &root_len) || root_len < 1) return false;
 
-        if (is_rule)
-            *is_rule = root_len >= 4 && std::string(reinterpret_cast<const char*>(janet_unwrap_keyword(root_data[0]))) == "root"
-                    && is_atom(root_data[2], "=>");
+        if (root_len >= 4 && std::string(reinterpret_cast<const char*>(janet_unwrap_keyword(root_data[0]))) == "root"
+            && is_atom(root_data[2], "=>"))
+            return false;
 
         if (Impl::nested_condition_op(tree->data[0], false) != NestedOp::None) return true;
         if (_pImpl->written_out_condition_op(tree->data[0]) != NestedOp::None) return true;
@@ -921,6 +1036,76 @@ namespace zelph
         std::string base;
         std::string mode;
         return Impl::atom_text(root_data[2], token) && Impl::split_path_marker(token, base, mode);
+    }
+
+    // Whether, in the grammar's reading, a statement of these values is
+    // complete: when it consists of three or more values, or when a single
+    // value stands independently -- such as a set, a collection, a list, a
+    // focus, or a value positioned after a prefix (`¬`, `≈net`, `:p`). A
+    // name remains pending until the rest of its statement is provided, and
+    // a group -- "(a p b)", or a comma-separated sequence "(a p b, c q d)"
+    // -- functions as a term that also awaits completion, except in cases
+    // where a statement may be a group: either as a condition within a comma
+    // list, or following the "?" prefix.
+    static bool reads_whole(Janet node, const bool group)
+    {
+        const Janet* data;
+        int32_t      len;
+        if (!janet_indexed_view(node, &data, &len) || len < 2) return false;
+        if (len - 1 >= 3) return true;
+        if (len - 1 != 1) return false;
+
+        const Janet* value;
+        int32_t      value_len;
+        if (!janet_indexed_view(data[1], &value, &value_len) || value_len < 1 || !janet_checktype(value[0], JANET_KEYWORD)) return false;
+
+        const std::string type = reinterpret_cast<const char*>(janet_unwrap_keyword(value[0]));
+        if (type == "nested" || type == "conjunction") return group;
+        return type != "atom" && type != "var" && type != "unquote" && type != "number";
+    }
+
+    // Asked of the text as the grammar reads it, before the islands are
+    // expanded -- the expansion invokes their handlers, which build nodes,
+    // and the question reduces to determining if a line has concluded. A
+    // text that the grammar fails to read remains incomplete, as the
+    // scanner took it.
+    bool ScriptEngine::Impl::reads_complete(const std::string& code) const
+    {
+        // The prefix of a result query, identified as Interactive::process
+        // identifies it.
+        std::string       text    = code;
+        bool              request = false;
+        const std::size_t q       = code.find_first_not_of(" \t\r\n");
+        if (q != std::string::npos && code[q] == '?'
+            && (q + 1 == code.size() || code[q + 1] == ' ' || code[q + 1] == '\t' || code[q + 1] == '\n'
+                || code[q + 1] == '(' || code[q + 1] == '$'))
+        {
+            request = true;
+            text    = code.substr(q + 1);
+        }
+
+        Janet match_fun_out;
+        if (janet_resolve(_janet_env, janet_csymbol("zelph-safe-parse"), &match_fun_out) != JANET_BINDING_DEF) return false;
+
+        Janet args[2] = {_zelph_peg, janet_cstringv(text.c_str())};
+        Janet result;
+        if (pcall_rooted(janet_unwrap_function(match_fun_out), 2, args, &result) != JANET_SIGNAL_OK) return false;
+        if (!janet_checktype(result, JANET_ARRAY)) return false;
+
+        const JanetArray* tree = janet_unwrap_array(result);
+        if (tree->count < 1) return false;
+
+        const Janet* root;
+        int32_t      root_len;
+        if (!janet_indexed_view(tree->data[0], &root, &root_len) || root_len < 2 || !janet_checktype(root[0], JANET_KEYWORD)) return false;
+
+        const std::string type = reinterpret_cast<const char*>(janet_unwrap_keyword(root[0]));
+        if (type == "root") return reads_whole(tree->data[0], request);
+        if (type != "conjunction") return false;
+
+        for (int32_t i = 1; i < root_len; ++i)
+            if (!reads_whole(root[i], true)) return false;
+        return true;
     }
 
     // Helper to generate Janet code for a function call with potential focused arguments.
@@ -1080,10 +1265,14 @@ namespace zelph
     // layers are peeled here and the fact under them is what gets walked; an
     // argument and a consequence may not, so anything found there is reported.
     // A nested "=>" is a rule again -- that is a rule GENERATOR, whose inner
-    // rule has its own slots and its own right to a `¬`. A query calls it with
-    // `reopen_rules` set to false: a rule it refers to maintains the refusal
-    // it holds within a plain statement.
-    ScriptEngine::Impl::NestedOp ScriptEngine::Impl::misplaced_condition_op(Janet node, const bool in_condition, const bool reopen_rules)
+    // rule has its own slots and its own right to a `¬`. A query activates
+    // `skip_rules`, because it reads a rule it mentions for that rule's own
+    // slots (refuse_in_mentions), regardless of where the rule is positioned.
+    // `skip_mentions` bypasses only those rules positioned as an argument and
+    // still opens the inner rule of a generator, enabling a typed rule to
+    // distinguish an operator embedded within a rule it holds from one
+    // incorrectly placed within its own slots (refuse_in_held_rule).
+    ScriptEngine::Impl::NestedOp ScriptEngine::Impl::misplaced_condition_op(Janet node, const bool in_condition, const bool skip_rules, const bool skip_mentions)
     {
         const Janet* data;
         int32_t      len;
@@ -1097,28 +1286,30 @@ namespace zelph
         // consequence slots open again.
         if (slot && len > 3 && is_atom(data[2], "=>"))
         {
-            if (!reopen_rules) return nested_condition_op(node);
-            if (const NestedOp op = misplaced_condition_op(data[1], true); op != NestedOp::None) return op;
+            if (skip_rules) return NestedOp::None;
+            if (const NestedOp op = misplaced_condition_op(data[1], true, false, skip_mentions); op != NestedOp::None) return op;
             for (int32_t i = 3; i < len; ++i)
-                if (const NestedOp op = misplaced_condition_op(data[i], false); op != NestedOp::None) return op;
+                if (const NestedOp op = misplaced_condition_op(data[i], false, false, skip_mentions); op != NestedOp::None) return op;
             return NestedOp::None;
         }
 
-        if (!in_condition) return nested_condition_op(node);
+        const bool into_rules = !skip_rules && !skip_mentions;
+
+        if (!in_condition) return nested_condition_op(node, into_rules);
 
         if (type == "conjunction")
         {
             for (int32_t i = 1; i < len; ++i)
-                if (const NestedOp op = misplaced_condition_op(data[i], true, reopen_rules); op != NestedOp::None) return op;
+                if (const NestedOp op = misplaced_condition_op(data[i], true, skip_rules, skip_mentions); op != NestedOp::None) return op;
             return NestedOp::None;
         }
 
         // The layers a condition is permitted to wear, peeled one at a time
         // so that the legitimate stack -- "¬≈net(...)", "¬(C P⁺ T)" --
         // survives.
-        if (type == "negation" && len >= 2) return misplaced_condition_op(data[1], true, reopen_rules);
-        if (type == "approx" && len >= 3) return misplaced_condition_op(data[2], true, reopen_rules);
-        if (slot && len == 2) return misplaced_condition_op(data[1], true, reopen_rules); // plain grouping
+        if (type == "negation" && len >= 2) return misplaced_condition_op(data[1], true, skip_rules, skip_mentions);
+        if (type == "approx" && len >= 3) return misplaced_condition_op(data[2], true, skip_rules, skip_mentions);
+        if (slot && len == 2) return misplaced_condition_op(data[1], true, skip_rules, skip_mentions); // plain grouping
 
         // `((P) ~ negation)` represents the logical negation `¬(P)`
         // expressed explicitly (Zelph::negation_operand), meaning it is
@@ -1127,7 +1318,7 @@ namespace zelph
         // `((C P⁺ T) ~ negation)` was refused because of a marker that the
         // negation reads.
         if (slot && len == 4 && is_name(data[2], "~") && is_name(data[3], "negation"))
-            return misplaced_condition_op(data[1], true, reopen_rules);
+            return misplaced_condition_op(data[1], true, skip_rules, skip_mentions);
 
         // The comma list expressed in full, "*{...} ~ conjunction",
         // functions as a condition list, as the comma list itself does.
@@ -1136,7 +1327,7 @@ namespace zelph
         if (explicit_conjunction(node, members, count))
         {
             for (int32_t i = 0; i < count; ++i)
-                if (const NestedOp op = misplaced_condition_op(members[i], true, reopen_rules); op != NestedOp::None) return op;
+                if (const NestedOp op = misplaced_condition_op(members[i], true, skip_rules, skip_mentions); op != NestedOp::None) return op;
             return NestedOp::None;
         }
 
@@ -1146,39 +1337,21 @@ namespace zelph
         // displayed it back devoid of the "¬". The marker of ":p⁺ X" stands
         // on the condition's inherent predicate, at the location where a
         // path belongs.
-        if (type == "selffact") return len >= 3 ? nested_condition_op(data[2]) : NestedOp::None;
+        if (type == "selffact") return len >= 3 ? nested_condition_op(data[2], into_rules) : NestedOp::None;
 
         // The condition itself, finally. Its own predicate may carry a path
         // marker; its arguments may carry nothing.
         if (slot)
         {
             for (int32_t i = 1; i < len; ++i)
-                if (const NestedOp op = nested_condition_op(data[i]); op != NestedOp::None) return op;
+                if (const NestedOp op = nested_condition_op(data[i], into_rules); op != NestedOp::None) return op;
             return NestedOp::None;
         }
 
         // A condition expressed as some alternative value is also a
         // statement, and every component within it serves as an argument:
         // the members of a set.
-        return nested_condition_op(node);
-    }
-
-    // Which condition operator stands within a rule that this value
-    // mentions, appearing as one of its conditions at any nesting
-    // level, in sugar.
-    ScriptEngine::Impl::NestedOp ScriptEngine::Impl::mentioned_rule_op(Janet node)
-    {
-        const Janet* data;
-        int32_t      len;
-        if (!janet_indexed_view(node, &data, &len) || len < 1) return NestedOp::None;
-        if (!janet_checktype(data[0], JANET_KEYWORD)) return NestedOp::None;
-
-        const std::string type = reinterpret_cast<const char*>(janet_unwrap_keyword(data[0]));
-        if ((type == "nested" || type == "condition") && len > 3 && is_atom(data[2], "=>")) return nested_condition_op(node);
-
-        for (int32_t i = 1; i < len; ++i)
-            if (const NestedOp op = mentioned_rule_op(data[i]); op != NestedOp::None) return op;
-        return NestedOp::None;
+        return nested_condition_op(node, into_rules);
     }
 
     // Which condition operator is located within a set or a collection
@@ -1305,6 +1478,38 @@ namespace zelph
         for (int32_t i = 1; i < len; ++i)
             if (const NestedOp op = written_out_condition_op(data[i]); op != NestedOp::None) return op;
         return NestedOp::None;
+    }
+
+    // Whether a rule that this value mentions holds a condition operator,
+    // in any spelling and at any level of nesting within the rule. What a
+    // query constructs under an operator constitutes a pattern
+    // (zelph/query-text), and any operator within a rule that the query
+    // mentions also qualifies as one: "R knows ((X go Y, ¬(a p b)) => (X ok
+    // Y))" would otherwise leave `a p b` as data.
+    bool ScriptEngine::Impl::mentions_condition_op(Janet node, const bool in_rule) const
+    {
+        const Janet* data;
+        int32_t      len;
+        if (!janet_indexed_view(node, &data, &len) || len < 1) return false;
+        if (!janet_checktype(data[0], JANET_KEYWORD)) return false;
+
+        const std::string type = reinterpret_cast<const char*>(janet_unwrap_keyword(data[0]));
+        const bool        slot = type == "nested" || type == "condition";
+        const bool        rule = in_rule || (slot && len > 3 && is_atom(data[2], "=>"));
+
+        if (rule)
+        {
+            std::string token;
+            std::string base;
+            std::string mode;
+            if (type == "negation" || type == "approx" || (type == "selffact" && is_path_ast(node))) return true;
+            if (slot && len >= 4 && atom_text(data[2], token) && split_path_marker(token, base, mode)) return true;
+            if (explicit_condition_op(node) != NestedOp::None) return true;
+        }
+
+        for (int32_t i = 1; i < len; ++i)
+            if (mentions_condition_op(data[i], rule)) return true;
+        return false;
     }
 
     // `role` names the place the statement stands in, taken from the AST node

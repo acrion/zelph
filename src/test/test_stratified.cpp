@@ -584,7 +584,7 @@ TEST_CASE("negation: a free variable inside ¬ is quantified inside it in a quer
         interactive.process("A ~ interval, ¬(A before B)");
         const std::vector<std::string> answers = collect_answers(collector);
         REQUIRE(answers.size() == 1);
-        CHECK(answers.front().find("(c ~ interval)") != std::string::npos); });
+        CHECK(answers.front().find("c ~ interval") != std::string::npos); });
 }
 
 // A line lacking a variable makes an assertion, and a condition holds no
@@ -708,6 +708,37 @@ TEST_CASE("negation: a condition operator inside a set literal is refused, in a 
         CHECK_NOTHROW(interactive.process("{((X go Y, ¬(X p b)) => (X ok Y))}")); });
 }
 
+// A set holding a rule that includes a variable constitutes a collection
+// (Zelph::set), and its echo appears as the collection literal "@{...}". That
+// line remained pending a rest it lacks and took the next line. It now
+// re-enters as the same statement: a collection holding the rule, which is
+// data, thus no rule is listed and nothing fires.
+TEST_CASE("negation: the echo of a set holding a rule re-enters, and lists no rule")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("t go k");
+
+        collector.clear();
+        interactive.process("{((X go Y, ¬(X p b)) => (X ok Y))}");
+        const std::string echo = last_out_text(collector);
+        REQUIRE(echo.rfind("@{", 0) == 0);
+
+        collector.clear();
+        interactive.process(echo);
+        interactive.process("u go v");
+        CHECK(last_out_text(collector) == "u go v");
+        CHECK(any_output_contains(collector, echo));
+
+        interactive.run(true, false, false);
+        collector.clear();
+        interactive.process(".list-rules");
+        CHECK(any_output_contains(collector, "No rules found"));
+        collector.clear();
+        interactive.process("S ok O");
+        CHECK(collect_answers(collector).empty()); });
+}
+
 // The operators written out are the same nodes as the sugar
 // (Zelph::negation_operand), meaning that within a set they function as data
 // in identical fashion. They were accepted: "{(X go Y) ((X p b) ~ negation)}
@@ -757,21 +788,227 @@ TEST_CASE("negation: the comma list written out reads ¬ among its members")
         CHECK(collect_answers(collector) == std::vector<std::string>{"t ok k"}); });
 }
 
-// A rule a line mentions maintains its refusal of condition operators, and
-// the message said what it states regarding a plain statement or a
-// condition, neither of which applies here: it told a query to place the "¬"
-// symbol before the condition that was already preceded by it.
-TEST_CASE("negation: ¬ in a rule a line mentions is refused as an operator of a mentioned rule")
+// A rule that a line mentions inherits the condition slots of any rule, and
+// an operator positioned at the top of one of its conditions is interpreted
+// identically to how it is in a typed rule. Each spelling of the three
+// operators was refused there -- "condition operators in a mentioned rule
+// are not supported" -- despite the inner rule within a rule generator, the
+// same rule one level below, accepting them. What the mention builds beneath
+// the operator constitutes a part of its text: a pattern, never a claim.
+TEST_CASE("negation: a rule a line mentions reads its operators, and their operands are patterns")
 {
     run_both_modes([](auto& collector, auto& interactive)
                    {
-        for (const char* statement : {"R knows ((X go Y, ¬(X p b)) => (X ok Y))",
-                                      "r knows ((X go Y, ¬(X p b)) => (X ok Y))",
-                                      "R knows ((X go Y, ≈net(X p b)) => (X ok Y))"})
+        std::string line;
+        std::string operand = "(a q b)";
+        SUBCASE("¬") { line = "x about ((X p Y, ¬(a q b)) => (X r Y))"; }
+        SUBCASE("¬ written out") { line = "x about ((((a q b) ~ negation), (X p Y)) => (X r Y))"; }
+        SUBCASE("≈") { line = "x about ((X p Y, ≈net(a q b)) => (X r Y))"; }
+        SUBCASE("≈ written out") { line = "x about ((((a q b) nn net), (X p Y)) => (X r Y))"; }
+        SUBCASE("⁺") { line = "x about ((X p Y, a q⁺ b) => (X r Y))"; }
+        SUBCASE("⁺ written out") { line = "x about ((((a q b) closure one-or-more), (X p Y)) => (X r Y))"; }
+        SUBCASE("∗ on a self-fact")
         {
-            CAPTURE(statement);
-            CHECK_THROWS_WITH(interactive.process(statement), doctest::Contains("rule that this line mentions"));
-        } });
+            line    = "x about ((X p Y, :q∗ a) => (X r Y))";
+            operand = "(a q a)";
+        }
+
+        CAPTURE(line);
+        CHECK_NOTHROW(interactive.process(line));
+
+        collector.clear();
+        interactive.process("S q O");
+        CHECK(collect_answers(collector).empty());
+        collector.clear();
+        interactive.process(".explain " + operand);
+        CHECK(any_output_contains(collector, "[rule pattern; not asserted]")); });
+}
+
+// What a mentioned rule is remains unchanged regardless of the operator
+// involved: it is recorded as data, not put in force. It does not appear in
+// the list of rules, and executing a run does not fire it.
+TEST_CASE("negation: a rule a line mentions with ¬ is data, and a run does not fire it")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("a p b");
+        CHECK_NOTHROW(interactive.process("x about ((X p Y, ¬(X q Y)) => (X r Y))"));
+        interactive.run(true, false, false);
+
+        collector.clear();
+        interactive.process(".list-rules");
+        CHECK(any_output_contains(collector, "No rules found"));
+        collector.clear();
+        interactive.process("S r O");
+        CHECK(collect_answers(collector).empty()); });
+}
+
+// The echo prints the mentioned rule's negated condition in the spelling it
+// is stored as, and since that spelling occupies a condition slot within the
+// rule, the echo re-enters. A ground rule refers to the same node once more;
+// a rule containing variables, or one whose condition set is a comma list,
+// constitutes a new statement every time it is written, just as a mention
+// without an operator does, and it prints as the identical one.
+TEST_CASE("negation: the echo of a rule a line mentions with ¬ re-enters as the same statement")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        collector.clear();
+        interactive.process("z about ((¬(a q b)) => (c r d))");
+        const std::string ground = last_out_text(collector);
+        REQUIRE(ground.find("z about") != std::string::npos);
+
+        const std::size_t before = node_count(collector, interactive);
+        collector.clear();
+        interactive.process(ground);
+        CHECK(last_out_text(collector) == ground);
+        CHECK(node_count(collector, interactive) == before);
+
+        collector.clear();
+        interactive.process("x about ((X p Y, ¬(X q Y)) => (X r Y))");
+        const std::string echo = last_out_text(collector);
+        REQUIRE(echo.find("x about") != std::string::npos);
+        collector.clear();
+        interactive.process(echo);
+        CHECK(last_out_text(collector) == echo); });
+}
+
+// A query that mentions a rule reads it just as a statement does, and any
+// operator within the rule is an operator there too. What the query creates
+// beneath one is a pattern, exactly as it is beneath an operator of its own
+// (zelph/query-text): "R knows ((X go Y, ¬(e p f)) => (X ok Y))" would
+// otherwise have answered `e p f` to "S p O" afterwards. The rule's ground
+// parts located outside the operator are data, just as those of any rule a
+// query mentions are.
+TEST_CASE("negation: in a query, the operand of a rule the query mentions is a pattern")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("t go k");
+
+        CHECK_NOTHROW(interactive.process("R knows ((X go Y, ¬(e p f)) => (X ok Y))"));
+        CHECK_NOTHROW(interactive.process("X go Y, R knows ((Z go W, ¬(g p h)) => (Z ok W))"));
+        CHECK_NOTHROW(interactive.process("R knows ((((i p j) ~ negation), (X go Y)) => (X ok Y))"));
+        CHECK_NOTHROW(interactive.process("R knows ((a q b, ¬(k p l)) => (c r d))"));
+
+        collector.clear();
+        interactive.process("S p O");
+        CHECK(collect_answers(collector).empty());
+        collector.clear();
+        interactive.process("S q O");
+        CHECK(collect_answers(collector) == std::vector<std::string>{"a q b"}); });
+}
+
+// Only the condition slots are open: within a rule that is mentioned, an
+// operator located outside the top of a condition is rejected, just as it is
+// in a typed rule, and with the identical message that a typed rule gets. A
+// set holding the rule was the sole location that accepted the operator
+// anywhere, even within its consequence -- "{((X go Y) => ¬(X ok Y))}" printed
+// a rule that derives the negation fact.
+TEST_CASE("negation: an operator outside a mentioned rule's condition slots is refused, as in a typed rule")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        const std::size_t before = node_count(collector, interactive);
+
+        CHECK_THROWS_WITH(interactive.process("x about ((X p Y) => ¬(X q Y))"), doctest::Contains("as a consequence"));
+        CHECK_THROWS_WITH(interactive.process("x about ((X p Y) => ((X q Y) ~ negation))"),
+                          doctest::Contains("in a consequence either"));
+        CHECK_THROWS_WITH(interactive.process("x about ((X p (¬(a q b))) => (X r Y))"),
+                          doctest::Contains("applies to a whole condition"));
+        CHECK_THROWS_WITH(interactive.process("R knows ((X p Y) => ¬(X q Y))"), doctest::Contains("as a consequence"));
+        CHECK_THROWS_WITH(interactive.process("{((X go Y) => ¬(X ok Y))}"), doctest::Contains("as a consequence"));
+        CHECK_THROWS_WITH(interactive.process("x about ((X in {(¬(a q b))}) => (X r Y))"), doctest::Contains("a set is DATA"));
+
+        CHECK(node_count(collector, interactive) == before); });
+}
+
+// A statement or a query can mention a rule with its operators; a typed
+// rule that holds such a rule as an argument cannot -- within its condition,
+// the rule functions as a pattern the outer rule matches, within its
+// consequence as one it writes, and the sugar is not read there. The refusal
+// previously stated "applies to a whole condition, not to something inside
+// one", a mistake the line did not make: the operator stands at the top
+// level of a condition of the held rule.
+TEST_CASE("negation: a rule that a typed rule holds as an argument is refused with an operator, for its own reason")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        const std::size_t before = node_count(collector, interactive);
+
+        struct Case
+        {
+            std::string line;
+            std::string operators;
+            std::string role;
+        };
+        const std::vector<Case> cases = {
+            {"(Z says ((X p Y, ¬(X q Y)) => (X r Y))) => (Z ok k)", "\"¬\" inside it is", "matches"},
+            {"(A p B) => (x about ((X p Y, ¬(X q Y)) => (X r Y)))", "\"¬\" inside it is", "writes"},
+            {"(Z says ((X p Y, ≈net(X q Y)) => (X r Y))) => (Z ok k)", "\"≈\" inside it is", "matches"},
+            {"(A p B) => (x about ((X p Y, ≈net(X q Y)) => (X r Y)))", "\"≈\" inside it is", "writes"},
+            {"(Z says ((X p⁺ Y) => (X r Y))) => (Z ok k)", "\"⁺\" and \"∗\" inside it are", "matches"},
+            {"(A p B) => (x about ((X p⁺ Y) => (X r Y)))", "\"⁺\" and \"∗\" inside it are", "writes"},
+            {"(Z says ((X p∗ Y) => (X r Y))) => (Z ok k)", "\"⁺\" and \"∗\" inside it are", "matches"},
+            {"(A p B) => (x about ((X p∗ Y) => (X r Y)))", "\"⁺\" and \"∗\" inside it are", "writes"},
+            // The inner rule of a rule generator is written by the outer
+            // rule, and the rule it holds is situated one level deeper.
+            {"(A p B) => ((Z says ((X p Y, ¬(X q Y)) => (X r Y))) => (Z ok k))", "\"¬\" inside it is", "writes"},
+        };
+        for (const Case& c : cases)
+        {
+            CAPTURE(c.line);
+            CHECK_THROWS_WITH(interactive.process(c.line),
+                              doctest::Contains("A rule that a rule holds as an argument is a pattern the outer rule " + c.role
+                                                + ", and " + c.operators + " not supported there."));
+        }
+
+        // The controls: an operator placed incorrectly within the typed
+        // rule's own slots, or within a generator's inner rule, keeps the
+        // message about that error, even if the same line holds a rule with
+        // an operator located elsewhere.
+        CHECK_THROWS_WITH(interactive.process("(x q (¬(a p b))) => (c r d)"), doctest::Contains("applies to a whole condition"));
+        CHECK_THROWS_WITH(interactive.process("(A p B) => ((X q (¬(a p b))) => (X r Y))"),
+                          doctest::Contains("applies to a whole condition"));
+        CHECK_THROWS_WITH(interactive.process("(Z says ((X p Y, ¬(X q Y)) => (X r Y)), Z q (¬(a b c))) => (Z ok k)"),
+                          doctest::Contains("applies to a whole condition"));
+        CHECK_THROWS_WITH(interactive.process("(A p B) => (x q (a P279⁺ d))"), doctest::Contains("mark the predicate of a CONDITION"));
+
+        CHECK(node_count(collector, interactive) == before); });
+}
+
+// What the refusal above offers instead, held to its word: expressed as the
+// fact that the operator builds, the condition is accepted within a held
+// rule, and it is the node that a mention with the operator builds. A rule
+// over rules thus matches what a statement mentioned with "¬" as well as
+// what a rule wrote in the written-out spelling, and that rule writes the
+// very node the statement denotes.
+TEST_CASE("negation: the written-out operator in a rule a typed rule holds is the node a mention with the operator builds")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+z about ((¬(a q b)) => (c r d))
+(Z about (((a q b) ~ negation) => (c r d))) => (Z ok k)
+(A p B) => (x about (((a q b) ~ negation) => (c r d)))
+e p f
+)");
+        interactive.run(true, false, false);
+
+        collector.clear();
+        interactive.process("S ok O");
+        auto answers = collect_answers(collector);
+        std::sort(answers.begin(), answers.end());
+        CHECK(answers == std::vector<std::string>{"x ok k", "z ok k"});
+
+        const std::size_t before = node_count(collector, interactive);
+        interactive.process("x about ((¬(a q b)) => (c r d))");
+        CHECK(node_count(collector, interactive) == before);
+
+        // Nothing within it is interpreted as a negation of the outer rules.
+        collector.clear();
+        interactive.process(".strata");
+        CHECK(any_output_contains(collector, "No rule has a negated condition")); });
 }
 
 TEST_CASE("negation: a pattern is looked up, not asserted, when a command resolves it")
@@ -964,6 +1201,30 @@ bob member Q1
         CHECK(collect_answers(collector).empty()); });
 }
 
+TEST_CASE("stratified: a load that replaces the graph refuses its conditions again")
+{
+    // A condition is refused once per session, keyed by its node, since the
+    // refusal follows from its structure. Following a load that replaced the
+    // graph, that node might represent a different condition, thus the record
+    // of what was refused goes with the graph: the identical rule in the
+    // loaded file is refused again, once.
+    const auto file = std::filesystem::temp_directory_path() / "zelph_refused_condition.bin";
+    run_both_modes([&file](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+alice member Q1
+bob member Q1
+(X member C, Y member C, ¬(X != Y)) => (X same-as Y)
+)");
+        REQUIRE(any_output_contains(collector, "¬ cannot be applied to \"!=\""));
+        interactive.process(".save \"" + file.string() + "\"");
+        interactive.process(".load \"" + file.string() + "\"");
+        collector.clear();
+        interactive.process(".run");
+        CHECK(count_outputs_containing(collector, "¬ cannot be applied to \"!=\"") == 1); });
+    std::filesystem::remove(file);
+}
+
 TEST_CASE("stratified: ranging over a domain is a positive condition")
 {
     // What the second reading of `¬` used to do implicitly is written down
@@ -1131,6 +1392,223 @@ TEST_CASE("stratified: a negation waits for the negated rules its pattern depend
     SUBCASE("the same rules reversed") { one_model(reversed); }
 }
 
+namespace
+{
+    // The position of the initial occurrence at or following `from` where
+    // the text includes `sub` exactly as written, across any channel. What
+    // .strata claims is carried by the ORDER of its lines -- specifically,
+    // which level header a rule appears under -- while the evaluation's
+    // level announcements serve as diagnostic indicators, not Out lines.
+    std::size_t line_index(const zelph::io::OutputCollector& collector, const std::string& sub, const std::size_t from = 0)
+    {
+        const auto& events = collector.events();
+        for (std::size_t i = from; i < events.size(); ++i)
+            if (events[i].text.find(sub) != std::string::npos) return i;
+        return std::string::npos;
+    }
+
+    // The `program` model, input in a single run (with auto-run disabled,
+    // followed by .run), in .semi-naive check under both parallelism
+    // settings and in classic evaluation: `check_model` is provided with the
+    // collector that has been cleared post-run.
+    template <typename F>
+    void one_run_model(const std::string& program, F&& check_model)
+    {
+        const auto in_one_run = [&](auto& collector, auto& interactive)
+        {
+            interactive.process(".auto-run");
+            process_lines(interactive, program);
+            interactive.process(".run");
+            collector.clear();
+            check_model(collector, interactive);
+        };
+
+        run_both_modes(in_one_run);
+
+        SUBCASE("classic (naive) evaluation")
+        {
+            zelph::io::OutputCollector  collector;
+            zelph::console::Interactive interactive(collector.sink());
+            interactive.process(".semi-naive off");
+            collector.clear();
+            in_one_run(collector, interactive);
+        }
+    }
+}
+
+TEST_CASE("stratified: a negation over one class waits only for the rules that derive that class")
+{
+    // Each class membership constitutes a `~` fact. Compared solely through
+    // the predicate, the rule that negates (X ~ married) counted as producing
+    // what it negates, since it derives (X ~ bachelor), just as the rule that
+    // derives (X ~ husband) did: both formed a single component that .strata
+    // listed as not stratifiable, and they alternated within a single level.
+    // Given the rules in the order below and the facts appearing afterwards,
+    // (X ~ bachelor) underwent testing before its derivation, and
+    // (john ~ husband) came next. The constant object establishes the
+    // sequence of the rules -- married, then bachelor, then husband -- across
+    // two levels, regardless of the input order.
+    static const std::string rules    = R"(
+(X ~ man, ¬(X ~ married)) => (X ~ bachelor)
+(X ~ man, ¬(X ~ bachelor)) => (X ~ husband)
+)";
+    static const std::string reversed = R"(
+(X ~ man, ¬(X ~ bachelor)) => (X ~ husband)
+(X ~ man, ¬(X ~ married)) => (X ~ bachelor)
+)";
+    static const std::string facts    = R"(
+john ~ man
+paul ~ man
+paul ~ married
+)";
+
+    const auto check_model = [](auto& collector, auto& interactive)
+    {
+        interactive.process("X ~ bachelor");
+        interactive.process("X ~ husband");
+        CHECK(answers_contain(collector, "john ~ bachelor"));
+        CHECK(answers_contain(collector, "paul ~ husband"));
+        CHECK_FALSE(answers_contain(collector, "john ~ husband"));
+        CHECK_FALSE(answers_contain(collector, "paul ~ bachelor"));
+
+        collector.clear();
+        interactive.process(".strata");
+        CHECK(any_output_contains(collector, "2 negation levels"));
+        CHECK(line_index(collector, "Level 2:") < line_index(collector, "¬(X ~ bachelor)"));
+        CHECK_FALSE(any_output_contains(collector, "Not stratifiable"));
+    };
+
+    SUBCASE("the rules in the order they depend on each other, then the facts") { one_run_model(rules + facts, check_model); }
+    SUBCASE("the rules reversed, then the facts") { one_run_model(reversed + facts, check_model); }
+    SUBCASE("the facts first") { one_run_model(facts + rules, check_model); }
+}
+
+TEST_CASE("stratified: a class read in affirmation does not tie a negation to a rule deriving another class")
+{
+    // "If every dog that a man owns barks then the man is a good-owner", as
+    // the ace front end encodes it in rules: a helper marks a man who owns a
+    // dog that cannot be proven to bark, and the main rule derives the class
+    // for a man who is not marked. The helper reads (M ~ man) and (D ~ dog).
+    // When compared solely by the predicate, these readings relied on the
+    // main rule's (M ~ good-owner), whereas the primary rule awaited the
+    // helper's output under negation: one component, not stratifiable. With
+    // the facts input before the rules, the main rule ran first and derived
+    // (john ~ good-owner), even though john's dog does not bark.
+    static const std::string rules    = R"(
+(M ~ man, M owns D, D ~ dog, ¬(D barks nil)) => (M "ace:naf-h1" nil)
+(M ~ man, ¬(M "ace:naf-h1" nil)) => (M ~ good-owner)
+)";
+    static const std::string reversed = R"(
+(M ~ man, ¬(M "ace:naf-h1" nil)) => (M ~ good-owner)
+(M ~ man, M owns D, D ~ dog, ¬(D barks nil)) => (M "ace:naf-h1" nil)
+)";
+    static const std::string facts    = R"(
+john ~ man
+john owns fido
+fido ~ dog
+bill ~ man
+carl ~ man
+carl owns rex
+rex ~ dog
+rex barks nil
+)";
+
+    const auto check_model = [](auto& collector, auto& interactive)
+    {
+        interactive.process("X ~ good-owner");
+        interactive.process("X \"ace:naf-h1\" nil");
+        CHECK(answers_contain(collector, "bill ~ good-owner"));
+        CHECK(answers_contain(collector, "carl ~ good-owner"));
+        CHECK(answers_contain(collector, "john ace:naf-h1 nil"));
+        CHECK_FALSE(answers_contain(collector, "john ~ good-owner"));
+
+        collector.clear();
+        interactive.process(".strata");
+        CHECK(any_output_contains(collector, "2 negation levels"));
+        CHECK_FALSE(any_output_contains(collector, "Not stratifiable"));
+    };
+
+    SUBCASE("the facts first") { one_run_model(facts + rules, check_model); }
+    SUBCASE("the facts first, the rules reversed") { one_run_model(facts + reversed, check_model); }
+    SUBCASE("the rules first") { one_run_model(rules + facts, check_model); }
+}
+
+TEST_CASE("stratified: a negated class waits for a rule that derives a class it takes from a fact")
+{
+    // The object of (X ~ S) functions as a variable: the rule is capable of
+    // deriving (paul ~ married), thus the rule that negates (X ~ married)
+    // remains pending, awaiting that rule, just as it would await any rule
+    // that derives (X ~ married) directly. Excluded from the levels, that
+    // connection would put both negating rules on the same level, allowing
+    // the bachelor rule to assess its negation before paul's class comes
+    // into existence.
+    static const std::string rules    = R"(
+(X status S, ¬(X hidden yes)) => (X ~ S)
+(X ~ man, ¬(X ~ married)) => (X ~ bachelor)
+)";
+    static const std::string reversed = R"(
+(X ~ man, ¬(X ~ married)) => (X ~ bachelor)
+(X status S, ¬(X hidden yes)) => (X ~ S)
+)";
+    static const std::string facts    = R"(
+john ~ man
+paul ~ man
+paul status married
+)";
+
+    const auto check_model = [](auto& collector, auto& interactive)
+    {
+        interactive.process("X ~ bachelor");
+        CHECK(answers_contain(collector, "john ~ bachelor"));
+        CHECK_FALSE(answers_contain(collector, "paul ~ bachelor"));
+
+        collector.clear();
+        interactive.process(".strata");
+        CHECK(any_output_contains(collector, "2 negation levels"));
+        CHECK(line_index(collector, "¬(X hidden yes)") < line_index(collector, "Level 2:"));
+        CHECK(line_index(collector, "Level 2:") < line_index(collector, "¬(X ~ married)"));
+        CHECK_FALSE(any_output_contains(collector, "Not stratifiable"));
+    };
+
+    SUBCASE("the rules in the order they depend on each other") { one_run_model(rules + facts, check_model); }
+    SUBCASE("the rules reversed") { one_run_model(reversed + facts, check_model); }
+}
+
+TEST_CASE("stratified: a negation with a variable object waits for a rule that derives a constant one")
+{
+    // The converse of the earlier scenario: ¬(X flag C) requests a flag
+    // fact involving any object, thus remaining in wait for the rule
+    // deriving (X flag red).
+    static const std::string rules    = R"(
+(X go Y, ¬(X off yes)) => (X flag red)
+(X go Y, ¬(X flag C)) => (X free yes)
+)";
+    static const std::string reversed = R"(
+(X go Y, ¬(X flag C)) => (X free yes)
+(X go Y, ¬(X off yes)) => (X flag red)
+)";
+    static const std::string facts    = R"(
+a go b
+c go d
+c off yes
+)";
+
+    const auto check_model = [](auto& collector, auto& interactive)
+    {
+        interactive.process("X free yes");
+        CHECK(answers_contain(collector, "c free yes"));
+        CHECK_FALSE(answers_contain(collector, "a free yes"));
+
+        collector.clear();
+        interactive.process(".strata");
+        CHECK(any_output_contains(collector, "2 negation levels"));
+        CHECK(line_index(collector, "Level 2:") < line_index(collector, "¬(X flag C)"));
+    };
+
+    SUBCASE("the rules in the order they depend on each other") { one_run_model(rules + facts, check_model); }
+    SUBCASE("the rules reversed") { one_run_model(reversed + facts, check_model); }
+}
+
 TEST_CASE("stratified: a negation waits for a rule that another rule derives")
 {
     // A rule which derives another rule may extend the scope of what a negation
@@ -1290,22 +1768,6 @@ TEST_CASE("stratified: a rule ranging over predicates leaves the negation levels
 
     SUBCASE("the meta-rule first") { one_model(rules); }
     SUBCASE("the rules reversed and the meta-rule last") { one_model(reversed); }
-}
-
-namespace
-{
-    // The position of the initial occurrence at or following `from` where
-    // the text includes `sub` exactly as written, across any channel. What
-    // .strata claims is carried by the ORDER of its lines -- specifically,
-    // which level header a rule appears under -- while the evaluation's
-    // level announcements serve as diagnostic indicators, not Out lines.
-    std::size_t line_index(const zelph::io::OutputCollector& collector, const std::string& sub, const std::size_t from = 0)
-    {
-        const auto& events = collector.events();
-        for (std::size_t i = from; i < events.size(); ++i)
-            if (events[i].text.find(sub) != std::string::npos) return i;
-        return std::string::npos;
-    }
 }
 
 TEST_CASE("stratified: a predicate a consequence creates only inside a term counts too")
@@ -1909,6 +2371,489 @@ TEST_CASE("stratified: check mode does not report a fact it cannot judge")
         CHECK_FALSE(any_output_contains(collector, "Negation check")); });
 }
 
+namespace
+{
+    // A man is happy whenever each dog in his possession barks; h1 marks a
+    // man whose ownership includes a dog that does not bark. A universal
+    // embedded within a condition takes these two rules, and a later fact
+    // may defeat the conclusion of either.
+    void define_happy_rules(const zelph::console::Interactive& interactive)
+    {
+        interactive.process("(M ~ man, M owns D, D ~ dog, ¬(D barks nil)) => (M h1 nil)");
+        interactive.process("(M ~ man, ¬(M h1 nil)) => (M is happy)");
+    }
+}
+
+TEST_CASE("stratified: check mode names a fact once after it was pruned and derived again")
+{
+    // A record is made when a negating rule creates a fact, and only a
+    // re-test that finds the fact absent removes it. A fact that has
+    // been pruned and then re-derived before such a re-test thus
+    // accumulates two records, which simultaneously lose their
+    // justification: the report listed the fact twice and counted two.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        define_happy_rules(interactive);
+        interactive.process("bill ~ man");
+        interactive.process(".prune-facts bill is happy");
+        collector.clear();
+        interactive.process("bill owns max");
+        REQUIRE(any_output_contains(collector, "(bill is happy) ⇐"));
+        collector.clear();
+        CHECK_THROWS_WITH_AS(interactive.process("max ~ dog"), doctest::Contains("Negation check: 1 fact(s)"), std::runtime_error);
+        CHECK(count_outputs_containing(collector, "bill is happy  (by") == 1); });
+}
+
+TEST_CASE("negation records: by default a later fact that defeats a negation conclusion goes unreported")
+{
+    // The REPL's default setting: semi-naive evaluation, check mode
+    // disabled, no records kept. A negation is evaluated just once, and its
+    // conclusion remains fixed; thus, `bill is happy`, which was drawn when
+    // bill had no dog, persists even after he acquires a dog that does not
+    // bark, and nothing reports it. In check mode -- the default
+    // for the test binary -- the run fails here instead, hence the case
+    // requires `.semi-naive on`, which is the setting a user typically has.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process(".semi-naive on");
+        define_happy_rules(interactive);
+        interactive.process("bill ~ man");
+        interactive.process("bill owns max");
+        collector.clear();
+        CHECK_NOTHROW(interactive.process("max ~ dog"));
+        CHECK(any_output_contains(collector, "(bill h1 nil) ⇐"));
+        CHECK_FALSE(any_output_contains(collector, "no longer justified"));
+        interactive.process("X is happy");
+        CHECK(answers_contain(collector, "bill is happy")); });
+}
+
+TEST_CASE("negation records: a later fact that defeats a negation conclusion is named in a warning")
+{
+    // With `.negation-records on`, the facts generated by a negating rule
+    // are logged and re-evaluated following every execution, similar to
+    // check mode, yet a fact that is lost triggers a warning instead of an
+    // error: the execution proceeds successfully, and the fact remains,
+    // since facts only grow over time. A front end may subsequently inform
+    // the user that a later statement has defeated a prior "not provably"
+    // conclusion.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process(".semi-naive on");
+        interactive.process(".negation-records on");
+        define_happy_rules(interactive);
+        interactive.process("bill ~ man");
+        interactive.process("bill owns max");
+        collector.clear();
+        CHECK_NOTHROW(interactive.process("max ~ dog"));
+        CHECK(any_output_contains(collector, "Warning: 1 fact(s) no longer justified"));
+        CHECK(any_output_contains(collector, "bill is happy  (by"));
+        CHECK(any_output_contains(collector, "=> (M is happy))"));
+        interactive.process("X is happy");
+        CHECK(answers_contain(collector, "bill is happy")); });
+}
+
+TEST_CASE("negation records: the warning names the fact that lost its support, not what that fact blocks")
+{
+    // A record holds a fact that originated from a negating rule and that
+    // rule itself; the warning identifies no other entity. What a stale fact
+    // keeps from being inferred becomes apparent only when the rules are
+    // evaluated as though the fact had been removed. This is equivalent to
+    // retracting it, yet zelph withdraws no fact, hence the conclusion that
+    // ought to result remains unestablished, and nothing names it.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process(".semi-naive on");
+        interactive.process(".negation-records on");
+
+        SUBCASE("a helper fact keeps blocking")
+        {
+            define_happy_rules(interactive);
+            interactive.process("john owns fido");
+            interactive.process("fido ~ dog");
+            interactive.process("john ~ man");
+            collector.clear();
+            CHECK_NOTHROW(interactive.process("fido barks nil"));
+            CHECK(any_output_contains(collector, "john h1 nil  (by"));
+            CHECK_FALSE(any_output_contains(collector, "john is happy"));
+            interactive.process(".run");
+            interactive.process("X is happy");
+            CHECK_FALSE(answers_contain(collector, "john is happy"));
+        }
+        SUBCASE("the second link of a chain stays underived")
+        {
+            interactive.process("(X isa-man nil, ¬(X isa-married nil)) => (X isa-bachelor nil)");
+            interactive.process("(X isa-man nil, ¬(X isa-bachelor nil)) => (X isa-husband nil)");
+            interactive.process("john isa-man nil");
+            collector.clear();
+            CHECK_NOTHROW(interactive.process("john isa-married nil"));
+            CHECK(any_output_contains(collector, "john isa-bachelor nil  (by"));
+            interactive.process("X isa-husband Y");
+            CHECK_FALSE(answers_contain(collector, "john isa-husband nil"));
+        }
+        SUBCASE("a fact derived from it without a negation is not named")
+        {
+            define_happy_rules(interactive);
+            interactive.process("(M is happy) => (M smiles nil)");
+            interactive.process("bill ~ man");
+            interactive.process("bill owns max");
+            collector.clear();
+            CHECK_NOTHROW(interactive.process("max ~ dog"));
+            CHECK(any_output_contains(collector, "Warning: 1 fact(s) no longer justified"));
+            CHECK_FALSE(any_output_contains(collector, "bill smiles nil  (by"));
+            interactive.process("X smiles Y");
+            CHECK(answers_contain(collector, "bill smiles nil"));
+        } });
+}
+
+TEST_CASE("negation records: every kind of run reports a defeated fact, and reports it once")
+{
+    // In a seeded run, the records whose negated predicates have acquired new
+    // facts since the last run are re-examined, whereas a full run evaluates
+    // all records, and a .run-once, which does not reach a fixpoint, performs
+    // no tests and leaves the records untouched for the next run. A reported
+    // record is discarded, thus ensuring that a later run remains silent.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process(".semi-naive on");
+        interactive.process(".negation-records on");
+        define_happy_rules(interactive);
+        interactive.process("bill ~ man");
+
+        SUBCASE("auto-run")
+        {
+            interactive.process("bill owns max");
+            collector.clear();
+            interactive.process("max ~ dog");
+        }
+        SUBCASE(".run-delta")
+        {
+            interactive.process(".auto-run");
+            interactive.process("bill owns max");
+            interactive.process("max ~ dog");
+            collector.clear();
+            interactive.process(".run-delta");
+        }
+        SUBCASE(".run-delta after the negated fact itself was stated")
+        {
+            // The run derives nothing, hence only the facts carried over
+            // from before the run determine which records to re-test.
+            interactive.process(".auto-run");
+            interactive.process("bill h1 nil");
+            collector.clear();
+            interactive.process(".run-delta");
+        }
+        SUBCASE("a full .run")
+        {
+            interactive.process(".auto-run");
+            interactive.process("bill owns max");
+            interactive.process("max ~ dog");
+            collector.clear();
+            interactive.process(".run");
+        }
+        SUBCASE("a .run-once, then a .run")
+        {
+            interactive.process(".auto-run");
+            interactive.process("bill owns max");
+            interactive.process("max ~ dog");
+            collector.clear();
+            interactive.process(".run-once");
+            CHECK(any_output_contains(collector, "(bill h1 nil) ⇐"));
+            CHECK_FALSE(any_output_contains(collector, "no longer justified"));
+            interactive.process(".run");
+        }
+
+        CHECK(any_output_contains(collector, "bill is happy  (by"));
+        collector.clear();
+        interactive.process(".run");
+        CHECK_FALSE(any_output_contains(collector, "no longer justified")); });
+}
+
+TEST_CASE("negation records: classic evaluation re-tests them too")
+{
+    // Classic evaluation overlooks predicates that gained new facts,
+    // causing every record to undergo re-testing following each run.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process(".semi-naive off");
+        interactive.process(".negation-records on");
+        define_happy_rules(interactive);
+        interactive.process("bill ~ man");
+        interactive.process("bill owns max");
+        collector.clear();
+        CHECK_NOTHROW(interactive.process("max ~ dog"));
+        CHECK(any_output_contains(collector, "bill is happy  (by")); });
+}
+
+TEST_CASE("negation records: in check mode a defeated fact still fails the run")
+{
+    // Check mode preserves records and re-executes tests identically,
+    // and it is meant for testing purposes: there, a lost fact stays an
+    // error regardless of what the switch says.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process(".negation-records on");
+        define_happy_rules(interactive);
+        interactive.process("bill ~ man");
+        interactive.process("bill owns max");
+        collector.clear();
+        CHECK_THROWS_WITH_AS(interactive.process("max ~ dog"), doctest::Contains("negated premise"), std::runtime_error);
+        CHECK(any_output_contains(collector, "Negation check: 1 fact(s) no longer justified"));
+        CHECK_FALSE(any_output_contains(collector, "Warning:")); });
+}
+
+TEST_CASE("negation records: a recorded fact that was pruned is not reported")
+{
+    // When a record's fact has disappeared, it has nothing left to report,
+    // and a re-test causes it to be discarded. A fact that is re-derived
+    // generates a second record, and is reported just once, as with any
+    // other.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process(".semi-naive on");
+        interactive.process(".negation-records on");
+        define_happy_rules(interactive);
+        interactive.process("bill ~ man");
+        interactive.process(".prune-facts bill is happy");
+
+        SUBCASE("pruned")
+        {
+            interactive.process(".auto-run");
+            interactive.process("bill owns max");
+            interactive.process("max ~ dog");
+            collector.clear();
+            interactive.process(".run");
+            CHECK(any_output_contains(collector, "(bill h1 nil) ⇐"));
+            CHECK_FALSE(any_output_contains(collector, "no longer justified"));
+            interactive.process("X is happy");
+            CHECK_FALSE(answers_contain(collector, "bill is happy"));
+        }
+        SUBCASE("pruned and derived again")
+        {
+            interactive.process("bill owns max");
+            collector.clear();
+            interactive.process("max ~ dog");
+            CHECK(any_output_contains(collector, "Warning: 1 fact(s) no longer justified"));
+            CHECK(count_outputs_containing(collector, "bill is happy  (by") == 1);
+        } });
+}
+
+TEST_CASE("negation records: a recorded fact dropped with its cluster is not reported")
+{
+    // When a cluster drop occurs, it eliminates the facts that were
+    // generated during the period when the cluster was active, along with
+    // the information that those records would have conveyed.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process(".semi-naive on");
+        interactive.process(".negation-records on");
+        define_happy_rules(interactive);
+        interactive.process("bill owns max");
+        interactive.process(".cluster c");
+        collector.clear();
+        interactive.process("bill ~ man");
+        REQUIRE(any_output_contains(collector, "(bill is happy) ⇐"));
+        interactive.process(".cluster default");
+        interactive.process(".cluster-drop c");
+        collector.clear();
+        CHECK_NOTHROW(interactive.process("bill h1 nil"));
+        CHECK_FALSE(any_output_contains(collector, "no longer justified"));
+        interactive.process("X is happy");
+        CHECK_FALSE(answers_contain(collector, "bill is happy")); });
+}
+
+TEST_CASE("negation records: a load discards them, and the switch stays on")
+{
+    // The records reside in memory beside the graph, not as facts, meaning a
+    // saved network does not carry them. This case was named "they belong to
+    // the session, not to a saved network" and pinned that the session which
+    // saved the network kept its records even after a .load of that file: the
+    // load merged the file into the session node by node, and the ids that the
+    // records name are restored. A load replaces the graph, carrying along
+    // everything that refers to the old graph's nodes, including the records.
+    // Following the load, nothing is reported about any conclusion drawn
+    // before it, whether in the saving session or in a new one. The switch is
+    // a session setting and remains active, so any conclusion drawn after the
+    // load is recorded and reported.
+    const auto file = std::filesystem::temp_directory_path() / "zelph_negation_records.bin";
+    const auto save = [&file](const zelph::console::Interactive& interactive, zelph::io::OutputCollector& collector)
+    {
+        interactive.process(".semi-naive on");
+        interactive.process(".negation-records on");
+        define_happy_rules(interactive);
+        interactive.process("bill ~ man");
+        REQUIRE(any_output_contains(collector, "(bill is happy) ⇐"));
+        interactive.process(".save \"" + file.string() + "\"");
+    };
+    const auto load = [&file](const zelph::console::Interactive& interactive, zelph::io::OutputCollector& collector)
+    {
+        interactive.process(".load \"" + file.string() + "\"");
+        interactive.process(".auto-run"); // a load turns it off
+        collector.clear();
+        interactive.process("bill h1 nil");
+        CHECK_FALSE(any_output_contains(collector, "no longer justified"));
+        interactive.process("X is happy");
+        CHECK(answers_contain(collector, "bill is happy"));
+
+        // The switch remains active, and a conclusion derived from the loaded
+        // graph is recorded and reported.
+        collector.clear();
+        interactive.process(R"(%(zelph/out (string/format "records=%j" (zelph/negation-records))))");
+        CHECK(any_output_contains(collector, "records=true"));
+        interactive.process("carl ~ man");
+        collector.clear();
+        interactive.process("carl h1 nil");
+        CHECK(any_output_contains(collector, "carl is happy  (by"));
+        CHECK_FALSE(any_output_contains(collector, "bill is happy  (by"));
+    };
+
+    SUBCASE("the session that saved it")
+    {
+        zelph::io::OutputCollector  collector;
+        zelph::console::Interactive interactive(collector.sink());
+        save(interactive, collector);
+        load(interactive, collector);
+    }
+    SUBCASE("a new session")
+    {
+        {
+            zelph::io::OutputCollector  collector;
+            zelph::console::Interactive interactive(collector.sink());
+            save(interactive, collector);
+        }
+        zelph::io::OutputCollector  collector;
+        zelph::console::Interactive interactive(collector.sink());
+        interactive.process(".semi-naive on");
+        interactive.process(".negation-records on");
+        load(interactive, collector);
+    }
+    SUBCASE("what the latest run named goes with them")
+    {
+        // What the latest run named is a list of nodes from the replaced
+        // graph. It is read within the same block as the load operation,
+        // ensuring that no intervening run clears its contents.
+        zelph::io::OutputCollector  collector;
+        zelph::console::Interactive interactive(collector.sink());
+        save(interactive, collector);
+        interactive.process("bill owns max");
+        interactive.process("max ~ dog");
+        collector.clear();
+        interactive.process(R"(%(do (def before (length (zelph/defeated))) (zelph/load ")" + file.generic_string()
+                            + R"(") (zelph/out (string/format "before=%d after=%d" before (length (zelph/defeated))))))");
+        CHECK(any_output_contains(collector, "before=1 after=0"));
+    }
+    std::filesystem::remove(file);
+}
+
+TEST_CASE("negation records: the switch shows its state, and off drops the records")
+{
+    // Off is the default setting, since the records expand in proportion
+    // to the facts that negating rules derive, and disabling it is what
+    // releases the records: a fact logged before deactivation is not
+    // reported once reactivated. .new returns the switch to its default
+    // state, just as it does for every engine setting.
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+    interactive.process(".semi-naive on");
+
+    collector.clear();
+    interactive.process(".negation-records");
+    CHECK(any_output_contains(collector, "Negation records: off"));
+    CHECK_THROWS_WITH_AS(interactive.process(".negation-records maybe"), doctest::Contains("Usage: .negation-records [on|off]"), std::runtime_error);
+
+    interactive.process(".negation-records on");
+    define_happy_rules(interactive);
+    interactive.process("bill ~ man");
+    interactive.process(".negation-records off");
+    interactive.process("bill owns max");
+    collector.clear();
+    interactive.process("max ~ dog");
+    CHECK_FALSE(any_output_contains(collector, "no longer justified"));
+
+    collector.clear();
+    interactive.process(".negation-records on");
+    interactive.process("carl ~ man");
+    interactive.process("carl owns rex");
+    interactive.process("rex ~ dog");
+    CHECK(count_outputs_containing(collector, "no longer justified") == 1);
+    CHECK(any_output_contains(collector, "carl is happy  (by"));
+    CHECK_FALSE(any_output_contains(collector, "bill is happy  (by"));
+
+    interactive.process(".new");
+    collector.clear();
+    interactive.process(".negation-records");
+    CHECK(any_output_contains(collector, "Negation records: off"));
+}
+
+TEST_CASE("negation records: zelph/defeated returns what the latest run named")
+{
+    // A program executing the engine through Janet does not read the
+    // warning, leaving the identical list as a value: a single [fact rule]
+    // tuple for each fact. The Janet line reads it before the auto-run
+    // that comes after the line, which constitutes an independent run and
+    // finds nothing.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process(".semi-naive on");
+        interactive.process(".negation-records on");
+        define_happy_rules(interactive);
+        interactive.process("bill ~ man");
+        interactive.process("bill owns max");
+        interactive.process("max ~ dog");
+        collector.clear();
+        interactive.process(R"(%(zelph/out (string "defeated " (length (zelph/defeated)) ": " (string/format "%q" (zelph/defeated)))))");
+        CHECK(any_output_contains(collector, "defeated 1: @[(<zelph/node bill is happy> <zelph/node"));
+        CHECK(any_output_contains(collector, "=> (M is happy)>)]"));
+        collector.clear();
+        interactive.process(R"(%(zelph/out (string "defeated " (length (zelph/defeated)))))");
+        CHECK(any_output_contains(collector, "defeated 0")); });
+}
+
+TEST_CASE("negation records: zelph/negation-records reads and sets the switch")
+{
+    // A front end that controls zelph via Janet is unable to input
+    // .negation-records, and the alert triggered by the switch informs the
+    // user that a subsequent assertion has overturned a prior determination.
+    // The binding reads the switch without an argument and sets it with true
+    // or false, then returns the current status, mirroring how zelph/cluster
+    // reads and sets the active cluster. Any value that is not a boolean is
+    // rejected instead of being interpreted as truthy: "off" would switch the
+    // records on.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process(".semi-naive on");
+        const auto state = [&](const std::string& form)
+        {
+            collector.clear();
+            interactive.process("%(zelph/out (string/format \"state=%j\" " + form + "))");
+        };
+
+        state("(zelph/negation-records)");
+        CHECK(any_output_contains(collector, "state=false"));
+        state("(zelph/negation-records true)");
+        CHECK(any_output_contains(collector, "state=true"));
+        collector.clear();
+        interactive.process(".negation-records");
+        CHECK(any_output_contains(collector, "Negation records: on"));
+        CHECK_THROWS(interactive.process(R"(%(zelph/negation-records "off"))"));
+        state("(zelph/negation-records)");
+        CHECK(any_output_contains(collector, "state=true"));
+
+        define_happy_rules(interactive);
+        interactive.process("bill ~ man");
+        interactive.process("bill owns max");
+        collector.clear();
+        interactive.process("max ~ dog");
+        CHECK(any_output_contains(collector, "Warning: 1 fact(s) no longer justified"));
+
+        state("(zelph/negation-records false)");
+        CHECK(any_output_contains(collector, "state=false"));
+        interactive.process("carl ~ man");
+        interactive.process("carl owns rex");
+        collector.clear();
+        interactive.process("rex ~ dog");
+        CHECK_FALSE(any_output_contains(collector, "no longer justified")); });
+}
+
 TEST_CASE("stratified: .strata names the rules that negate what they derive")
 {
     // The prior case's program, which check mode can only report after a run
@@ -1932,6 +2877,42 @@ TEST_CASE("stratified: .strata names the rules that negate what they derive")
         CHECK(line_index(collector, "¬(:q A)", header + 1) != std::string::npos);
         CHECK(line_index(collector, "(:r A) => (:q A)", header + 1) != std::string::npos);
         CHECK(line_index(collector, "¬(:t A)", header + 1) == std::string::npos); });
+}
+
+TEST_CASE("stratified: zelph/strata returns what .strata shows, rule by rule")
+{
+    // A front end that writes rules from sentences -- "if ... is not
+    // provably ..." -- must reject a program the engine cannot order. It
+    // asks the engine rather than re-executing the analysis in Janet,
+    // thereby recognizing the rules already active that do not originate
+    // from it. The program holds two levels, a rule lacking a level, and a
+    // loop involving negation; the declaration that `=>` constitutes a
+    // relation, which the engine keeps among the `=>` facts, is not a rule
+    // and does not appear in the list.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+(:start A, ¬(:blockp A)) => (:q A)
+(:q A) => (:blockr A)
+(:start A, ¬(:blockr A)) => (:s A)
+(:p A, ¬(:t A)) => (:r A)
+(:r A) => (:t A)
+)");
+        collector.clear();
+        interactive.process(R"js(%(defn row [sub] (find |(string/find sub (string ($ :rule))) (zelph/strata))))js");
+        interactive.process(R"js(%(each sub ["¬(:blockp A)" "¬(:blockr A)" "(:q A) => (:blockr A)" "¬(:t A)" "(:r A) => (:t A)"] (def e (row sub)) (zelph/out (string sub " level=" (or (e :level) "none") " stratifiable=" (e :stratifiable)))))js");
+        CHECK(any_output_contains(collector, "¬(:blockp A) level=1 stratifiable=true"));
+        CHECK(any_output_contains(collector, "¬(:blockr A) level=2 stratifiable=true"));
+        CHECK(any_output_contains(collector, "(:q A) => (:blockr A) level=none stratifiable=true"));
+        CHECK(any_output_contains(collector, "¬(:t A) level=1 stratifiable=false"));
+        CHECK(any_output_contains(collector, "(:r A) => (:t A) level=none stratifiable=false"));
+
+        interactive.process(R"js(%(zelph/out (string "rules=" (length (zelph/strata)))))js");
+        interactive.process(R"js(%(zelph/out (string "one cycle: " (= ((row "¬(:t A)") :component) ((row "(:r A) => (:t A)") :component)))))js");
+        interactive.process(R"js(%(zelph/out (string "two components: " (not= ((row "¬(:blockp A)") :component) ((row "¬(:blockr A)") :component)))))js");
+        CHECK(any_output_contains(collector, "rules=5"));
+        CHECK(any_output_contains(collector, "one cycle: true"));
+        CHECK(any_output_contains(collector, "two components: true")); });
 }
 
 TEST_CASE("stratified: a negated condition depends on the predicates of its pattern, not on the ~ of its own fact")
@@ -2070,6 +3051,42 @@ TEST_CASE("stratified: .strata orders a negation after a rule that declares a re
         CHECK(answers_contain(collector, "blk is transitive"));
         CHECK(answers_contain(collector, "w blk w"));
         CHECK_FALSE(any_output_contains(collector, "w s w")); });
+}
+
+TEST_CASE("stratified: while a rule over predicates is in force, a negation waits for every rule over its predicate")
+{
+    // The transitivity rule derives (w linked c) through (w linked b), which
+    // the first rule below derives, and through (b linked c). When compared
+    // by predicate and object, the negation of (X linked c) would not wait
+    // for a rule that derives (X linked b): both negating rules would operate
+    // at the same level, leading to (w free yes) being concluded even though
+    // (w linked c) is true. The set of predicates that such a rule extends
+    // depends on the facts that declare them, hence objects are not compared
+    // during its active period.
+    static const std::string facts  = R"(
+(R is transitive, A R B, B R C) => (A R C)
+linked is transitive
+b linked c
+w start z
+)";
+    static const std::string first  = "(X start Y, ¬(X off yes)) => (X linked b)\n";
+    static const std::string second = "(X start Y, ¬(X linked c)) => (X free yes)\n";
+
+    const auto check_model = [](auto& collector, auto& interactive)
+    {
+        interactive.process("X linked c");
+        interactive.process("X free yes");
+        CHECK(answers_contain(collector, "w linked c"));
+        CHECK_FALSE(answers_contain(collector, "w free yes"));
+
+        collector.clear();
+        interactive.process(".strata");
+        CHECK(any_output_contains(collector, "2 negation levels"));
+        CHECK(line_index(collector, "Level 2:") < line_index(collector, "¬(X linked c)"));
+    };
+
+    SUBCASE("the rule deriving (X linked b) first") { one_run_model(facts + first + second, check_model); }
+    SUBCASE("the negating rule first") { one_run_model(facts + second + first, check_model); }
 }
 
 TEST_CASE("stratified: a rule over predicates that reads a second predicate variable is not left out")

@@ -44,7 +44,7 @@ One engine per process. The Janet script engine keeps a process-wide instance po
 | `zelph_list_elements(engine, list, out_nodes, count)` | The elements of a cons list, in order – the inverse of `zelph_list`. `nil` has none; a node that is not a list is an error, not an empty answer. |
 | `zelph_name(engine, node, lang, out_name)` | The node's name, or null when it has none — an answer, not an error. Free with `zelph_string_free`. |
 | `zelph_sources(engine, predicate, target, out_nodes, count)` | Every subject of a fact `(X predicate target)`. Directional: `(target predicate X)` does not contribute. |
-| `zelph_load(engine, path)` | As the `.load` command, including format detection. |
+| `zelph_load(engine, path)` | As with the `.load` command, including format detection: a saved network replaces the graph, and a dump is incorporated into it. The overwritten graph takes the variables `zelph_variable` associated by name along with it; a node or net handle the caller kept names whatever carries the same identifier afterwards, or else nothing. |
 | `zelph_save(engine, path)` | As the `.save` command. The path must end in `.bin`. |
 
 Structural identity is the property to build on: `zelph_list` over the same nodes returns the same node, because the graph interns structurally identical subgraphs. Two callers that describe the same structure arrive at the same identifier without agreeing on one.

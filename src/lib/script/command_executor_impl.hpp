@@ -83,6 +83,9 @@ namespace zelph::console
         std::size_t import_file(const std::string& file, const std::vector<std::string>& args = {}, ScriptRole role = ScriptRole::Module, std::size_t lines_done = 0) const;
 #ifndef __EMSCRIPTEN__
         void cmd_load(const std::vector<std::string>& cmd);
+        // Executes `load`; refer to the definition to understand what a load
+        // that replaced the graph carries with it.
+        void load_into_session(const std::function<void()>& load);
 #endif
 #ifndef __EMSCRIPTEN__
         void cmd_load_partial(const std::vector<std::string>& cmd);
@@ -182,6 +185,7 @@ namespace zelph::console
         void cmd_semi_naive(const std::vector<std::string>& cmd);
         void cmd_fact_stores(const std::vector<std::string>& cmd);
         void cmd_contradiction_records(const std::vector<std::string>& cmd);
+        void cmd_negation_records(const std::vector<std::string>& cmd);
         void cmd_explain_budget(const std::vector<std::string>& cmd);
 
         // --- Implemented in commands_cluster.cpp ---
