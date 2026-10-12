@@ -493,7 +493,9 @@ impl Engine {
         Ok(Node(node))
     }
 
-    /// Mark a fact pattern as a negation, i.e. negation as failure.
+    /// The negated condition over a fact pattern, namely negation as
+    /// failure: the fact `((pattern) ~ negation)`, which is returned and
+    /// which a rule takes as its condition instead of the pattern.
     ///
     /// Evaluated against the SATURATED positive fact base, never against
     /// in-flight state - zelph's stratification rule, and what makes "no

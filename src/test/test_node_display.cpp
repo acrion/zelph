@@ -1083,17 +1083,21 @@ TEST_CASE("display: a cons cell reads the same whether some list is a predicate 
 
 TEST_CASE("display: the negation of a rule condition stays with the rule")
 {
-    // "¬" tags the pattern NODE, and a ground pattern is hash-consed, so a
-    // pattern negated in one rule carries the tag wherever it occurs. The
-    // renderer wrote the tag into the term unconditionally, which made an
-    // ASSERTED fact print as its own negation:
+    // When "¬" served as a tag on the pattern NODE, a ground pattern that was
+    // negated within a single rule carried the tag at every occurrence (it is
+    // hash-consed), and the renderer wrote it into the term, causing an
+    // ASSERTED fact to print as its own negation:
     //
     //     .explain (a p b)  ->  ¬(a p b)  [axiom]
     //
-    // -- neither true nor re-enterable, since a top-level "¬" is a different
-    // statement whose meaning is undecided. The operator is written where it
-    // is syntactically part of the statement (a rule's condition slot, a
-    // member of its conjunction set) and reported as a PROPERTY elsewhere.
+    // -- neither true nor re-enterable, because a top-level "¬" constitutes a
+    // different statement whose meaning remains undecided. `¬(P)` is now the
+    // fact `((P) ~ negation)`, thus the pattern P carries no tag: it prints
+    // as itself in every context, and neither `.node` nor `.explain` has
+    // anything to report beside it. The negated condition prints as `¬(P)`
+    // precisely where it is syntactically part of the statement (in a rule's
+    // condition slot, or as a member of its conjunction set), and as the fact
+    // it is in all other locations.
     run_both_modes([](auto& collector, auto& interactive)
                    {
         interactive.process("a p b");
@@ -1118,17 +1122,18 @@ TEST_CASE("display: the negation of a rule condition stays with the rule")
         interactive.process(".node a p b");
         CHECK(any_output_contains(collector, "Representation: a p b"));
         CHECK_FALSE(any_output_contains(collector, "Representation: ¬"));
-        CHECK(any_output_contains(collector, "Negated by a rule: yes"));
+        CHECK_FALSE(any_output_contains(collector, "Negated by a rule"));
 
         collector.clear();
         interactive.process(".explain (a p b)");
-        CHECK(any_output_contains(collector, "a p b  [axiom; negated by a rule]"));
+        CHECK(any_output_contains(collector, "a p b  [axiom]"));
+        CHECK_FALSE(any_output_contains(collector, "negated by a rule"));
 
-        // A fact no rule negates says nothing about negation.
-        interactive.process("m rel n");
+        // Outside a condition slot, the negated condition is the fact it is,
+        // and that line re-enters as the same node.
         collector.clear();
-        interactive.process(".node m rel n");
-        CHECK_FALSE(any_output_contains(collector, "Negated by a rule"));
+        interactive.process(".node (a p b) ~ negation");
+        CHECK(any_output_contains(collector, "Representation: (a p b) ~ negation"));
 
         // The premise a NAF condition failed to find is still printed
         // negated -- there it IS the statement being made.
@@ -1137,6 +1142,61 @@ TEST_CASE("display: the negation of a rule condition stays with the rule")
         collector.clear();
         interactive.process(".explain (u r v)");
         CHECK(any_output_contains(collector, "¬(u q v)")); });
+}
+
+TEST_CASE("display: the negated condition of a rule a statement mentions prints as the fact it is")
+{
+    // A plain statement rejects `¬` at any level, including the rule it
+    // mentions, but the condition of that rule printed as `¬(P)`: the echo
+    // of the statement, and every answer naming it, came back as an error
+    // when entered. When a statement stands above the rule, the condition
+    // prints as the fact it represents, which re-enters as the identical
+    // node.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        collector.clear();
+        interactive.process("bob says (((a p b) ~ negation) => (c q d))");
+        const std::string echo = normalize(last_out_text(collector));
+        CHECK(echo.find("¬") == std::string::npos);
+
+        const std::size_t before = node_count(collector, interactive);
+        CHECK_NOTHROW(interactive.process(echo));
+        CHECK(node_count(collector, interactive) == before);
+
+        // A member of the mentioned rule's condition set, too. (Since its
+        // variables are fresh with each entry, only the entry itself is
+        // asked.)
+        collector.clear();
+        interactive.process("bob says ((X go Y, ((X p b) ~ negation)) => (X ok Y))");
+        const std::string member_echo = normalize(last_out_text(collector));
+        CHECK(member_echo.find("¬") == std::string::npos);
+        CHECK_NOTHROW(interactive.process(member_echo));
+
+        // When only rules stand above it, `¬` is accepted and printed.
+        collector.clear();
+        interactive.process("(G is g) => (¬(X p G) => (X q G))");
+        CHECK(any_output_contains(collector, "¬(X p G)")); });
+}
+
+// A query consisting of a single negation prints its condition exactly as
+// entered, appearing both in the echo and in the answer: "¬(X p b)", which
+// re-enters as the identical query. The fact form "(X p b) ~ negation" would
+// also re-enter as the same query, yet the reader typed "¬" and would be
+// presented with an alternative notation for that single condition.
+TEST_CASE("display: a negation typed as a query echoes and answers as it was typed")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        collector.clear();
+        interactive.process("¬(X p b)");
+        CHECK(any_output_starts_with(collector, "¬(X p b)"));
+        const std::vector<std::string> answers = collect_answers(collector);
+        REQUIRE(answers == std::vector<std::string>{"¬(X p b)"});
+
+        collector.clear();
+        interactive.process(answers.front());
+        CHECK(any_output_starts_with(collector, "¬(X p b)"));
+        CHECK(collect_answers(collector) == answers); });
 }
 
 // .mermaid took a single name or ID while .node took the fact itself, so a
@@ -1483,13 +1543,15 @@ TEST_CASE("display: a rule prints its conditions in the surface syntax")
 
 TEST_CASE("display: a rule's conclusion is not printed negated because a condition negates it")
 {
-    // The negation tag is positioned on the pattern node, while the rule
-    // serves as the parent for both its conclusion and its condition. A rule
-    // that derives the exact pattern which one of its conditions negates --
-    // the smallest program .strata reports as not stratifiable -- therefore
-    // printed its conclusion as (¬(:q A)), and attempting to input that line
-    // once more resulted in failure: "¬" carries no meaning when used as a
-    // conclusion.
+    // When the negation appeared as a tag attached to the pattern node, a
+    // rule that derives the exact pattern which one of its conditions
+    // negates -- the smallest program that .strata reports as
+    // non-stratifiable -- displayed its conclusion as (¬(:q A)), since the
+    // rule serves as the parent for both its conclusion and that condition.
+    // Attempting to input that line again resulted in failure: "¬" holds no
+    // significance when used as a conclusion. The negated condition stands
+    // as an independent node, and the conclusion corresponds to the pattern
+    // being negated.
     run_both_modes([](auto& collector, auto& interactive)
                    {
         collector.clear();
@@ -1515,7 +1577,6 @@ TEST_CASE("display: a rule's conclusion is not printed negated because a conditi
 
 TEST_CASE("display: the rule-pattern marking is never printed in place of its node")
 {
-    // Same ruling as for the negation tag above, reached from the other side.
     // The marking is a fact ABOUT a node, and the proxy path of the renderer
     // -- which shows an anonymous, structureless node as the concept it is an
     // instance of -- read it as such a concept. A rule then printed as

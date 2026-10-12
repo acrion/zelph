@@ -148,6 +148,29 @@ A third mode is the second one seen from the other side. `¬≈net(S P O)` succe
 
 A net that cannot be consulted fails the condition in _both_ readings. "The net does not confirm this" and "there is no net" are different statements, and letting the second satisfy `¬≈` would turn a misspelled net name into a derivation engine: every rule consulting it would start firing on everything. The same holds for an object the output layer does not contain – one the net has no opinion about rather than one it rejects.
 
+### `≈` in a query
+
+A [query](queries.md#conditions-in-queries) consists of a condition list that is evaluated just once, so `≈` carries the same meaning in a query as it does in a rule. When the object is a variable, `≈net(S P X)` standing alone on a line functions as a query in generator mode, producing the condition’s own fact for each object that the net confirms. Its echo re-enters as the identical query; an answer is ground, and when typed back, it becomes a statement that asserts, in which the operator is refused. A ground pattern under `≈` next to a condition containing a variable constitutes a test, and the query asserts nothing below the operator, hence `S relH O` fails to locate any `s2 relH c1` afterwards:
+
+```
+zelph> s2 in HIn
+zelph> c1 in HOut
+zelph> c2 in HOut
+zelph> %(zelph/nn-connect "s2" "c1" 0.9)
+zelph> %(zelph/nn-connect "s2" "c2" 0.1)
+zelph> hnet nn-layers <HIn HOut>
+zelph> ≈hnet(s2 relH X)
+(s2 relH X) nn hnet
+Answer: (s2 relH c1) nn hnet
+zelph> (s2 relH X) nn hnet
+Answer: (s2 relH c1) nn hnet
+zelph> s2 marked yes
+zelph> X marked yes, ≈hnet(s2 relH c1)
+Answer: {((s2 relH c1) nn hnet) (s2 marked yes)}
+zelph> X marked yes, ≈hnet(s2 relH c2)
+zelph> S relH O
+```
+
 ### Calibration: clamp, not sigmoid
 
 Scores are calibrated by clamping to `[0, 1]`. A sigmoid may look like the textbook choice, but it would be wrong here: training uses one-hot targets in `{0, 1}` under squared-error loss, so raw scores concentrate near 0 (negatives) and 1 (positives). A sigmoid would place the decision threshold at raw score 0 — which nearly every score passes after training — whereas clamping puts the boundary at raw 0.5, exactly between the two target values.
@@ -169,7 +192,7 @@ If the deduced fact already exists, its stored probability is _not_ modified —
 
 - The inner pattern must be a plain S-P-O triple with exactly one object.
 - Subject and predicate must be bound when the condition is evaluated (the automatic ordering normally guarantees this).
-- `≈` conditions are not supported inside `.prune-facts` / `.prune-nodes` patterns.
+- A condition using `≈` does not function as a standalone `.prune-facts` or `.prune-nodes` pattern: it fails to match any fact for removal, causing the command to reject it. Within a conjunction inside a `.prune-nodes` pattern, it acts as a filter, just as it does within a rule.
 - A fact derived through an `≈` condition cannot be reconstructed by `.explain` (see below).
 
 If the named net has no `nn-layers` definition — a misspelled name, or a

@@ -27,6 +27,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #include "test_helpers.hpp"
 
+#include <algorithm>
 #include <chrono>
 #include <filesystem>
 #include <string>
@@ -1256,7 +1257,7 @@ elem2 partoflist mylist
 elem3 partoflist mylist
 elem4 partoflist mylist
 elem5 partoflist mylist
-(A partoflist L, *(A --> X) ~ negation) => (A "is last of" L)
+(A partoflist L, ((A --> X) ~ negation)) => (A "is last of" L)
 )");
         CHECK(any_output_starts_with(collector, "( elem5 \"is last of\" mylist )")); });
 }
@@ -1274,6 +1275,451 @@ plant2 is yellow
         // plant is both yellow and green, so rule does not fire for plant.
         // plant2 is yellow but not green, so the rule fires.
         CHECK(any_output_starts_with(collector, "( plant2 \"is not\" green )")); });
+}
+
+// ---------------------------------------------------------------------------
+// What a negated condition IS. `¬(P)` builds the fact `((P) ~ negation)`,
+// and the rule names that fact as its condition, not P: the polarity resides
+// within the node. Originally, it was a tag applied to P, and P is shared --
+// a ground pattern corresponds to a single node regardless of where it
+// appears (a node IS its hash), a variable pattern corresponds to a single
+// node within the statement that wrote it -- thus, every other rule that used
+// P read it as negated, irrespective of which rule had been entered first.
+// The cases below represent the shapes that led to incorrect answers.
+// ---------------------------------------------------------------------------
+
+namespace
+{
+    // The rules the `.list-rules` command outputs, one entry per rule.
+    std::vector<std::string> listed_rule_texts(zelph::io::OutputCollector& collector, const zelph::console::Interactive& interactive)
+    {
+        collector.clear();
+        interactive.process(".list-rules");
+        std::vector<std::string> rules;
+        for (const auto& e : collector.events())
+        {
+            const std::string text = normalize(e.text);
+            if (text.find("=>") != std::string::npos) rules.push_back(text);
+        }
+        return rules;
+    }
+
+    bool listed(const std::vector<std::string>& rules, const std::string& rule)
+    {
+        return std::find(rules.begin(), rules.end(), normalize(rule)) != rules.end();
+    }
+}
+
+TEST_CASE("negation: a rule that negates a ground pattern leaves a positive rule over it positive, in either order")
+{
+    // `(a p b) => (c q d)` beside `(X go Y, ¬(a p b)) => (X ok Y)` derived
+    // `(c q d) ⇐ ¬(a p b)` and listed the first rule as
+    // `(¬(a p b)) => (c q d)` -- the rule that had been compromised was
+    // never the one that wrote the `¬`. Entered in reverse, the echo of the
+    // typed positive rule had already been negated.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        const auto check = [&]
+        {
+            collector.clear();
+            interactive.process("C q D");
+            CHECK(collect_answers(collector).empty());
+
+            collector.clear();
+            interactive.process("S ok O");
+            CHECK(collect_answers(collector) == std::vector<std::string>{"t ok k"});
+
+            const auto rules = listed_rule_texts(collector, interactive);
+            CHECK(listed(rules, "(a p b) => (c q d)"));
+            CHECK_FALSE(listed(rules, "(¬(a p b)) => (c q d)"));
+        };
+
+        interactive.process("t go k");
+        SUBCASE("the positive rule first")
+        {
+            process_lines(interactive, "(a p b) => (c q d)\n(X go Y, ¬(a p b)) => (X ok Y)");
+            check();
+        }
+        SUBCASE("the negating rule first")
+        {
+            process_lines(interactive, "(X go Y, ¬(a p b)) => (X ok Y)\n(a p b) => (c q d)");
+            check();
+        } });
+}
+
+TEST_CASE("negation: a negated ground pattern stays positive in another rule's condition set")
+{
+    // The identical leak across a member within a comma list: when `k r m`
+    // was present, the rule `(a p b, k r m) => (c q d)` fired on the absence
+    // of `a p b` once it was negated by a different rule.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, "(a p b, k r m) => (c q d)\n(X go Y, ¬(a p b)) => (X ok Y)\nk r m");
+        collector.clear();
+        interactive.process("C q D");
+        CHECK(collect_answers(collector).empty()); });
+}
+
+TEST_CASE("negation: a positive use of a ground pattern leaves a negating rule negated")
+{
+    // The direction unaffected by order: the tag existed first, and
+    // `(X go Y, (a p b)) => (X ok Y)` was read as `¬(a p b)` as soon as it
+    // was entered, thus `t go k` by itself derived `t ok k`.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, "¬(a p b) => (c q d)\n(X go Y, (a p b)) => (X ok Y)\nt go k");
+        collector.clear();
+        interactive.process("S ok O");
+        CHECK(collect_answers(collector).empty());
+
+        collector.clear();
+        interactive.process("C q D");
+        CHECK(collect_answers(collector) == std::vector<std::string>{"c q d"}); });
+}
+
+TEST_CASE("negation: a positive rule over an asserted fact fires although another rule negates the fact")
+{
+    // Data, a negating rule, then a positive rule: `c q d` was never
+    // derived, even though `a p b` holds and the rule says nothing else.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, "a p b\n(X go Y, ¬(a p b)) => (X ok Y)\n(a p b) => (c q d)");
+        collector.clear();
+        interactive.process("C q D");
+        CHECK(collect_answers(collector) == std::vector<std::string>{"c q d"});
+        CHECK(listed(listed_rule_texts(collector, interactive), "(a p b) => (c q d)")); });
+}
+
+TEST_CASE("negation: a negated path condition leaves a positive one over the same path positive")
+{
+    // A path condition IS defined by its tag fact `(P closure mode)`,
+    // meaning that two rules applied to the same ground path reference the
+    // same node -- and `¬` used to tag it.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("t go k");
+        SUBCASE("without the path")
+        {
+            // The positive rule derived `(c q d) ⇐ ¬((a p b) closure one-or-more)`.
+            process_lines(interactive, "(X go Y, ¬(a p⁺ b)) => (X ok Y)\n(a p⁺ b) => (c q d)");
+            collector.clear();
+            interactive.process("C q D");
+            CHECK(collect_answers(collector).empty());
+
+            collector.clear();
+            interactive.process("S ok O");
+            CHECK(collect_answers(collector) == std::vector<std::string>{"t ok k"});
+        }
+        SUBCASE("with the path")
+        {
+            // The positive rule fired before the negating one existed and
+            // was subsequently listed as negated.
+            process_lines(interactive, "a p m\nm p b\n(a p⁺ b) => (c q d)\n(X go Y, ¬(a p⁺ b)) => (X ok Y)");
+            collector.clear();
+            interactive.process("S ok O");
+            CHECK(collect_answers(collector).empty());
+
+            const auto rules = listed_rule_texts(collector, interactive);
+            CHECK(listed(rules, "((a p b) closure one-or-more) => (c q d)"));
+            CHECK_FALSE(listed(rules, "(¬((a p b) closure one-or-more)) => (c q d)"));
+        } });
+}
+
+TEST_CASE("negation: a negated neural condition and a positive one over the same pattern are two conditions")
+{
+    // The neural condition IS defined by its tag fact `(P nn net)`, which is
+    // shared in the same manner as the path condition's, and both rules
+    // listed it negated.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, "(X go Y, ¬≈net(a p b)) => (X ok Y)\n(≈net(a p b)) => (c q d)");
+        const auto rules = listed_rule_texts(collector, interactive);
+        CHECK(listed(rules, "((a p b) nn net) => (c q d)"));
+        CHECK(std::ranges::any_of(rules, [](const std::string& rule)
+                                  { return rule.find("¬((a p b) nn net)") != std::string::npos
+                                        && rule.find("(X ok Y)") != std::string::npos; })); });
+}
+
+TEST_CASE("negation: a rule a generator writes negates its own condition, not a positive rule's")
+{
+    // The condition of the generated rule becomes ground, `¬(a p b)`, and
+    // the tag that the instantiation restated landed on the node
+    // `(a p b) => (c q d)` names as its condition.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, "t go k\n(a p b) => (c q d)\n(T is t) => ((X go Y, ¬(T p b)) => (X ok Y))\na is t");
+        collector.clear();
+        interactive.process("C q D");
+        CHECK(collect_answers(collector).empty());
+
+        collector.clear();
+        interactive.process("S ok O");
+        CHECK(collect_answers(collector) == std::vector<std::string>{"t ok k"});
+
+        const auto rules = listed_rule_texts(collector, interactive);
+        CHECK(listed(rules, "(a p b) => (c q d)"));
+        CHECK_FALSE(listed(rules, "(¬(a p b)) => (c q d)")); });
+}
+
+TEST_CASE("negation: two rules of one statement share a variable pattern, and only the one that negates it reads it negated")
+{
+    // Each statement introduces fresh variables, not each rule, meaning
+    // `(X p b)` represents a single node across both rules a switch writes.
+    // The positive rule came out as `(¬(X p b)) => (X q c)` and derived
+    // `(?? q c) ⇐ ¬(?? p b)` -- a fact concerning a fresh node -- the moment
+    // the switch fired.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, "(s is on) => ((X go Y, ¬(X p b)) => (X ok Y)) ((X p b) => (X q c))\ns is on\nt p b\nu go k");
+        collector.clear();
+        interactive.process("S q c");
+        CHECK(collect_answers(collector) == std::vector<std::string>{"t q c"});
+
+        collector.clear();
+        interactive.process("S ok O");
+        CHECK(collect_answers(collector) == std::vector<std::string>{"u ok k"}); });
+}
+
+TEST_CASE("negation: a rule that negates a pattern can derive a rule that uses it positively")
+{
+    // `(X go Y, ¬(X p b)) => ((X p b) => (X q Y))`: a single statement,
+    // meaning the negated condition and the inner rule's condition formed a
+    // single node; `t go k` derived the inner rule as
+    // `(¬(t p b)) => (t q k)` and with it `t q k` at once -- even though the
+    // inner rule says that `t q k` follows from `t p b`.
+    //
+    // `t p b` is entered after `t go k` derived a rule under `¬(t p b)`:
+    // the state that check mode reports, and a later fact does not take a
+    // derivation back. Hence, the REPL default is requested here.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process(".semi-naive on");
+        process_lines(interactive, "(X go Y, ¬(X p b)) => ((X p b) => (X q Y))\nt go k");
+        collector.clear();
+        interactive.process("S q O");
+        CHECK(collect_answers(collector).empty());
+
+        interactive.process("t p b");
+        collector.clear();
+        interactive.process("S q O");
+        CHECK(collect_answers(collector) == std::vector<std::string>{"t q k"}); });
+}
+
+TEST_CASE("negation: a pattern and its negation are two conditions of one rule")
+{
+    // `(X go Y, (a p b), ¬(a p b))` named one node twice, so the set held
+    // two members and the positive one was lost: the rule listed as
+    // `(¬(a p b), (X go Y)) => (X ok Y)`.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("(X go Y, (a p b), ¬(a p b)) => (X ok Y)");
+        const auto rules = listed_rule_texts(collector, interactive);
+        REQUIRE(rules.size() == 1);
+        CHECK(rules[0].find("¬(a p b)") != std::string::npos);
+        std::string rest = rules[0];
+        rest.erase(rest.find("¬(a p b)"), std::string("¬(a p b)").size());
+        CHECK(rest.find("(a p b)") != std::string::npos); });
+}
+
+TEST_CASE("negation: a rule over rules sees the negated condition")
+{
+    // `G` binds the condition of `¬(a p b) => (c q d)`, which was the node
+    // `a p b` itself, thus causing the rule over rules to read the negated
+    // rule as the positive one and derive `(a p b) seen (c q d)`. It now
+    // binds the negated condition, which prints as the fact it is outside a
+    // condition slot.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, "¬(a p b) => (c q d)\n(G => H) => (G seen H)");
+        collector.clear();
+        interactive.process("S seen O");
+        CHECK(collect_answers(collector) == std::vector<std::string>{"((a p b) ~ negation) seen (c q d)"}); });
+}
+
+TEST_CASE("negation: ((P) ~ negation) in a condition is the negated condition ¬(P)")
+{
+    // `¬(P)` IS the fact `((P) ~ negation)`, meaning that writing the fact
+    // out builds the identical condition, the identical rule -- the second
+    // line serves as its duplicate -- and the listing prints it in the form
+    // `¬(P)`. Written as a fact concerning the pattern, it constituted an
+    // ordinary positive condition over tag facts.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, "(X go Y, ¬(X p b)) => (X ok Y)\n(X go Y, ((X p b) ~ negation)) => (X ok Y)\nu p b\nt go k\nu go k");
+        const auto rules = listed_rule_texts(collector, interactive);
+        CHECK(rules.size() == 1);
+
+        collector.clear();
+        interactive.process("S ok O");
+        CHECK(collect_answers(collector) == std::vector<std::string>{"t ok k"}); });
+}
+
+TEST_CASE("negation: ((P) ~ negation) over a path or a neural condition is that condition negated")
+{
+    // The check for an operator positioned beneath the top of a condition
+    // read the fact written out as an ordinary fact, with its subject being
+    // an argument, thereby refusing `((X r⁺ c) ~ negation)` and
+    // `(≈net(X r c) ~ negation)` for a marker occupying the location of the
+    // condition -- the very spelling that the refusal of `*(P) ~ negation`
+    // recommends.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"((X go Y, ¬(X r⁺ c)) => (X ok Y)
+(X go Y, ((X r⁺ c) ~ negation)) => (X ok Y)
+(X go Y, ¬≈net(X r c)) => (X fine Y)
+(X go Y, (≈net(X r c) ~ negation)) => (X fine Y))");
+        CHECK(listed_rule_texts(collector, interactive).size() == 2);
+
+        // The path is walked under the negation: t reaches c, u fails to.
+        process_lines(interactive, "t r m\nm r c\nt go k\nu go k");
+        interactive.run(true, false, false);
+        collector.clear();
+        interactive.process("S ok O");
+        CHECK(collect_answers(collector) == std::vector<std::string>{"u ok k"}); });
+}
+
+TEST_CASE("negation: the focus spelling *(P) ~ negation is refused wherever it would land in a rule")
+{
+    // The focus makes `*(P) ~ negation` evaluate to P, meaning that within a
+    // rule, it is the POSITIVE condition P, accompanied by a fact regarding P
+    // that nothing reads. It reads like a negation yet is not one, thus it is
+    // refused before anything is built, at every location where a rule can
+    // hold it.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        const std::size_t before = node_count(collector, interactive);
+        for (const char* statement : {"(X go Y, *(X p b) ~ negation) => (X ok Y)",            // a member of a comma list
+                                      "(*(a p b) ~ negation) => (c q d)",                     // the one condition
+                                      "(X go Y, (*(X p b) ~ negation) q r) => (X ok Y)",      // within a condition
+                                      "(c q d) => (*(a p b) ~ negation)",                     // a consequence
+                                      "alice says ((*(a p b) ~ negation) => (c q d))",        // a rule a statement mentions
+                                      "(T is t) => ((X go Y, *(T p b) ~ negation) => (X ok Y))"}) // a rule that a generator writes
+        {
+            CAPTURE(statement);
+            CHECK_THROWS_WITH_AS(interactive.process(statement),
+                                 doctest::Contains("is not a negation"),
+                                 std::runtime_error);
+        }
+        CHECK(node_count(collector, interactive) == before);
+        CHECK(listed_rule_texts(collector, interactive).empty()); });
+}
+
+TEST_CASE("negation: the focus spelling *(P) ~ negation is refused when one of its names is quoted")
+{
+    // A quoted name builds the same node as its unquoted counterpart,
+    // meaning that `"~"`, `"negation"`, and `"=>"` all produce the same
+    // rule. The refusal compared the tokens exactly as they were typed, and
+    // each of the three spellings listed below was accepted as the positive
+    // rule `((a p b), (X go Y)) => (X ok Y)`.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        const std::size_t before = node_count(collector, interactive);
+        for (const char* statement : {R"((X go Y, *(a p b) "~" negation) => (X ok Y))",
+                                      R"((X go Y, *(a p b) ~ "negation") => (X ok Y))",
+                                      R"((X go Y, *(a p b) ~ negation) "=>" (X ok Y))"})
+        {
+            CAPTURE(statement);
+            CHECK_THROWS_WITH_AS(interactive.process(statement),
+                                 doctest::Contains("is not a negation"),
+                                 std::runtime_error);
+        }
+        CHECK(node_count(collector, interactive) == before);
+        CHECK(listed_rule_texts(collector, interactive).empty()); });
+}
+
+TEST_CASE("negation: a negation of a negation is refused when it is entered, in every spelling")
+{
+    // The parser refuses `¬¬(F)`, but the fact written out as
+    // `(((F) ~ negation) ~ negation)` was accepted: it was listed as
+    // `¬((F) ~ negation)`, which re-entered as an error, and each
+    // subsequent run refused the condition. A rule that cannot be read is
+    // refused before being built, just as the sugar is.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        const std::size_t before = node_count(collector, interactive);
+        for (const char* statement : {"(X go Y, (((X p b) ~ negation) ~ negation)) => (X ok Y)",
+                                      "(X go Y, ¬((X p b) ~ negation)) => (X ok Y)",
+                                      "(((a p b) ~ negation) ~ negation) => (c q d)"})
+        {
+            CAPTURE(statement);
+            CHECK_THROWS_WITH_AS(interactive.process(statement),
+                                 doctest::Contains("does not nest"),
+                                 std::runtime_error);
+        }
+        CHECK(node_count(collector, interactive) == before);
+        CHECK(listed_rule_texts(collector, interactive).empty());
+
+        // The same fact is attained by a program via zelph/negate.
+        CHECK_THROWS_WITH_AS(interactive.process(R"(%(zelph/negate (zelph/negate (zelph/fact 'X "p" "b"))))"),
+                             doctest::Contains("does not nest"),
+                             std::runtime_error); });
+}
+
+TEST_CASE("negation: .list-rules of a negated and a positive rule over one pattern re-enters as the same two rules")
+{
+    // The listing printed the positive rule as `(¬(a p b)) => (c q d)`,
+    // which was re-entered as a rule doing the opposite of the one typed.
+    // In this case, the listing is entered into a fresh network, and the
+    // rules initially typed end up being duplicates of what it built.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, "(a p b) => (c q d)\n(X go Y, ¬(a p b)) => (X ok Y)");
+        const auto rules = listed_rule_texts(collector, interactive);
+        REQUIRE(rules.size() == 2);
+
+        interactive.process(".new");
+        for (const auto& rule : rules)
+            interactive.process(rule);
+        process_lines(interactive, "(a p b) => (c q d)\n(X go Y, ¬(a p b)) => (X ok Y)\nt go k");
+        CHECK(listed_rule_texts(collector, interactive).size() == 2);
+
+        collector.clear();
+        interactive.process("C q D");
+        CHECK(collect_answers(collector).empty());
+
+        collector.clear();
+        interactive.process("S ok O");
+        CHECK(collect_answers(collector) == std::vector<std::string>{"t ok k"}); });
+}
+
+TEST_CASE("negation: zelph/negate returns the negated condition, the fact ((P) ~ negation)")
+{
+    // zelph/negate wrote the tag concerning its argument and returned the
+    // argument, so a rule built with it named the pattern itself. A script
+    // that keeps the returned node gets the negated condition, while the
+    // pattern it supplied remains an ordinary positive one. (The comparison
+    // is made on facts of their own: outside a rule, zelph/fact claims what
+    // it writes.)
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        collector.clear();
+        interactive.process(R"(%(zelph/out (string (= (zelph/negate (zelph/fact "e" "p" "f")) (zelph/fact (zelph/fact "e" "p" "f") "~" "negation")))))");
+        CHECK(last_out_text(collector) == "true");
+
+        process_lines(interactive, R"(%(zelph/rule [(zelph/fact 'X "go" 'Y) (zelph/negate (zelph/fact "a" "p" "b"))] (zelph/fact 'X "ok" 'Y))
+(a p b) => (c q d)
+t go k)");
+        collector.clear();
+        interactive.process("C q D");
+        CHECK(collect_answers(collector).empty());
+
+        collector.clear();
+        interactive.process("S ok O");
+        CHECK(collect_answers(collector) == std::vector<std::string>{"t ok k"}); });
+}
+
+TEST_CASE("negation: zelph/negate refuses a node that is not a statement")
+{
+    // Only a fact that pertains to a statement or a condition set is
+    // interpreted as a negated condition (Zelph::negation_operand); thus,
+    // the negation of a name would be a fact that each rule naming it
+    // reads as a positive condition. zelph/negate wrote it nonetheless.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        (void)collector;
+        CHECK_THROWS_WITH_AS(interactive.process(R"(%(zelph/negate (zelph/resolve "a")))"),
+                             doctest::Contains("applies to a statement"),
+                             std::runtime_error); });
 }
 
 // ---------------------------------------------------------------------------
@@ -2235,13 +2681,13 @@ TEST_CASE("rules: a negated consequence is refused, not ignored")
 {
     // "(A p B) => ¬(A q B)" used to derive (x q y) from (x p y) -- the exact
     // opposite of what it says, in silence: deduce reads the consequence's
-    // predicate and creates the fact, and the negation tag sits beside the
+    // predicate and creates the fact, and the negation tag sat beside the
     // pattern where nothing on that path looks.
     //
-    // The test has to be asked of the SYNTAX. The tag is a fact ABOUT the
-    // pattern node, and a ground pattern is hash-consed, so a pattern negated
-    // in one rule carries the tag in every other rule that mentions it --
-    // only the statement itself knows where the "¬" was written.
+    // The test has to be asked of the SYNTAX. The negated condition is the
+    // fact `((P) ~ negation)`, hash-consed just like any other, meaning the
+    // node does not say which statement wrote it -- only the statement
+    // itself retains knowledge of where the "¬" was written.
     run_both_modes([](auto& collector, auto& interactive)
                    {
         for (const char* rule : {"(A p B) => ¬(A q B)",
@@ -2265,14 +2711,86 @@ TEST_CASE("rules: a negated consequence is refused, not ignored")
         CHECK(answers_contain(collector, "x q y")); });
 }
 
+TEST_CASE("rules: a condition operator written out as a consequence is refused")
+{
+    // Expressed through the facts they build, the three condition operators
+    // are identical nodes, and as a consequence they performed what the sugar
+    // is refused for: "(A p B) => ((A q B) ~ negation)" derived `a q b`
+    // alongside the negation fact about it -- as a claim, the very fact it
+    // says is absent.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        for (const char* rule : {"(A p B) => ((A q B) ~ negation)",
+                                 "(A p B) => ((A q B) closure one-or-more)",
+                                 "(A p B) => ((A q B) closure zero-or-more)",
+                                 "(A p B) => ((A q B) nn net)"})
+        {
+            CAPTURE(rule);
+            CHECK_THROWS_WITH_AS(interactive.process(rule),
+                                 doctest::Contains("written out"),
+                                 std::runtime_error);
+            CHECK_THROWS_WITH_AS(interactive.process(rule),
+                                 doctest::Contains("has no meaning in a consequence"),
+                                 std::runtime_error);
+        }
+
+        // The message names the reflexive mode as such: "S p∗ O".
+        CHECK_THROWS_WITH_AS(interactive.process("(A p B) => ((A q B) closure zero-or-more)"),
+                             doctest::Contains("\"S p∗ O\""),
+                             std::runtime_error);
+
+        collector.clear();
+        interactive.process(".list-rules");
+        CHECK(any_output_contains(collector, "No rules found"));
+
+        interactive.process("a p b");
+        collector.clear();
+        interactive.process("S q O");
+        CHECK(collect_answers(collector).empty()); });
+}
+
+TEST_CASE("rules: a condition operator written out inside a consequence is refused too")
+{
+    // One argument further in, the operator's fact remains the identical
+    // node, and the act of deriving it claimed the operand all the same: "(A
+    // go B) => (x says ((A q B) ~ negation))" derived `t q k` in addition to
+    // the negation that says it is absent. A rule that the consequence
+    // mentions keeps its own condition slots.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("t go k");
+        for (const char* rule : {"(A go B) => (x says ((A q B) ~ negation))",
+                                 "(A go B) => (x says ((A r B) closure one-or-more))",
+                                 "(A go B) => (x says ((A s B) nn net))"})
+        {
+            CAPTURE(rule);
+            CHECK_THROWS_WITH_AS(interactive.process(rule),
+                                 doctest::Contains("has no meaning in a consequence"),
+                                 std::runtime_error);
+        }
+
+        collector.clear();
+        interactive.process(".list-rules");
+        CHECK(any_output_contains(collector, "No rules found"));
+        for (const char* query : {"A q B", "A r B", "A s B"})
+        {
+            CAPTURE(query);
+            collector.clear();
+            interactive.process(query);
+            CHECK(collect_answers(collector).empty());
+        }
+
+        CHECK_NOTHROW(interactive.process("(P lifts Q) => (((X P Y) ~ negation, X Q Y) => (X flagged Y))")); });
+}
+
 TEST_CASE("rules: a nested negation is refused, not silently halved")
 {
-    // "¬" tags the pattern node, and tagging it twice is tagging it once, so
-    // "¬(¬(F))" meant "¬(F)" -- the exact opposite of a double negation. The
-    // rule then fired precisely when it should not have, in silence. Reading
-    // it properly needs a second negation stratum, which is the parked
-    // feature "¬(A, B)" is refused for; saying so beats dropping half the
-    // statement.
+    // When the pattern node bore the tag "¬", applying the tag a second
+    // time was equivalent to applying it once, thus "¬(¬(F))" equated to
+    // "¬(F)" -- the exact opposite of a double negation. The rule then fired
+    // precisely when it should not have, in silence. Reading it properly
+    // needs a second negation stratum, which is the parked feature
+    // "¬(A, B)" is refused for; saying so beats dropping half the statement.
     run_both_modes([](auto& collector, auto& interactive)
                    {
         for (const char* rule : {"¬(¬(a p b)) => (c q d)",

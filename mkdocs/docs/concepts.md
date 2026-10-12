@@ -21,7 +21,7 @@ zelph initializes with a small set of fundamental nodes that define the ontology
 | **Nil**                  | `nil`         | `Nil`                  | The empty list terminator. Marks the end of a cons-list.                                                                               |
 | **Conjunction**          | `conjunction` | `Conjunction`          | A tag used to mark a Set as a logical AND condition for rules.                                                                         |
 | **Unequal**              | `!=`          | `Unequal`              | Used to define constraints (e.g., `X != Y`) within rules.                                                                              |
-| **Negation**             | `negation`    | `Negation`             | Used to classify a condition in a rule as negative (match if the fact does _not_ exist).                                               |
+| **Negation**             | `negation`    | `Negation`             | Marks a rule condition that is negated: `((P) ~ negation)` represents the condition that matches when no fact matches the pattern `P`. |
 | **Contradiction**        | `!`           | `Contradiction`        | The result of a rule that detects a logical inconsistency.                                                                             |
 
 These nodes are the "axioms" of zelph's graph. For example, `~` is defined as an instance of `->` (i.e., "IsA" is a "Relation Type"). This self-referential bootstrapping allows zelph to reason about its own structure.
@@ -510,17 +510,17 @@ Whether you interpret `"4"` as a digit, or `( "4" cons nil )` as the number four
 
 ### The Focus Operator `*`
 
-When defining complex structures, you often need to refer to a specific part of an expression rather than the resulting fact node. The `*` operator allows you to "focus" or "dereference" a specific element to be returned.
+A parenthesized statement evaluates to the fact it generates. Placing a `*` in front of any of its components causes it to evaluate to that component instead; the fact is still produced regardless.
 
-- `(A B C)` creates the fact and returns the relation node.
-- `(*A B C)` creates the fact and returns node `A`.
-- `(*{...} ~ conjunction)` creates the fact that the set is a conjunction, but **returns the set node itself**.
+- `(A B C)` creates the fact and evaluates to the fact node.
+- `(*A B C)` creates the fact and evaluates to node `A`.
+- `(*{...} ~ conjunction)` creates the fact stating the set is a conjunction and evaluates to the set node.
 
-This operator is crucial for the rule syntax.
+A statement carries no more than one focus, and a statement nested within it is a distinct statement, with a focus of its own.
 
-**Example — typing a node via a nested fact:**
+**Example – a second fact on the side:**
 
-The focus operator lets you create a fact and use its subject in an outer statement in a single expression:
+The focus enables a single expression to generate a fact and hand one of its components over to the surrounding statement:
 
 ```
 zelph> (*tim ~ human) ~ male
@@ -533,6 +533,20 @@ Answer: tim ~ human
 The inner expression `(*tim ~ human)` creates the fact `tim ~ human` and — thanks to the `*` prefix — returns the node `tim` rather than the statement node. That returned node becomes the subject of the outer `~ male` relation, so `tim ~ male` is created as well.
 
 Querying `tim _predicate _object` (where leading underscores indicate variables, equivalent to using single uppercase letters) confirms that both facts are in the graph.
+
+**Example – the explicit form of a condition set:**
+
+The focus possesses a distinct role within rules. A comma-delimited sequence of conditions serves as a concise representation for a set of conditions marked with `~ conjunction`, and the rule’s subject must be that set, not the tag fact – precisely what the focus gives:
+
+```
+zelph> (*{(X ~ human) (X ~ greek)} ~ conjunction) => (X ~ mortal)
+((X ~ greek), (X ~ human)) => (X ~ mortal)
+zelph> socrates ~ human
+zelph> socrates ~ greek
+(socrates ~ mortal) ⇐ {(socrates ~ greek) (socrates ~ human)}
+```
+
+The echo matches the comma list, as both formats generate the same rule: the comma list is the preferred form to write, while the explicit version reveals its fundamental meaning (see [Rules and Inference](rules.md#rules-and-inference)). Absent the `=>`, the identical structure serves as the explicit notation for a query involving multiple conditions (refer to [Querying](queries.md#key-features)). Within a condition, a focus alters what that condition is. Placed at the top of a condition in a comma list or a condition set, it makes that condition evaluate to a node, which inherently fails to match and thus is [rejected](rules.md#syntax-sugar-for-conditions). Positioned before the sole condition of a rule, it results in no rule at all: the statement reduces to a simple fact concerning the focused node, with `=>` acting as the predicate. One level deeper, it creates a fact alongside, as demonstrated in the first example.
 
 ### The Self-Fact Prefix `:`
 

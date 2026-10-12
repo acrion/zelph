@@ -24,11 +24,19 @@ mathematical stack built on top of it:
   `¬(A, B)` — "not both" — is [rejected](logic.md#negation-as-failure)
   rather than approximated, because the honest implementation is a nested
   negation-as-failure over a conjunctive subgoal: run the subgoal's search
-  and succeed only if it yields no binding. The interesting part is not the
-  search but the [stratification](logic.md#stratified-evaluation): a
-  negated group must be deferred exactly like a negated pattern, and its
-  own conditions may themselves be negated. Until then, De Morgan plus
-  several rules expresses the same thing.
+  and succeed only if it yields no binding. Writing it down does not demand
+  a new structure: a negated condition is represented as the fact
+  `((F) ~ negation)`, and a negated group would likewise be expressed as
+  that same fact applied to the group’s condition set. What remains absent is its
+  evaluation, and the interesting part of that is not the search but the
+  [stratification](logic.md#stratified-evaluation): a negated group must be
+  deferred exactly like a negated pattern, and its own conditions may
+  themselves be negated. Until then, De Morgan plus several rules expresses
+  the same thing.
+
+- **Negation levels based on patterns, not merely predicates.** Starting with release 1.1.0, rules featuring a negated condition operate within [negation levels](logic.md#stratified-evaluation): a negation is tested only after all rules capable of deriving what it tests have completed, and `.strata` shows the respective levels. The analysis compares predicates, not patterns. Each class membership appears as a `~` fact, and `is` carries both declarations like `R is transitive` and assertions such as `john is happy`, causing rules concerning distinct classes or properties to be grouped into a single component: `(X ~ man, ¬(X ~ married)) => (X ~ bachelor)` and `(X ~ man, ¬(X ~ bachelor)) => (X ~ husband)` are listed by `.strata` as not stratifiable, despite their patterns clearly ordering them – `married`, followed by `bachelor`, then `husband`. Within such a component, rules alternate execution, and outcomes hinge on their running sequence. This becomes critical for a universally quantified condition such as "if every dog the man owns barks then the man is a good owner": its rule translation embeds one negation within another, and when the conclusion involves class membership, both rules end up in the same component. Analysing based on the predicate together with a constant argument would separate these rules without the unifier that comparing whole patterns would need.
+
+- **A conclusion that a later fact withdraws.** A conclusion drawn under a negation is definitive: if a later execution introduces the fact that the negation previously deemed missing, the conclusion remains intact, and whatever it blocked is not derived. `.semi-naive check` reports such a fact but does not withdraw it. Withdrawing it – removing the conclusion and all that depends solely upon it, then deriving what the negation now allows – is known as truth maintenance, and it abandons the guarantee that facts only increase over time, a principle foundational to negation levels. Check mode already records, for each conclusion drawn under a negation, the rule and the bindings that generated it; this log serves as the starting point for such a revision.
 
 - **More of Wikidata's property constraints as rules.**
   [`.wikidata-constraints`](wikidata.md#checking-wikidatas-own-constraints)
@@ -68,7 +76,7 @@ mathematical stack built on top of it:
   them the ontology community would actually use is more valuable than the
   implementation.
 
-- **Queries that leave no trace.** A query is written into the graph just like any other element: `S p O` adds its two variables and its pattern, a two-triple SPARQL `SELECT` nine nodes, and no mechanism removes them afterwards. The expense extends beyond memory usage. Each query reads every pattern previously deposited on its predicate by earlier queries, meaning that reissuing the same question repeatedly becomes progressively slower, with the cumulative time increasing quadratically. Three solutions are open: an index capable of identifying a query with a shape it has already answered, a cache keyed by the query’s textual form, or evaluating each query within a scratch area that is erased alongside the answer, as `.explain` already does for its internal patterns.
+- **Queries that leave no trace.** A query is written into the graph just like any other element: `S p O` adds its two variables and its pattern, a two-triple SPARQL `SELECT` nine nodes, and no mechanism removes them afterwards. The expense extends beyond memory usage. Each query reads every pattern previously deposited on its predicate by earlier queries, meaning that reissuing the same question repeatedly becomes progressively slower, with the cumulative time increasing quadratically. Three solutions are open: an index capable of identifying a query with a shape it has already answered, a cache keyed by the query’s textual form, or evaluating each query within a scratch area that is erased alongside the answer, as `.explain` already does for its internal patterns. A query continues to assert the ground facts it generates outside a condition operator – `X knows (a p b)` establishes `a p b` as true – a behaviour that this open point would remove.
 
 - **An integrity check.** A node is the hash of its structure, meaning a fact whose identifier does not align with the hash of its predicate, subject and objects, or a single statement stored across several identical nodes, represents corruption that nothing detects today. A `.check` command would scan the graph for such inconsistencies and report the findings.
 

@@ -321,10 +321,11 @@ TEST_CASE("rule identity: different rules stay different")
         SUBCASE("negation is part of a rule nested in a rule")
         {
             // Once derived, the inner rule becomes a rule, so its condition
-            // is compared as a condition, including the negation tag.
-            // Compared as the subject of a standard fact, it lost the tag,
-            // and the second statement was dropped as a duplicate of the
-            // first.
+            // is compared as a condition. When the negation was attached to
+            // the pattern, the subject of a standard fact was compared
+            // without that negation, and the second statement was discarded
+            // due to being a duplicate of the first; the negated condition
+            // stands as an independent node.
             interactive.process("(G go H) => (¬(X p H) => (X q H))");
             interactive.process("(G go H) => ((X p H) => (X q H))");
             collector.clear();

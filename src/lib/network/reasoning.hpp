@@ -159,8 +159,10 @@ namespace zelph::network
     // variable: a container the firing keeps as written -- the condition set
     // of a rule the statement mentions -- contains one within its text,
     // making the instance rule text. Read off the statement alone, via the
-    // instance walk, before anything is built.
-    bool keeps_rule_variable(const Zelph* z, const Recipe& recipe, int depth);
+    // instance walk, before anything is built. `in_values` receives the
+    // variables the walk encounters within a rule inside a value the firing
+    // builds, which the instance keeps where the firing does not bind them.
+    bool keeps_rule_variable(const Zelph* z, const Recipe& recipe, int depth, std::unordered_set<Node>& in_values);
 
     // The key for the recipe's terms: the binding of statement_variables,
     // presented as sorted (variable, value) pairs (Network::recipe_key).
@@ -455,14 +457,15 @@ namespace zelph::network
 
         void prune_facts(Node pattern, size_t& removed_count);
 
-        /// Is `fact` a condition or a consequence within a rule -- itself, as
-        /// a member within the rule's condition set, or as a statement nested
-        /// inside one of them? Pruning such a fact withdraws the claim while
-        /// preserving the statement as the rule's pattern. `rule_parts` gives
-        /// all of them simultaneously, enabling the pruning of multiple facts
-        /// at once.
-        bool          part_of_rule(Node fact) const;
+        /// Each condition and consequence in a rule -- the statement itself,
+        /// a member of the rule's condition set, a statement embedded within
+        /// one of those, or a member of a collection in the rule's text.
+        /// Pruning such a fact withdraws the claim while preserving the
+        /// statement as the rule's pattern; withdraw_claims performs this
+        /// action on multiple facts simultaneously, given what this returned
+        /// for all of them.
         adjacency_set rule_parts() const;
+        void          withdraw_claims(const std::vector<Node>& facts, const adjacency_set& parts) const;
 
         // `target_var` names whose bindings die, and 0 keeps the single-fact
         // reading in which the pattern's one variable does. It is the VARIABLE
@@ -583,10 +586,11 @@ namespace zelph::network
         // --- Implemented in reasoning_deduce.cpp ---
 
         void deduce(const Variables& variables, Node parent, const int depth, ReasoningContext& ctx, double confidence);
-        bool consequences_already_exist(const Variables&     condition_bindings,
-                                        const adjacency_set& deductions,
-                                        Node                 parent,
-                                        const int            depth);
+        bool consequences_already_exist(const Variables&                condition_bindings,
+                                        const std::unordered_set<Node>& fresh_vars,
+                                        const adjacency_set&            deductions,
+                                        Node                            parent,
+                                        const int                       depth);
 
         // Does this node reach the input focus -- as itself, or, when the
         // deduction CONSTRUCTED it, through what it was constructed of?
@@ -680,11 +684,11 @@ namespace zelph::network
         // multi-condition rule are reachable at all.
         std::unordered_set<Node> rule_variables(Node rule, Node parent, int depth) const;
 
-        // A condition within a derived rule, given the bindings: its
-        // instance as instantiate_fact builds it within a condition,
-        // restating the pattern's negation tag. A conjunction nested in the
-        // condition is instantiated via the recipe as well
-        // (container_plan); without one, it is kept.
+        // A condition inside a derived rule, with the specified bindings:
+        // its instance as instantiate_fact builds it within a condition,
+        // including a negated condition. A nested conjunction within the
+        // condition is also instantiated using the recipe (container_plan);
+        // without a recipe, it is kept.
         Node rebuild_condition(Node pattern, const Variables& variables, int depth, const Recipe* recipe);
 
         // --- Implemented in reasoning_neural.cpp ---
@@ -727,7 +731,7 @@ namespace zelph::network
             bool                     has_negation{false};
             bool                     checkable{true};
             bool                     transparent{false};
-            std::vector<Node>        negated_conditions; // the condition nodes themselves
+            std::vector<Node>        negated_conditions; // the patterns the negated conditions negate
         };
         RuleFootprint footprint(Node rule);
         void          read_footprint(Node condition, RuleFootprint& f);
@@ -777,10 +781,12 @@ namespace zelph::network
         // Per consequence pattern, whether it holds a rule beneath its top
         // level (holds_nested_rule in reasoning_deduce.cpp), and whether its
         // instance would keep a variable from such a rule
-        // (keeps_rule_variable), ensuring that deduce() walks a consequence
-        // once per run. One entry per consequence, thus rule-scale; cleared
-        // at the start of a run, read and written under _mtx_network
-        // (consequence_text).
+        // (keeps_rule_variable, with the variables of a rule within a value
+        // stored in `value_rule_variables`), ensuring that deduce() walks a
+        // consequence only once per run, excluding a firing that binds a
+        // variable to `in` (instance_keeps_variable). One entry per
+        // consequence, thus rule-scale; cleared at the start of a run, read
+        // and written under _mtx_network (consequence_text).
         //
         // `claims_nested` determines if the instance can hold a node whose
         // mark its claim revokes or which its claim enters
@@ -795,10 +801,20 @@ namespace zelph::network
         {
             bool                                    mentions_rule{false};
             bool                                    keeps_rule_variable{false};
+            std::unordered_set<Node>                value_rule_variables;
             bool                                    claims_nested{false};
             std::optional<std::unordered_set<Node>> written;
         };
         std::unordered_map<Node, ConsequenceText> _consequence_text;
+        // Whether a `deduction` firing that binds the same thing as `binding`
+        // does, and makes a witness for each of `fresh`, keeps a variable of a
+        // rule the consequence mentions: one located within a condition set
+        // that the firing keeps as written, or one among the
+        // `value_rule_variables` it leaves unbound. The text answers this
+        // without performing an additional walk, except when a binding binds a
+        // variable to `in`: a relation bound to `in` writes into the objects
+        // that the text also read as values.
+        bool instance_keeps_variable(Node deduction, const ConsequenceText& text, const Variables& binding, const std::unordered_set<Node>& fresh, Node parent, int depth) const;
         // The `deduction` entry, obtained by reading the components that the
         // deduce() function has disassembled, or disassembled here. The
         // reference stays valid until the next run clears the cache.

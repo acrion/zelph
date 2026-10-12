@@ -49,6 +49,11 @@ namespace
     // tells a rule's own parts from the nodes it reuses.
     const char* const kRuleScratch = "__rule";
 
+    // The cluster where a query carrying a condition operator runs
+    // (zelph/query-text): the records it captures are those the statement
+    // created.
+    const char* const kQueryScratch = "__query";
+
     // Whether a thunk concluded in a suspended state instead of
     // returning a result or encountering an error.
     bool suspended(const JanetSignal signal)
@@ -63,7 +68,7 @@ namespace
     // the scope remain open during the wait, as every other fibre of the
     // thread would otherwise write rule text in the interim. Thus, the rule is
     // refused.
-    [[noreturn]] void refuse_suspended_rule(const char* const caller)
+    [[noreturn]] void refuse_suspended(const std::string& message)
     {
 #ifdef JANET_EV
         // The wait is registered for the root fibre: a newly assigned
@@ -72,8 +77,13 @@ namespace
         // second error.
         if (JanetFiber* const root = janet_root_fiber()) ++root->sched_id;
 #endif
-        throw std::runtime_error(std::string(caller) + ": the forms that write a rule cannot wait for the event loop or yield. "
-                                                       "Compute what they wait for before the rule, and write the rule from the result.");
+        throw std::runtime_error(message);
+    }
+
+    [[noreturn]] void refuse_suspended_rule(const char* const caller)
+    {
+        refuse_suspended(std::string(caller) + ": the forms that write a rule cannot wait for the event loop or yield. "
+                                               "Compute what they wait for before the rule, and write the rule from the result.");
     }
 
     // A value rooted for the lifetime of this
@@ -184,9 +194,9 @@ namespace zelph
         return res;
     }
 
-    // Mark a fact pattern as negation and return the pattern node.
-    // This is the Janet equivalent of (*(pattern) ~ negation) in zelph syntax.
-    // The tagged node can then be used as a condition in zelph/rule.
+    // `¬(pattern)`: the fact ((pattern) ~ negation), which serves as the
+    // negated condition a rule names (Zelph::negate). The Janet equivalent
+    // of ¬(pattern) and ((pattern) ~ negation) in zelph syntax.
     Janet ScriptEngine::Impl::janet_cfun_zelph_negate(int32_t argc, Janet* argv)
     {
         janet_fixarity(argc, 1);
@@ -202,9 +212,7 @@ namespace zelph
             return res;
         }
 
-        s_instance->_n->fact(n, s_instance->_n->core.IsA, {s_instance->_n->core.Negation});
-
-        Janet res = zelph_wrap_node(n); // Return the pattern node (like focus *)
+        Janet res = zelph_wrap_node(s_instance->_n->negate(n));
         if (s_instance->_log_janet_functions) s_instance->log_janet_call("zelph/negate", argc, argv, false, res);
         return res;
     }
@@ -525,6 +533,90 @@ namespace zelph
         }
 
         if (signal != JANET_SIGNAL_OK) janet_signalv(static_cast<JanetSignal>(signal), out);
+        return out;
+    }
+
+    // Run the code of a query that carries a condition operator. A query
+    // consists of a condition list evaluated once, and what it constructs
+    // under an operator is a pattern, exactly as in a rule -- "X go Y, ¬(a p
+    // b)" asserted `a p b` and subsequently returned nothing, since the
+    // query had constructed its own counterexample. Which of the created
+    // nodes stand beneath an operator depends on structure, determined after
+    // the statement finishes (Zelph::mark_query_operands); this records what
+    // the statement generated, within a scratch cluster that gets merged
+    // into the one that was active before it, ensuring that `.cluster-drop`
+    // still rolls the query back. A failing query retains none of the
+    // structure it built. Outside a parsed statement and inside a rule
+    // build, the thunk executes directly.
+    Janet ScriptEngine::Impl::janet_cfun_zelph_query_text(int32_t argc, Janet* argv)
+    {
+        janet_fixarity(argc, 1);
+        if (!s_instance) return janet_wrap_nil();
+        require_main_thread("zelph/query-text");
+
+        JanetFunction* const thunk  = janet_getfunction(argv, 0);
+        Janet                out    = janet_wrap_nil();
+        JanetSignal          signal = JANET_SIGNAL_OK;
+
+        if (s_instance->_statement == nullptr || s_instance->_building_rule)
+        {
+            signal = pcall_rooted(thunk, 0, nullptr, &out);
+            if (suspended(signal)) refuse_suspended("zelph/query-text: a statement's code cannot wait for the event loop or yield.");
+            if (signal != JANET_SIGNAL_OK) janet_signalv(signal, out);
+            return out;
+        }
+
+        {
+            const std::string previous = s_instance->_n->active_cluster_name();
+            s_instance->_n->set_active_cluster(kQueryScratch);
+
+            signal = pcall_rooted(thunk, 0, nullptr, &out);
+
+            if (previous.empty())
+                s_instance->_n->deactivate_cluster();
+            else
+                s_instance->_n->set_active_cluster(previous);
+
+            if (signal == JANET_SIGNAL_OK)
+            {
+                // Read before the merge, which drops the accounting records.
+                std::vector<network::Node> created = s_instance->_n->cluster_nodes(kQueryScratch);
+                s_instance->_n->merge_cluster(kQueryScratch, previous);
+                s_instance->_statement->query_created.insert(s_instance->_statement->query_created.end(), created.begin(), created.end());
+                return out;
+            }
+
+            s_instance->_n->drop_scratch_cluster(kQueryScratch);
+        }
+
+        if (suspended(signal)) refuse_suspended("zelph/query-text: a statement's code cannot wait for the event loop or yield.");
+        janet_signalv(signal, out);
+    }
+
+    // Run the code that builds a condition operator -- `¬`, `≈`, `⁺`/`∗`,
+    // or any of these expressed explicitly as the fact they generate. In
+    // both a rule and a query, its operand is a pattern, not a claim, thus
+    // it is LOOKED UP wherever the graph holds it (_resolving_pattern):
+    // following "¬(a p b)", the rule "(X go Y, ¬(a p b)) => (X ok Y)" and
+    // the query "X go Y, ¬(a p b)" both failed with "this fact is known to
+    // be wrong", even though a refuted fact is precisely one that does not
+    // hold. What the graph does not hold is built as before.
+    Janet ScriptEngine::Impl::janet_cfun_zelph_operand(int32_t argc, Janet* argv)
+    {
+        janet_fixarity(argc, 1);
+        if (!s_instance) return janet_wrap_nil();
+        require_main_thread("zelph/operand");
+
+        JanetFunction* const thunk  = janet_getfunction(argv, 0);
+        Janet                out    = janet_wrap_nil();
+        JanetSignal          signal = JANET_SIGNAL_OK;
+        {
+            const BlockScope looking_up(s_instance->_resolving_pattern, true);
+            signal = pcall_rooted(thunk, 0, nullptr, &out);
+        }
+
+        if (suspended(signal)) refuse_suspended("zelph/operand: a condition cannot wait for the event loop or yield.");
+        if (signal != JANET_SIGNAL_OK) janet_signalv(signal, out);
         return out;
     }
 

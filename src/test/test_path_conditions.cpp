@@ -246,6 +246,32 @@ TEST_CASE("path condition: a ground path outside a rule is refused")
     CHECK(collect_answers(collector).empty());
 }
 
+// A comma-separated sequence lacking a variable asserts every one of its
+// members, and a path on a member's predicate was refused solely upon the
+// runtime guard being triggered: "e q f, a P279⁺ d" kept `e q f`, whereas the
+// reverse sequence left nothing -- one statement, two distinct results. The
+// traversal across the list reads arguments, and a member's predicate is not
+// one of them. Rejected before any construction.
+TEST_CASE("path condition: a ground path in a comma list without a variable is refused before anything is built")
+{
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+    feed(interactive, kChain);
+
+    for (const char* statement : {"e q f, a P279⁺ d", "a P279⁺ d, e q f", "e q f, :P279⁺ a"})
+    {
+        CAPTURE(statement);
+        CHECK_THROWS(interactive.process(statement));
+    }
+
+    collector.clear();
+    interactive.process("S q O");
+    CHECK(collect_answers(collector).empty());
+    collector.clear();
+    interactive.process("X closure Y");
+    CHECK(collect_answers(collector).empty());
+}
+
 // A `¬` in front is not a way past that refusal, and it used to be one. A
 // negated line is routed through zelph/refute, while the path sugar is keyed on
 // zelph/fact -- so the marker was never split off the predicate token and
@@ -309,8 +335,11 @@ TEST_CASE("path condition: a path marker inside a plain statement is refused")
 }
 
 // The same shape with a variable in it is a QUESTION, and answering it is the
-// feature. The refusal above is decided when the ends are resolved, not by the
-// syntax, which is why it cannot live in the parser.
+// feature. Whether a line poses a question is derived from its syntax --
+// specifically, a variable located outside the rules it mentions -- and a
+// question functions as a condition, which is where a path belongs. The guard
+// for the ground case remains for the ends the parser does not see
+// (janet_cfun_zelph_path_guard).
 TEST_CASE("path condition: a path with a free end is a question and answers one")
 {
     run_both_modes([](auto& collector, auto& interactive)
@@ -322,6 +351,103 @@ TEST_CASE("path condition: a path with a free end is a question and answers one"
 
         CHECK(any_output_contains(collector, "(a P279 d) closure one-or-more"));
         CHECK(any_output_contains(collector, "(c P279 d) closure one-or-more")); });
+}
+
+// In a query, a ground path functions identically to a ground path within a
+// rule condition: it serves as a reachability TEST. It was refused by the
+// guard meant for a ground path outside a rule, which examines only the two
+// endpoints, causing "X go Y, a P279⁺ d" to be interpreted as asserting
+// reachability -- regardless of the sequence of its conditions. The single
+// step beneath the marker constitutes a pattern, just as it does in a rule:
+// `S P279 O` does not answer it.
+TEST_CASE("path condition: a ground path in a query is a reachability test, in either order")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        feed(interactive, kChain);
+        interactive.process("t go k");
+
+        for (const char* query : {"X go Y, a P279⁺ d", "a P279⁺ d, X go Y"})
+        {
+            CAPTURE(query);
+            collector.clear();
+            interactive.process(query);
+            CHECK(collect_answers(collector).size() == 1);
+        }
+        collector.clear();
+        interactive.process("X go Y, d P279⁺ a");
+        CHECK(collect_answers(collector).empty());
+
+        collector.clear();
+        interactive.process("S P279 O");
+        CHECK_FALSE(answers_contain(collector, "a P279 d"));
+        CHECK_FALSE(answers_contain(collector, "d P279 a")); });
+}
+
+// The same applies under "¬": the query asks that no path exists, and
+// answers exactly when there is none.
+TEST_CASE("path condition: a negated ground path in a query is a test too")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        feed(interactive, kChain);
+        interactive.process("t go k");
+
+        collector.clear();
+        interactive.process("X go Y, ¬(d P279⁺ a)");
+        CHECK(collect_answers(collector).size() == 1);
+
+        collector.clear();
+        interactive.process("X go Y, ¬(a P279⁺ d)");
+        CHECK(collect_answers(collector).empty());
+
+        collector.clear();
+        interactive.process("S P279 O");
+        CHECK_FALSE(answers_contain(collector, "d P279 a")); });
+}
+
+// The path condition expressed as `((S p O) closure one-or-more)`, the fact
+// that the sugar constructs, is the same node, and refused where the sugar
+// is: when typed as a statement, it asserted the single step beneath it.
+// Within a query, it serves as the condition.
+TEST_CASE("path condition: the path written out is refused in a statement that asserts")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        feed(interactive, kChain);
+        const std::size_t before = node_count(collector, interactive);
+
+        CHECK_THROWS(interactive.process("(a P279 d) closure one-or-more"));
+        CHECK_THROWS(interactive.process("x says ((a P279 d) closure zero-or-more)"));
+        CHECK(node_count(collector, interactive) == before);
+
+        interactive.process("t go k");
+        collector.clear();
+        interactive.process("X go Y, ((a P279 d) closure one-or-more)");
+        CHECK(collect_answers(collector).size() == 1);
+
+        collector.clear();
+        interactive.process("S P279 O");
+        CHECK_FALSE(answers_contain(collector, "a P279 d")); });
+}
+
+// A condition expressed in full is recognised by the node to which its tokens
+// refer, rather than by the way they are read. Within ".lang en", the token
+// "closure" names a node of that language, and a fact concerning it is a
+// standard fact; the evaluation would not read it as a path either.
+TEST_CASE("path condition: a path written out is recognised by its node, not by its name")
+{
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+
+    interactive.process(".lang en");
+    CHECK_NOTHROW(interactive.process("(a p b) closure one-or-more"));
+    collector.clear();
+    interactive.process("A p B");
+    CHECK(answers_contain(collector, "a p b"));
+
+    interactive.process(".lang zelph");
+    CHECK_THROWS(interactive.process("(c p d) closure one-or-more"));
 }
 
 TEST_CASE("path condition: a path as a rule consequence is refused")
@@ -337,6 +463,26 @@ TEST_CASE("path condition: a path as a rule consequence is refused")
     collector.clear();
     interactive.process(".list-rules");
     CHECK(any_output_contains(collector, "No rules found"));
+}
+
+// The self-path yields the identical consequence when expressed using
+// self-fact sugar, and the check verified a marker solely on a predicate
+// written between two values: "(X rel S) => (:P279⁺ X)" was accepted, and it
+// derived `x P279 x`, the one step beneath the marker, as a claim.
+TEST_CASE("path condition: a self-path as a rule consequence is refused too")
+{
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+    feed(interactive, kChain);
+
+    CHECK_THROWS(interactive.process("(X rel S) => (:P279⁺ X)"));
+
+    collector.clear();
+    interactive.process(".list-rules");
+    CHECK(any_output_contains(collector, "No rules found"));
+    collector.clear();
+    interactive.process("S P279 O");
+    CHECK(collect_answers(collector).size() == 3);
 }
 
 TEST_CASE("path condition: the printed rule re-enters as the same rule")
@@ -438,6 +584,30 @@ TEST_CASE("path condition: a ground self-path outside a rule is refused")
     CHECK(collect_answers(collector).empty());
 }
 
+// In a query, the identical ground self-path functions as a condition and a
+// reachability test, just like "X ~ cls, a P279⁺ a" does. The walks that find
+// a path marker read it exclusively when a predicate is written between two
+// values, so ":P279⁺ a" was not considered an operator by them: the query
+// built `a P279 a` as data, and "S P279 O" answered it from then on.
+TEST_CASE("path condition: a ground self-path in a query is a test, and its one step a pattern")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        feed(interactive, kCycle);
+
+        collector.clear();
+        interactive.process("X ~ cls, :P279⁺ a");
+        CHECK(collect_answers(collector).size() == 3);
+        collector.clear();
+        interactive.process("X ~ cls, :P279⁺ c");
+        CHECK(collect_answers(collector).empty());
+
+        // The three edges comprising kCycle, and no step of either self-path.
+        collector.clear();
+        interactive.process("S P279 O");
+        CHECK(collect_answers(collector).size() == 3); });
+}
+
 // A condition operator has slots in a RULE, and the checks stood at the top of
 // them and nowhere else. One argument in, a marker was built and never read:
 // the rule came back printed WITHOUT it -- "(x q (¬(a p b))) => (c r d)" listed
@@ -462,6 +632,74 @@ TEST_CASE("path condition: an operator inside a rule's condition is refused")
 
     // The assertion that matters, as ever: nothing of it was built. A rule the
     // parser accepted and then meant differently is what this replaces.
+    collector.clear();
+    interactive.process(".list-rules");
+    CHECK(any_output_contains(collector, "No rules found"));
+    collector.clear();
+    interactive.process("X closure Y");
+    CHECK(collect_answers(collector).empty());
+}
+
+// A condition written as a self-fact is a statement where the operand serves
+// as an argument, and the walk for an incorrectly positioned operator failed
+// to examine it: "(:p ¬(X q b)) => (X r b)" built a rule whose condition
+// holds the negation fact as a term, and listed it without the "¬". A query
+// goes through the identical traversal.
+TEST_CASE("path condition: an operator inside a self-fact condition is refused")
+{
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+    feed(interactive, kChain);
+
+    CHECK_THROWS(interactive.process("(:p ¬(X q b)) => (X r b)"));
+    CHECK_THROWS(interactive.process("(:p (a P279⁺ d)) => (c r d)"));
+    CHECK_THROWS(interactive.process(":p ¬(X q b)"));
+
+    collector.clear();
+    interactive.process(".list-rules");
+    CHECK(any_output_contains(collector, "No rules found"));
+    collector.clear();
+    interactive.process("X closure Y");
+    CHECK(collect_answers(collector).empty());
+}
+
+// A self-path one argument down functions as a marker positioned beneath a
+// condition, exemplified by "x q (a P279⁺ d)", and it was not recognized as
+// such: within a rule it was accepted and tagged a fact for which no closure
+// is walked, and within a query "X says (:p⁺ a)" built `a p a` as data.
+TEST_CASE("path condition: a self-path inside a condition is refused like any path there")
+{
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+    feed(interactive, kChain);
+    interactive.process("t says k");
+
+    CHECK_THROWS(interactive.process("(X rel Y, X says (:p⁺ a)) => (X ok Y)"));
+    CHECK_THROWS(interactive.process("X says (:p⁺ a)"));
+    CHECK_THROWS(interactive.process("x says (:p⁺ a)"));
+
+    collector.clear();
+    interactive.process(".list-rules");
+    CHECK(any_output_contains(collector, "No rules found"));
+    collector.clear();
+    interactive.process("S p O");
+    CHECK(collect_answers(collector).empty());
+}
+
+// A set constitutes data, and a self-path among its members is not considered
+// a condition either (refer to "a condition operator inside a set literal is
+// refused" in test_stratified.cpp). The validation recognized the marker
+// solely when a predicate was expressed between two values, hence "{(a p⁺
+// c)}" was refused and "{(:p⁺ a)}" was built.
+TEST_CASE("path condition: a self-path inside a set literal is refused, in a rule as in a query")
+{
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+    feed(interactive, kChain);
+
+    CHECK_THROWS_WITH(interactive.process("(X rel Y, Y in {(:p⁺ a)}) => (X ok Y)"), doctest::Contains("a set is DATA"));
+    CHECK_THROWS_WITH(interactive.process("X rel Y, Y in {(:p⁺ X)}"), doctest::Contains("a set is DATA"));
+
     collector.clear();
     interactive.process(".list-rules");
     CHECK(any_output_contains(collector, "No rules found"));

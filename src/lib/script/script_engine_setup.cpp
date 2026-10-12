@@ -203,7 +203,7 @@ namespace zelph
 
         janet_def(_janet_env, "zelph/targets", wrap((JanetCFunction)&guarded<&janet_cfun_zelph_targets>), "(zelph/targets subject predicate)\nFind all objects connected from subject via predicate. Read-only.");
 
-        janet_def(_janet_env, "zelph/negate", wrap((JanetCFunction)&guarded<&janet_cfun_zelph_negate>), "(zelph/negate pattern)\nMark a fact pattern as negation. Returns the pattern node.\nEquivalent to (*(pattern) ~ negation) in zelph syntax. Main thread only.");
+        janet_def(_janet_env, "zelph/negate", wrap((JanetCFunction)&guarded<&janet_cfun_zelph_negate>), "(zelph/negate pattern)\nThe negated condition over a fact pattern: creates and returns the fact\n((pattern) ~ negation), which a rule names as its condition.\nEquivalent to ¬(pattern) and to ((pattern) ~ negation) in zelph syntax.\nMain thread only.");
 
         janet_def(_janet_env, "zelph/rule*", wrap((JanetCFunction)&guarded<&janet_cfun_zelph_rule_star>), "(zelph/rule* conditions & consequences)\nCreate an inference rule: the plain function behind the zelph/rule macro.\n"
                                                                                                           "conditions: array of fact nodes (the conjunction).\n"
@@ -238,6 +238,17 @@ namespace zelph
                                                                                                               "zelph/fact calls in the thunk claim nothing, even in a Janet block. "
                                                                                                               "Emitted automatically around every parsed `... => ...` that stands inside another statement; "
                                                                                                               "wrap a mention written by hand with zelph/fact in it. Main thread only.");
+
+        janet_def(_janet_env, "zelph/query-text", wrap((JanetCFunction)&guarded<&janet_cfun_zelph_query_text>), "(zelph/query-text thunk)\nRun the code of a query that carries a condition operator and return what it returns. "
+                                                                                                                "Emitted by the parser. Within the parsed statement, what the query creates beneath an operator -- the operand, everything in it, "
+                                                                                                                "the operator's own fact -- is a pattern, marked before the query is evaluated; a node that existed before keeps its status, "
+                                                                                                                "and if the thunk fails, nothing it built is kept. Outside a parsed statement, as in a Janet block, it only runs the thunk. "
+                                                                                                                "Main thread only.");
+
+        janet_def(_janet_env, "zelph/operand", wrap((JanetCFunction)&guarded<&janet_cfun_zelph_operand>), "(zelph/operand thunk)\nRun the code that builds a condition operator and its operand, and return what it returns. "
+                                                                                                          "A fact the graph holds, a refuted one included, is looked up rather than asserted; anything else is built as zelph/fact builds it, "
+                                                                                                          "and whether it is a pattern is decided by the rule or query around it. "
+                                                                                                          "Emitted by the parser around every condition operator. Main thread only.");
 
         janet_def(_janet_env, "zelph/car", wrap((JanetCFunction)&guarded<&janet_cfun_zelph_car>), "(zelph/car cell)\nReturn the first element (car) of a cons cell, or nil if not a cons cell.");
         janet_def(_janet_env, "zelph/cdr", wrap((JanetCFunction)&guarded<&janet_cfun_zelph_cdr>), "(zelph/cdr cell)\nReturn the rest (cdr) of a cons cell. Returns the nil node for the last cell.");

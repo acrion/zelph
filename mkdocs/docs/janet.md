@@ -436,7 +436,7 @@ A program can initiate threads independently using `ev/thread`, `ev/spawn-thread
   Create a cons list from the characters of `str`. Characters are reversed before cons construction, matching the `<...>` compact list syntax. Main thread only.
 
 - **`(zelph/negate pattern)`**  
-  Mark a fact pattern as a negation condition and return the **pattern node** (equivalent to `*(pattern) ~ negation` in zelph syntax). In zelph syntax, this is also what `¬(pattern)` desugars to. Main thread only.
+  Generate the negated condition over a fact pattern and return it: the fact `((pattern) ~ negation)`, which a rule takes as its condition instead of the original pattern, while `pattern` remains an ordinary positive pattern. In zelph syntax, `¬(pattern)` expands into this form. A node that is not a statement, or a node that is already a negation, is refused. Main thread only.
 
 - **`(zelph/rule conditions & consequences)`**  
   A macro serving as a convenient way to construct rules.  
@@ -454,6 +454,9 @@ A program can initiate threads independently using `ev/thread`, `ev/spawn-thread
 
 - **`(zelph/dedup-rule thunk)`**, **`(zelph/rule-text thunk)`**  
   Emitted by the parser around a typed `... => ...` statement and around a rule that another statement mentions. `zelph/dedup-rule` is not required for Janet code written by hand. `zelph/rule-text` runs its thunk in the same manner as `zelph/build-rule` does, so the ground parts of each rule the thunk creates are patterns belonging to that rule, not claims, regardless of what the thunk returns; a mentioned rule stays unmarked itself, as a rule over rules could treat it as data, unless it is a part of another rule the thunk creates. In a parsed statement, the marking waits until the statement concludes and is discarded if the statement is a query. A failing thunk retains none of the structures it previously built. A mention authored manually using `zelph/fact` claims its parts unless it is contained within `zelph/rule-text` (see [Claimed or Merely Written Down](#claimed-or-merely-written-down)). Main thread only.
+
+- **`(zelph/query-text thunk)`**, **`(zelph/operand thunk)`**  
+  Emitted by the parser around a query containing a condition operator, and surrounding each condition operator individually. Neither is required for Janet code authored manually. Inside a parsed statement, `zelph/query-text` runs the query’s code, and whatever the code creates under an operator – the operand, all nested elements, and the operator’s own fact – is marked as a pattern before query evaluation proceeds, while a node that existed prior to this process retains its initial state (see [Conditions in Queries](queries.md#conditions-in-queries)); if the thunk encounters failure, it retains none of the structures it built. Outside a parsed statement, such as within a Janet block, it merely executes the thunk. `zelph/operand` runs the code responsible for constructing an operator and its operand: a fact already present in the graph is retrieved rather than asserted, a refuted fact is located instead of being added, and any other case is constructed as `zelph/fact` would construct it, with the determination of whether it qualifies as a pattern made by the rule or the query in context. Main thread only.
 
 - **`(zelph/build-rule-parts thunk)`**  
   What `zelph/rule` expands to. `thunk` returns the rule’s conditions and consequences as a single tuple, `[conditions ;consequences]`, with the rule being assembled from that tuple during the identical build where the thunk executed, thus the expansion contains no standalone function responsible for rule construction. Denied when a different rule is currently being built. Not required for Janet code written by hand. Main thread only.
@@ -1155,13 +1158,13 @@ These functions simplify the creation of inference rules from Janet. While rules
 
 #### `zelph/negate`
 
-Marks a fact pattern as a negation condition. Returns the pattern node itself (equivalent to the focus operator `*` in `(*(pattern) ~ negation)`):
+Creates the negated condition from a fact pattern and returns it – the fact `((pattern) ~ negation)`, which is what a rule names as its condition:
 
 ```
 %(zelph/negate (zelph/fact 'A ".." 'X))
 ```
 
-This is equivalent to the zelph syntax fragment `(*(A .. X) ~ negation)` inside a condition set.
+It is equivalent to the zelph syntax fragment `¬(A .. X)`, or `((A .. X) ~ negation)`, within a condition set. Use the returned node as the condition; the pattern passed in remains positive in all contexts where it is utilized.
 
 #### `zelph/rule`
 
@@ -1195,7 +1198,7 @@ Creates a complete inference rule: a conjunction of conditions linked to one or 
 
 ```
 # zelph syntax:
-(*{(A in _Num) (*(A .. X) ~ negation)} ~ conjunction) => (A "is last digit of" _Num)
+(*{(A in _Num) ((A .. X) ~ negation)} ~ conjunction) => (A "is last digit of" _Num)
 
 # Janet equivalent:
 %(zelph/rule
@@ -1235,7 +1238,7 @@ Compare this to the manual `let` pattern from [Parameterized Rules](#parameteriz
 
 #### Setting Up Digit-Wise Addition
 
-As a concrete example of combining `zelph/rule`, `zelph/negate`, and Janet loops to set up a domain for the reasoning engine, here is the setup for single-digit arithmetic. All reasoning happens purely within zelph's inference engine — Janet only generates the initial facts and rules:
+As a tangible illustration of integrating `zelph/rule` with Janet loops to establish a domain for the reasoning engine, here is the setup for single-digit arithmetic. All reasoning takes place entirely within zelph’s inference engine – Janet is responsible solely for producing the initial facts and rules:
 
 ```
 %
@@ -1307,8 +1310,8 @@ This is the mechanism behind zelph's [SPARQL support](sparql.md): the `sparql` k
 | `Berlin "is located in" L`      | `(zelph/targets "Berlin" "is located in")`          | Find all objects for a subject–predicate pair                               |
 | `Berlin R city`                 | _(no equivalent)_                                   | Find all predicates that connect a given Berlin and city                    |
 | `S P O`                         | _(no equivalent)_                                   | List all facts in the network (use with caution on large databases)         |
-| `(*(P) ~ negation)`             | `(zelph/negate (zelph/fact ...))`                   | Mark a pattern as negation condition (evaluates to the pattern node)        |
-| `¬(P)`                          | `(zelph/negate P)`                                  | Negation sugar for patterns (evaluates to the pattern node)                 |
+| `((P) ~ negation)`              | `(zelph/negate (zelph/fact ...))`                   | Negated condition over a pattern (evaluates to the negation fact)           |
+| `¬(P)`                          | `(zelph/negate P)`                                  | Negation sugar for patterns (evaluates to the negation fact)                |
 | `(*{...} ~ conjunction) => ...` | `(zelph/rule [conditions] consequences...)`         | Create inference rule                                                       |
 | `(cond1, cond2, cond3)`         | _(desugars to)_ set + `~ conjunction`               | Conjunction expression (comma sugar), evaluates to the conjunction set node |
 | `(cond1, cond2) => cons`        | `(zelph/rule [cond1 cond2] cons)`                   | Rule using a conjunction of conditions                                      |

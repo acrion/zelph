@@ -830,14 +830,13 @@ Node Zelph::fact(const Node subject, const Node predicate, const adjacency_set& 
             }
         }
 
-        // A node cannot be both a conjunction and a negation. The engine
-        // reads the conjunction tag FIRST and would then never look at the
-        // negation tag again, so "¬(A, B)" used to be evaluated as "A and
-        // B" -- the opposite of what was written, silently. Rejecting the
-        // combination here catches both spellings, because the sugar and
-        // the explicit "*(...) ~ negation" form both end up creating this
-        // very fact. The cost for ordinary data is one comparison against
-        // core.IsA.
+        // A conjunction cannot be negated: interpreting "¬(A, B)" requires
+        // a negation over several conditions at once, a capability the
+        // evaluation lacks, and it used to be evaluated as "A and B" -- the
+        // opposite of what was written, silently. Rejecting the combination
+        // here catches both spellings, because the sugar and the explicit
+        // "((...) ~ negation)" form both end up creating this very fact. The
+        // cost for ordinary data is one comparison against core.IsA.
         if (predicate == core.IsA && objects.size() == 1)
         {
             const Node tag   = *objects.begin();
@@ -853,6 +852,15 @@ Node Zelph::fact(const Node subject, const Node predicate, const adjacency_set& 
                     "Use De Morgan: not(A and B) is the same as (not A) or (not B), and a "
                     "disjunction is written as several rules with the same consequence.");
             }
+
+            // `¬¬(F)` says F, and interpreting it in that manner requires a
+            // second negation level, which evaluation does not support. The
+            // parser refuses the shorthand; the fact written out, `(((F) ~
+            // negation) ~ negation)`, and a Janet or C program that negates
+            // a negation both arrive at this point, before anything can name
+            // the fact as a condition.
+            if (tag == core.Negation && negation_operand(subject) != 0)
+                throw std::runtime_error("\"¬\" does not nest: \"" + format(subject) + "\" is a negation already, and negating it would need a second negation level. Write the plain pattern for the positive condition.");
         }
 
         // A set constant is its members -- that is what identifies it -- so
@@ -1506,8 +1514,19 @@ Node Zelph::parse_fact(Node rule, adjacency_set& deductions, Node parent) const
     std::vector<Node> valid;
     valid.reserve(candidates.size());
 
+    // The negated condition over `rule`, the fact `((rule) ~ negation)`,
+    // features `rule` as its subject and never in reverse, and its
+    // identifier says so exactly. The test below misses it once it is the
+    // subject of a `~` fact of its own -- the mark of a ground rule pattern
+    // -- since it does not follow a grandchild bearing the candidate's
+    // predicate, and a negated ground path or neural condition then lost its
+    // reading.
+    const Node negation_of_rule = Impl::create_hash(core.IsA, rule, core.Negation);
+
     for (Node cand : candidates)
     {
+        if (cand == negation_of_rule) continue;
+
         bool is_child_fact = false;
 
         // A candidate is a child-fact if 'rule' is its only subject.

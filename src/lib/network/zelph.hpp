@@ -715,7 +715,7 @@ namespace zelph::network
         /// whenever the node took part in a fact -- the callers report it.
         /// `deferred_names` makes it affordable in BULK; see the definition.
         size_t        remove_node(Node node, adjacency_set* deferred_names = nullptr) const;
-        void          collect_doomed(Node node, adjacency_set& out) const;
+        void          collect_doomed(Node node, adjacency_set& out, const adjacency_set* keep = nullptr) const;
         void          remove_doomed(const adjacency_set& doomed, adjacency_set* deferred_names = nullptr) const;
         void          remove_names_of(const adjacency_set& dead) const;
         uint64_t      name_map_scans() const;
@@ -775,6 +775,25 @@ namespace zelph::network
         /// Whether `condition` is such a container at all.
         bool is_condition_set(Node condition) const;
 
+        /// The pattern a negated condition negates, or 0 when `condition`
+        /// is not one. `¬(P)` IS the fact `((P) ~ negation)`, and a rule
+        /// names that fact as its condition, the way `⁺` and `≈` make their
+        /// tag fact the condition. Thus, a pattern that one rule negates
+        /// and another one uses positively is two nodes, and the polarity
+        /// forms part of what the rule says. Only a fact concerning a
+        /// statement or a conjunction set qualifies as a negation:
+        /// `(X ~ negation)` with a variable subject stays an ordinary
+        /// condition.
+        Node negation_operand(Node condition) const;
+
+        /// `¬(pattern)`: creates the fact `((pattern) ~ negation)` and
+        /// returns it, the node a rule names as its condition. Rejected if
+        /// the pattern is neither a statement nor a conjunction set,
+        /// because negation_operand would not read it as negated, and, in
+        /// fact(), for a negation: `¬¬(F)` would require a second level of
+        /// negation.
+        Node negate(Node pattern);
+
         /// The predicate that marks a pattern, or 0 when no graph has ever
         /// needed it (`create` false).
         Node rule_pattern_predicate(bool create) const;
@@ -788,6 +807,22 @@ namespace zelph::network
         /// The same applies to the parts of a rule: its condition
         /// and its consequences.
         void mark_rule_parts(Node condition, const adjacency_set& consequences, const std::vector<Node>& created) const;
+
+        /// Whether `node` serves as the fact that a condition operator
+        /// builds and that a condition is read as: a negation
+        /// (negation_operand), a path condition (`closure`), or a
+        /// neural one (`nn`).
+        bool is_condition_tag(Node node) const;
+
+        /// Designate as patterns whatever the query `statement` created
+        /// under a condition operator -- the operator's fact, its operand,
+        /// and all contained elements -- while excluding anything the query
+        /// also reaches outside every operator: a positive ground part is
+        /// created, and thereby asserted, just as previously. Only nodes
+        /// within `created` are marked; a node that was present beforehand
+        /// keeps its status. `statement` equals 0 when a query yields no
+        /// node.
+        void mark_query_operands(Node statement, const std::vector<Node>& created) const;
 
         /// The rule in force that specifies the same content as `rule`, up to
         /// a renaming of its variables (rule_identity.hpp), or 0. With
@@ -1043,6 +1078,17 @@ namespace zelph::network
         void invalidate_relation_type_set() const;
 
     private:
+        // The ground facts a construction brought into existence, reached
+        // from `pending`: the walk underlying mark_rule_parts and
+        // mark_query_operands. `fresh` holds what the construction created
+        // and gains the memberships of the containers it created; `stop`
+        // ends the walk at a node, which is then neither collected nor
+        // entered.
+        std::vector<Node> constructed_patterns(std::vector<Node> pending, std::unordered_set<Node>& fresh, const std::function<bool(Node)>& stop) const;
+
+        // Mark `patterns` as rule patterns (see is_rule_pattern).
+        void mark_patterns(const std::vector<Node>& patterns) const;
+
         // Whether the conditions that a `=>` fact's container subject
         // represents hold a variable, each asked by var_in_closure: what
         // fact() reads upon creating such a fact (see Impl's

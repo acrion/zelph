@@ -99,21 +99,11 @@ namespace zelph::console
 
         _n->out_stream() << "  Variable: " << (network::Network::is_var(nd) ? "yes" : "no") << std::endl;
 
-        // The negation tag is a fact ABOUT the node, and a ground pattern is
-        // hash-consed, so a pattern negated in ONE rule carries it wherever
-        // it occurs. It is therefore reported as a property here rather than
-        // written into the term -- see node_to_string, where the "¬" is kept
-        // for the rule's own condition slot and nowhere else.
-        if (_n->check_fact(nd, _n->core.IsA, {_n->core.Negation}).is_known())
-        {
-            _n->out_stream() << "  Negated by a rule: yes" << std::endl;
-        }
-
-        // A refutation is the opposite case and is written INTO the term by
-        // the renderer, because it is the claim the node stands for rather
-        // than an annotation about it. Said here as well, since the structural
-        // reading is what `.node` is for: the marking is an ordinary fact of
-        // the predicate "refuted", visible among the connections below.
+        // The renderer writes the refutation INTO the term, as it is the
+        // claim the node stands for, not an annotation about it. Said here
+        // as well, since the structural reading is what `.node` is for: the
+        // marking is an ordinary fact of the predicate "refuted", visible
+        // among the connections below.
         if (_n->is_refuted_fact(nd))
         {
             _n->out_stream() << "  Refuted (claimed not to hold): yes" << std::endl;

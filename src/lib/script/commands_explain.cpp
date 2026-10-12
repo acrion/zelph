@@ -443,14 +443,7 @@ namespace zelph::console
                 switch (p->status)
                 {
                 case network::ProofNode::Status::Axiom:
-                    // A pattern some rule uses NEGATED is still an axiom when it
-                    // was asserted; the tag says how a rule reads it, not whether
-                    // it holds. It used to be written into the term above, which
-                    // made this line say the opposite of what it reports.
-                    if (!dry)
-                        write(_n->check_fact(p->fact, _n->core.IsA, {_n->core.Negation}).is_known()
-                                  ? "  [axiom; negated by a rule]\n"
-                                  : "  [axiom]\n");
+                    write("  [axiom]\n");
                     return false;
                 case network::ProofNode::Status::RulePattern:
                     // Not an axiom: the node exists because a rule was written
@@ -590,11 +583,12 @@ namespace zelph::console
                 }
                 if (e.next < total)
                 {
-                    // The stored node is the rule's negation-tagged pattern, so
-                    // node_to_string writes the ¬(...) itself; passing the step's
-                    // bindings turns "¬(N hasdivisor D)" into the premise actually
-                    // checked, "¬(&7 hasdivisor D)". D stays a variable on purpose
-                    // -- it is what "for no D" quantifies over.
+                    // The stored node represents the pattern that the rule
+                    // negates, and the ¬(...) expression is written here;
+                    // passing the step's bindings turns "¬(N hasdivisor D)"
+                    // into the premise that is actually checked,
+                    // "¬(&7 hasdivisor D)". D stays a variable on purpose --
+                    // it is what "for no D" quantifies over.
                     const network::Node neg  = p->absent[e.next - premises - p->walked.size()];
                     const bool          last = ++e.next == total;
                     if (!dry)

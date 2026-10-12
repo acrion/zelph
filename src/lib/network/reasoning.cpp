@@ -898,8 +898,12 @@ std::shared_ptr<std::vector<Node>> Reasoning::optimize_order(const adjacency_set
 
         for (auto it = pending.begin(); it != pending.end(); ++it)
         {
-            Node          cond  = *it;
-            double        score = 0;
+            // A condition that is negated receives its score from the
+            // pattern it negates, just as every other condition is scored
+            // by its own pattern.
+            const Node    negated = negation_operand(*it);
+            Node          cond    = negated != 0 ? negated : *it;
+            double        score   = 0;
             adjacency_set objects;
             Node          subject = parse_fact(cond, objects); // Relation is ignored for scoring for now, could be added
 
@@ -980,7 +984,7 @@ std::shared_ptr<std::vector<Node>> Reasoning::optimize_order(const adjacency_set
 
             // Negated conditions must be evaluated last to ensure
             // maximum variable binding before the existence check.
-            if (is_negated_condition(cond, depth))
+            if (negated != 0)
                 score -= 1000;
 
             adjacency_set rels_for_score = filter(cond, core.IsA, core.RelationTypeCategory);
@@ -1260,11 +1264,6 @@ namespace
     bool is_conjunction(const Zelph* const z, const Node node)
     {
         return z->check_fact(node, z->core.IsA, {z->core.Conjunction}).is_known();
-    }
-
-    bool is_negation(const Zelph* const z, const Node node)
-    {
-        return z->check_fact(node, z->core.IsA, {z->core.Negation}).is_known();
     }
 
     // The identifier for the set constant over `members`
@@ -1640,13 +1639,7 @@ namespace
         {
             const Node im = instantiate_fact(z, m, variables, depth, history, recipe, member_place);
             if (im == 0) return node;
-            if (im != m)
-            {
-                changed = true;
-                // The negation tag is a fact concerning a condition, thus
-                // requiring the instance to be told again.
-                if (plan == Plan::ConjunctionSet && is_negation(z, m)) z->fact(im, z->core.IsA, {z->core.Negation});
-            }
+            if (im != m) changed = true;
             instances.insert(im);
         }
 
@@ -1722,6 +1715,29 @@ namespace
 
         return Zelph::Impl::recipe_id(node, recipe_key(z, *recipe, depth), recipe->mode == RecipeMode::Construction);
     }
+
+    // The variables encountered during the instance walk through a rule
+    // that `n`, a member of a value a firing builds, holds: those from
+    // each `=>` fact within its parts. `read` holds the nodes that have
+    // been read up to this point.
+    void rule_variables_within(const Zelph* const z, const Node n, const Recipe& recipe, const int depth, std::unordered_set<Node>& read, std::unordered_set<Node>& vars)
+    {
+        if (!Zelph::is_hash(n) || !read.insert(n).second) return;
+        const FactStructure fs = get_preferred_structure(const_cast<Zelph*>(z), n, depth);
+        if (fs.subject == 0) return;
+        if (fs.predicate != z->core.Causes)
+        {
+            rule_variables_within(z, fs.subject, recipe, depth, read, vars);
+            rule_variables_within(z, fs.predicate, recipe, depth, read, vars);
+            for (const Node o : fs.objects)
+                rule_variables_within(z, o, recipe, depth, read, vars);
+            return;
+        }
+        std::set<std::pair<Node, Position>> seen;
+        walk_instantiation(z, n, recipe, Place{}, depth, seen, [&](const Node v)
+                           { vars.insert(v); },
+                           [](Node, Plan, const std::unordered_set<Node>&) {});
+    }
 }
 
 std::unordered_set<Node> zelph::network::statement_variables(const Zelph* const z, const Recipe& recipe, const int depth)
@@ -1733,29 +1749,31 @@ std::unordered_set<Node> zelph::network::statement_variables(const Zelph* const 
     return vars;
 }
 
-bool zelph::network::keeps_rule_variable(const Zelph* const z, const Recipe& recipe, const int depth)
+bool zelph::network::keeps_rule_variable(const Zelph* const z, const Recipe& recipe, const int depth, std::unordered_set<Node>& in_values)
 {
     // A firing keeps a conjunction set as written, ensuring that any
     // variable within it survives the substitution: the outer rule's own
     // variable as well as the mentioned rule's. Any other container holding
     // a variable is rebuilt, while a variable located outside a container is
-    // either substituted or made fresh. The walk does not enter the value a
-    // firing builds for a collection of the rule's text: a value is data
-    // regardless of its content, and Zelph::var_in_closure does not enter it
-    // either, meaning the surrounding instance is not rule text.
-    //
-    // A rule contained within such a value whose conditions keep a variable
-    // is therefore not examined: its fact is derived and answered, holding
-    // half of a rule that no one authored within the value. Setting
-    // `enter_values` makes the walk traverse the value as well, and the
-    // firing skip that consequence too.
-    constexpr bool enter_values = false;
-
-    bool keeps = false;
-    walk_statement(z, recipe, depth, [](Node) {}, [&](const Node n, const Plan plan, const std::unordered_set<Node>&)
+    // either substituted or made fresh. The walk additionally enters the
+    // value a firing builds for a collection of the rule's text. A value
+    // constitutes data regardless of its content, and Zelph::var_in_closure
+    // does not enter it, thus the instance around it reads as a statement:
+    // if a rule inside the value were to keep a variable, that statement
+    // would be derived and answered with half of a rule that nobody wrote.
+    // Inside a value, a firing also keeps a variable it does not bind;
+    // `in_values` receives those the walk encounters within a rule there,
+    // and whether any of them stays unbound depends on the binding
+    // (Reasoning::instance_keeps_variable).
+    bool                     keeps = false;
+    std::unordered_set<Node> read;
+    walk_statement(z, recipe, depth, [](Node) {}, [&](const Node n, const Plan plan, const std::unordered_set<Node>& members)
                    {
-                       if (keeps || (!enter_values && plan == Plan::CollectionTemplate)) return false;
+                       if (keeps) return false;
                        if (plan == Plan::Keep && !Zelph::is_hash(n)) keeps = is_conjunction(z, n) && z->holds_variable_in_text(n);
+                       if (plan == Plan::CollectionTemplate)
+                           for (const Node m : members)
+                               rule_variables_within(z, m, recipe, depth, read, in_values);
                        return true; });
     return keeps;
 }
@@ -1883,17 +1901,6 @@ Node zelph::network::instantiate_fact(Zelph* z, Node pattern, const Variables& v
 
     Node inst_subject  = instantiate_fact(z, fs.subject, variables, depth, history, recipe, subject_place(fs, z, place));
     Node inst_relation = instantiate_fact(z, fs.predicate, variables, depth, history, recipe, Place{Position::Value, place.condition, 0});
-
-    // A rule within the pattern -- the consequence of a generator, located
-    // one or more levels beneath the rule being derived. Its single
-    // condition can be negated, and the tag indicating this negation is a
-    // fact ABOUT the pattern, thus it must be restated on the instance, just
-    // as rebuild_condition does for the outermost rule and
-    // instantiate_container does for the members of a conjunction. Omitting
-    // it caused `¬(X blocks H)` to become `(X blocks k)`, a rule saying the
-    // opposite of what was originally stated.
-    if (inst_relation == z->core.Causes && inst_subject != fs.subject && is_negation(z, fs.subject))
-        z->fact(inst_subject, z->core.IsA, {z->core.Negation});
 
     adjacency_set inst_objects;
     bool          changed = (inst_subject != fs.subject) || (inst_relation != fs.predicate);

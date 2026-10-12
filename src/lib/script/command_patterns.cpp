@@ -140,7 +140,7 @@ namespace zelph::console
     {
         try
         {
-            return _script_engine->parse_zelph_to_janet(pattern);
+            return _script_engine->parse_zelph_to_janet(pattern, /*pattern*/ true);
         }
         catch (const std::exception& e)
         {

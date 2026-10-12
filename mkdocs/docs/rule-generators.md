@@ -163,7 +163,7 @@ When a generator fires, the rule it writes is rebuilt under the bindings of that
 | a variable that the generator’s conditions had bound | substituted with the node it was bound to |
 | a variable that they did not bind | stays a variable – it is quantified by the inner rule |
 | a condition set | rebuilt as a set of its own, ensuring the new rule possesses its own conjunction |
-| a negated condition | stays negated; the `¬` tag is reinserted into the rebuilt pattern |
+| a negated condition | rebuilt just as any other condition, and still negated: the condition is the fact `((P) ~ negation)`, thus the negation is rebuilt together with its pattern |
 | a `!=` guard | rebuilt in the same manner as any other condition |
 | `!` as the consequence | rebuilt, enabling a generator to introduce a contradiction check |
 | a container, `{...}` or `@{...}` | rebuilt with its substituted members; a collection becomes one of the new rule’s own, the one a consequence writes **into** included |

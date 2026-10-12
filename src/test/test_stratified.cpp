@@ -27,8 +27,12 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #include "test_helpers.hpp"
 
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
+#include <map>
+#include <string>
+#include <vector>
 
 using namespace zelph::test;
 
@@ -306,6 +310,38 @@ TEST_CASE("negation: a typed rule that fact() refuses asserts none of its condit
         CHECK(collect_answers(collector).empty()); });
 }
 
+// A refuted fact is one that the graph holds as NOT being true, thereby
+// satisfying a negated condition applied to it. The failure occurred during
+// the construction of the operand: after "¬(a p b)", both the rule "(X go Y,
+// ¬(a p b)) => (X ok Y)" and the query "X go Y, ¬(a p b)" were halted with the
+// message "this fact is known to be wrong", since the operand was treated as
+// being asserted just like any other fact. An operand is a pattern, and it is
+// retrieved from the graph where it is held. A positive condition concerning
+// the refuted fact is rejected, as previously described (above).
+TEST_CASE("negation: a refuted fact is negated in a condition as it stands")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, "¬(a p b)\nt go k\n");
+
+        interactive.process("(X go Y, ¬(a p b)) => (X ok Y)");
+        interactive.run(true, false, false);
+        collector.clear();
+        interactive.process("S ok O");
+        CHECK(collect_answers(collector) == std::vector<std::string>{"t ok k"});
+
+        collector.clear();
+        interactive.process("X go Y, ¬(a p b)");
+        CHECK(collect_answers(collector).size() == 1);
+
+        // Consulted, not rebuilt: it remains the refuted fact, and neither
+        // a pattern of the rule nor of the query.
+        collector.clear();
+        interactive.process(".node a p b");
+        CHECK(any_output_contains(collector, "Refuted (claimed not to hold): yes"));
+        CHECK_FALSE(any_output_contains(collector, "Rule pattern")); });
+}
+
 // The reading `¬(F)` got on its own line does not extend below the top level,
 // and until it was refused there, the operator was not reported but DROPPED:
 // the sugar builds its operand with `zelph/fact` and tags the result, so a
@@ -348,6 +384,394 @@ m q n
         collector.clear();
         interactive.process("S r O");
         CHECK(answers_contain(collector, "m r n")); });
+}
+
+// A line containing `¬(F)` by itself refutes F, and only a FACT may be
+// refuted: a line with a variable poses a question. "¬(X p b)" was routed to
+// zelph/refute regardless -- it refuted a pattern, and with `t p b` present
+// in the graph it printed "Answer: ¬(t p b)", the refuted-fact rendering of
+// a fact that holds. It is the query its syntax says, whether no `X p b`
+// holds; binding nothing, it yields one answer when none matches and
+// produces nothing otherwise.
+TEST_CASE("negation: ¬ over a pattern with a variable is a query, not a refutation")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("¬(X p b)");
+        CHECK(collect_answers(collector) == std::vector<std::string>{"¬(X p b)"});
+
+        interactive.process("t p b");
+        collector.clear();
+        interactive.process("¬(X p b)");
+        CHECK(collect_answers(collector).empty());
+
+        // The query refuted nothing.
+        collector.clear();
+        interactive.process("S ~ refuted");
+        CHECK(collect_answers(collector).empty());
+        collector.clear();
+        interactive.process("S p O");
+        CHECK(collect_answers(collector) == std::vector<std::string>{"t p b"}); });
+}
+
+// "¬" negates a condition, and "¬(X)" holds none. The line contains a
+// variable and functions as a query, and as such built nothing, printed
+// nothing, and answered nothing, without a word. Two values form a statement
+// with a segment absent, and that message names the part.
+TEST_CASE("negation: ¬ over a lone variable is refused, not silently empty")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        CHECK_THROWS_WITH(interactive.process("¬(X)"), doctest::Contains("needs one -- a pattern"));
+        CHECK_THROWS_WITH(interactive.process("¬X"), doctest::Contains("needs one -- a pattern"));
+        CHECK_THROWS_WITH(interactive.process("¬(X Y)"), doctest::Contains("object left off")); });
+}
+
+// A query functions as a condition list that undergoes evaluation just once,
+// and it is BUILT before being assessed: "X go Y, ¬(a p b)" created `a p b`
+// as data while progressing toward the negation, then returned nothing since
+// it had built its own counterexample, and `A p B` began responding with `a
+// p b` thereafter. The material a query builds beneath an operator -- the
+// operand, and the negation fact itself -- constitutes a pattern, much like
+// the components of a rule are.
+TEST_CASE("negation: a query builds nothing beneath ¬ as data")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("t go k");
+        collector.clear();
+        interactive.process("X go Y, ¬(a p b)");
+        CHECK(collect_answers(collector).size() == 1);
+
+        collector.clear();
+        interactive.process("A p B");
+        CHECK(collect_answers(collector).empty());
+        collector.clear();
+        interactive.process("X ~ negation");
+        CHECK(collect_answers(collector).empty());
+        collector.clear();
+        interactive.process(".explain (a p b)");
+        CHECK(any_output_contains(collector, "[rule pattern; not asserted]")); });
+}
+
+// Only the elements generated by the query are marked. A fact asserted
+// before the query remains data, and any negation applied to it fails as
+// expected; a rule's pattern continues to be a pattern, so asserting it
+// afterwards still fires the rule.
+TEST_CASE("negation: a node that existed before a query keeps its status")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, "t go k\na p b\n(c q d) => (e r f)\n");
+
+        collector.clear();
+        interactive.process("X go Y, ¬(a p b)");
+        CHECK(collect_answers(collector).empty());
+        collector.clear();
+        interactive.process("A p B");
+        CHECK(collect_answers(collector) == std::vector<std::string>{"a p b"});
+
+        collector.clear();
+        interactive.process("X go Y, ¬(c q d)");
+        CHECK(collect_answers(collector).size() == 1);
+        interactive.process("c q d");
+        collector.clear();
+        interactive.process("S r O");
+        CHECK(collect_answers(collector) == std::vector<std::string>{"e r f"}); });
+}
+
+// The positive part of a query is created, and thereby asserted, just as it
+// has consistently been; solely what stands beneath the operator constitutes
+// a pattern. The sequence in which the two appear is irrelevant, since which
+// node stands beneath an operator is determined from the structure after the
+// query is finalized. Marking what the operator's own invocation created
+// would make the fact into a pattern in one arrangement and into data in the
+// other.
+TEST_CASE("negation: a query's positive part is asserted, whichever comes first")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("t go k");
+        collector.clear();
+
+        SUBCASE("positive first") { interactive.process("X go Y, (a p b), ¬(a p b)"); }
+        SUBCASE("negation first") { interactive.process("X go Y, ¬(a p b), (a p b)"); }
+
+        CHECK(collect_answers(collector).empty());
+        collector.clear();
+        interactive.process("A p B");
+        CHECK(collect_answers(collector) == std::vector<std::string>{"a p b"}); });
+}
+
+// A rule mentioned by the query outside every operator belongs to its
+// positive side: the query creates it and thus asserts its ground parts,
+// just as a mention within any query does. Within the scope of "¬"
+// elsewhere on the line, its condition transformed into a pattern whereas
+// its consequence remained data, since the traversal seeking the positive
+// side stopped at the rule.
+TEST_CASE("negation: a rule a query mentions outside ¬ keeps its ground parts as data")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("t go k");
+        collector.clear();
+        interactive.process("X knows ((a p b) => (c q d)), ¬(a p b)");
+        CHECK(collect_answers(collector).empty());
+
+        collector.clear();
+        interactive.process("A p B");
+        CHECK(collect_answers(collector) == std::vector<std::string>{"a p b"});
+        collector.clear();
+        interactive.process("C q D");
+        CHECK(collect_answers(collector) == std::vector<std::string>{"c q d"}); });
+}
+
+// Beneath "¬" a mentioned rule is part of the operand, and everything in the
+// operand is a pattern. "X go Y, ¬(x says ((a p b) => (c q d)))" marked `x
+// says ...` as a pattern, but the facts contained within the rule were
+// asserted: the walk from the operator stopped at the rule.
+TEST_CASE("negation: a rule mentioned beneath ¬ in a query is part of the pattern")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("t go k");
+        collector.clear();
+        interactive.process("X go Y, ¬(x says ((a p b) => (c q d)))");
+        CHECK(collect_answers(collector).size() == 1);
+
+        for (const char* query : {"A p B", "C q D", "S says O"})
+        {
+            CAPTURE(query);
+            collector.clear();
+            interactive.process(query);
+            CHECK(collect_answers(collector).empty());
+        } });
+}
+
+// Everything under the operator is a pattern, a fact embedded within the
+// operand too: "X go Y, ¬(X p (a q b))" asserted `a q b`.
+TEST_CASE("negation: a fact nested in a query's negated condition is a pattern too")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("t go k");
+        collector.clear();
+        interactive.process("X go Y, ¬(X p (a q b))");
+        CHECK(collect_answers(collector).size() == 1);
+
+        collector.clear();
+        interactive.process("A q B");
+        CHECK(collect_answers(collector).empty()); });
+}
+
+// A variable free within a negation becomes quantified within that negation,
+// whether in a query or in a rule (refer to "a free variable inside a
+// negation is quantified inside it" above). "¬(X before Y)" asks whether no
+// `before` fact holds at all, and it previously refuted a pattern instead.
+TEST_CASE("negation: a free variable inside ¬ is quantified inside it in a query too")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("¬(X before Y)");
+        CHECK(collect_answers(collector).size() == 1);
+
+        process_lines(interactive, "a ~ interval\nb ~ interval\nc ~ interval\na before b\nb before c\n");
+        collector.clear();
+        interactive.process("¬(X before Y)");
+        CHECK(collect_answers(collector).empty());
+
+        collector.clear();
+        interactive.process("A ~ interval, ¬(A before B)");
+        const std::vector<std::string> answers = collect_answers(collector);
+        REQUIRE(answers.size() == 1);
+        CHECK(answers.front().find("(c ~ interval)") != std::string::npos); });
+}
+
+// A line lacking a variable makes an assertion, and a condition holds no
+// significance in such a context -- in no part of it, across every form a
+// line may assume. Each of these was accepted and claimed what the operator
+// concerned itself with: the comma list asserted `t go k` and `a p b`, the
+// set and the self-fact asserted their operand, and the refutation asserted
+// the fact contained within the one it refuted. The refusal is determined
+// before any construction, so not even `t go k` remains.
+TEST_CASE("negation: a line without a variable refuses a condition operator anywhere in it")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        const std::size_t before = node_count(collector, interactive);
+
+        SUBCASE("a comma list") { CHECK_THROWS(interactive.process("t go k, ¬(a p b)")); }
+        SUBCASE("a set") { CHECK_THROWS(interactive.process("{(¬(a p b)) (c q d)}")); }
+        SUBCASE("a self-fact") { CHECK_THROWS(interactive.process(":p ¬(a q b)")); }
+        SUBCASE("the fact a refutation refutes") { CHECK_THROWS(interactive.process("¬(x says (¬(a p b)))")); }
+
+        CHECK(node_count(collector, interactive) == before);
+        collector.clear();
+        interactive.process("S P O");
+        for (const std::string& answer : collect_answers(collector))
+        {
+            CAPTURE(answer);
+            CHECK(answer.find(" ~ ->") != std::string::npos);
+        } });
+}
+
+// The fact `((P) ~ negation)` constitutes the negated condition
+// (Zelph::negation_operand), thus when expressed explicitly it is refused where
+// the sugar is: entered on its own line, "(a p b) ~ negation" asserted `a p b`
+// beside the condition stating its absence. Within a query, it functions as the
+// condition and means "¬".
+TEST_CASE("negation: the negation written out is refused where ¬ is, and means ¬ in a query")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("t go k");
+        const std::size_t before = node_count(collector, interactive);
+
+        CHECK_THROWS(interactive.process("(a p b) ~ negation"));
+        CHECK_THROWS(interactive.process("x says ((a p b) ~ negation)"));
+        CHECK(node_count(collector, interactive) == before);
+
+        collector.clear();
+        interactive.process("X go Y, ((a p b) ~ negation)");
+        CHECK(collect_answers(collector).size() == 1);
+        CHECK(any_output_contains(collector, "¬(a p b)"));
+        collector.clear();
+        interactive.process("A p B");
+        CHECK(collect_answers(collector).empty()); });
+}
+
+// A focus on the operator's name alters the value the line produces, without
+// affecting the fact it builds. "(a q b) ~ *negation" built the negation and
+// asserted `a q b` alongside it, and in "(X p (a q b)) ~ *negation" the
+// statement serves as the name `negation`, meaning the walk from it never
+// arrived at the operator and `a q b` stayed data.
+TEST_CASE("negation: a focus on the negation's name hides no operator")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        const std::size_t before = node_count(collector, interactive);
+        CHECK_THROWS(interactive.process("(a q b) ~ *negation"));
+        CHECK(node_count(collector, interactive) == before);
+
+        interactive.process("(X p (a q b)) ~ *negation");
+        collector.clear();
+        interactive.process("A q B");
+        CHECK(collect_answers(collector).empty()); });
+}
+
+// A query that does not succeed during its construction retains no part of
+// what was constructed. At that moment, the operator's own rejections are
+// executed -- a set is not a statement to negate, a negation does not nest --
+// and the operand they rejected had already been constructed: `a p b` was
+// preserved as data.
+TEST_CASE("negation: a query that fails keeps nothing it built")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("t go k");
+        const std::size_t before = node_count(collector, interactive);
+
+        CHECK_THROWS_WITH(interactive.process("X go Y, ¬{(a p b)}"), doctest::Contains("is not one"));
+        CHECK_THROWS_WITH(interactive.process("X go Y, ¬((a p b) ~ negation)"), doctest::Contains("does not nest"));
+
+        CHECK(node_count(collector, interactive) == before);
+        collector.clear();
+        interactive.process("A p B");
+        CHECK(collect_answers(collector).empty()); });
+}
+
+// A set is DATA: it holds its members, and nothing interprets them as
+// conditions. "{(X go Y) (¬(X p b))} => (X ok Y)" was permitted, displayed
+// again without the "¬", and listed no rule -- the operator had simply
+// vanished. Refused within a set or a collection literal wherever the literal
+// stands, unless a rule inside it gives the operator a condition slot of its
+// own.
+TEST_CASE("negation: a condition operator inside a set literal is refused, in a rule as in a query")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("t go k");
+        const std::size_t before = node_count(collector, interactive);
+
+        for (const char* statement : {"{(X go Y) (¬(X p b))} => (X ok Y)",
+                                      "X in @{(¬(X p b))}",
+                                      "{(¬(a p b)) (c q d)}"})
+        {
+            CAPTURE(statement);
+            CHECK_THROWS_WITH(interactive.process(statement), doctest::Contains("a set is DATA"));
+        }
+        CHECK(node_count(collector, interactive) == before);
+        collector.clear();
+        interactive.process(".list-rules");
+        CHECK(any_output_contains(collector, "No rules found"));
+
+        CHECK_NOTHROW(interactive.process("{((X go Y, ¬(X p b)) => (X ok Y))}")); });
+}
+
+// The operators written out are the same nodes as the sugar
+// (Zelph::negation_operand), meaning that within a set they function as data
+// in identical fashion. They were accepted: "{(X go Y) ((X p b) ~ negation)}
+// => (X ok Y)" became a statement about a collection, and no rule was
+// listed. When a query with a path condition is echoed, it prints the
+// condition written out within a set, and upon being typed back, it became
+// silently a different statement.
+TEST_CASE("negation: a condition operator written out inside a set literal is refused too")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("t go k");
+        const std::size_t before = node_count(collector, interactive);
+
+        for (const char* statement : {"{(X go Y) ((X p b) ~ negation)} => (X ok Y)",
+                                      "X go Y, Z in {((a p b) ~ negation)}",
+                                      "{(X go Y) ((a P279 d) closure one-or-more)}"})
+        {
+            CAPTURE(statement);
+            CHECK_THROWS_WITH(interactive.process(statement), doctest::Contains("a set is DATA"));
+        }
+        CHECK(node_count(collector, interactive) == before);
+        collector.clear();
+        interactive.process(".list-rules");
+        CHECK(any_output_contains(collector, "No rules found")); });
+}
+
+// "*{...} ~ conjunction" is the comma-separated list expressed in full: the
+// focus returns the set, and this set constitutes the condition list,
+// meaning its members are conditions rather than the data contained within a
+// set literal. The symbol "¬" was refused as an operator within a set,
+// whereas the negation expressed in full was accepted there.
+TEST_CASE("negation: the comma list written out reads ¬ among its members")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, "t go k\nu go v\nu p b\n");
+
+        collector.clear();
+        interactive.process("*{(X go Y) (¬(X p b))} ~ conjunction");
+        CHECK(collect_answers(collector).size() == 1);
+
+        interactive.process("(*{(X go Y) (¬(X p b))} ~ conjunction) => (X ok Y)");
+        interactive.run(true, false, false);
+        collector.clear();
+        interactive.process("S ok O");
+        CHECK(collect_answers(collector) == std::vector<std::string>{"t ok k"}); });
+}
+
+// A rule a line mentions maintains its refusal of condition operators, and
+// the message said what it states regarding a plain statement or a
+// condition, neither of which applies here: it told a query to place the "¬"
+// symbol before the condition that was already preceded by it.
+TEST_CASE("negation: ¬ in a rule a line mentions is refused as an operator of a mentioned rule")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        for (const char* statement : {"R knows ((X go Y, ¬(X p b)) => (X ok Y))",
+                                      "r knows ((X go Y, ¬(X p b)) => (X ok Y))",
+                                      "R knows ((X go Y, ≈net(X p b)) => (X ok Y))"})
+        {
+            CAPTURE(statement);
+            CHECK_THROWS_WITH(interactive.process(statement), doctest::Contains("rule that this line mentions"));
+        } });
 }
 
 TEST_CASE("negation: a pattern is looked up, not asserted, when a command resolves it")
@@ -397,11 +821,119 @@ TEST_CASE("negation: a refutation survives a save and a load")
     std::filesystem::remove(file);
 }
 
+TEST_CASE("negation: negated rule conditions survive a save and a load")
+{
+    // A negated condition represents the fact `((P) ~ negation)`, meaning the
+    // file carries it as rule text just like any other condition, and its
+    // header says that the file names negated conditions in this way: the
+    // load prints no note. A load disarms the stores that hold each fact's
+    // exact parts, thus causing conditions to be read back from the edges
+    // alone -- a negated ground path condition among them, whose path
+    // pattern is the subject of the negation.
+    const auto file = std::filesystem::temp_directory_path() / "zelph_negated_conditions.bin";
+    {
+        zelph::io::OutputCollector  collector;
+        zelph::console::Interactive interactive(collector.sink());
+        process_lines(interactive, R"((a p b) => (c q d)
+(X go Y, ¬(a p b)) => (X ok Y)
+(X go Y, ¬(e p⁺ f)) => (X ok2 Y)
+(X go Y, ¬(X p b)) => (X ok3 Y))");
+        interactive.process(".save \"" + file.string() + "\"");
+    }
+
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+    interactive.process(".load \"" + file.string() + "\"");
+    CHECK_FALSE(any_output_contains(collector, "Note:"));
+    std::filesystem::remove(file);
+
+    process_lines(interactive, "t go k\nu p b\nu go v");
+    interactive.run(true, false, false);
+
+    collector.clear();
+    interactive.process("C q D");
+    CHECK(collect_answers(collector).empty());
+
+    for (const std::string predicate : {"ok", "ok2"})
+    {
+        CAPTURE(predicate);
+        collector.clear();
+        interactive.process("S " + predicate + " O");
+        auto answers = collect_answers(collector);
+        std::sort(answers.begin(), answers.end());
+        CHECK(answers == std::vector<std::string>{"t " + predicate + " k", "u " + predicate + " v"});
+    }
+
+    collector.clear();
+    interactive.process("S ok3 O");
+    CHECK(collect_answers(collector) == std::vector<std::string>{"t ok3 k"});
+}
+
+namespace zelph::test
+{
+    // Binary files located in older_networks/*.bin, compiled into this
+    // executable via embed_files.cmake.
+    const std::map<std::string, std::vector<unsigned char>>& older_networks();
+}
+
+TEST_CASE("negation: a network saved before negated conditions were facts says so on load")
+{
+    // The file `older_networks/negated_condition.bin` was saved by the 1.0.2
+    // engine following the rule `(X go Y, ¬(X p b)) => (X ok Y)`. In that
+    // engine, a condition was negated through a fact ABOUT its pattern, and
+    // the pattern itself was named as the condition, so here the rule reads
+    // `(X p b)` positively. Nothing is migrated: the load says so, and a save
+    // of such a network keeps saying so on the next load, as its rules still
+    // carry the older reading. A user reaches this state by loading such a
+    // file.
+    const auto& networks = zelph::test::older_networks();
+    const auto  network  = networks.find("negated_condition");
+    REQUIRE(network != networks.end());
+
+    const auto path    = std::filesystem::temp_directory_path() / "zelph_older_negated_condition.bin";
+    const auto resaved = std::filesystem::temp_directory_path() / "zelph_older_negated_condition_resaved.bin";
+    {
+        std::ofstream out(path, std::ios::binary | std::ios::trunc);
+        out.write(reinterpret_cast<const char*>(network->second.data()), static_cast<std::streamsize>(network->second.size()));
+    }
+
+    const std::string note  = "Note: negated rule conditions in this network were saved by an older zelph and read as positive "
+                              "here; rebuild the network from its scripts before reasoning over it.";
+    const auto        noted = [&note](const zelph::io::OutputCollector& collector)
+    {
+        return std::ranges::any_of(collector.events(), [&note](const auto& event)
+                                   { return event.channel == zelph::io::OutputChannel::Out && event.text == note; });
+    };
+
+    {
+        zelph::io::OutputCollector  collector;
+        zelph::console::Interactive interactive(collector.sink());
+        interactive.process(".load " + path.generic_string());
+        CHECK(noted(collector));
+
+        collector.clear();
+        interactive.process(".list-rules");
+        CHECK(any_output_contains(collector, "(X p b)"));
+        CHECK_FALSE(any_output_contains(collector, "¬"));
+
+        interactive.process(".save " + resaved.generic_string());
+    }
+
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+    interactive.process(".load " + resaved.generic_string());
+    CHECK(noted(collector));
+
+    std::filesystem::remove(path);
+    std::filesystem::remove(resaved);
+}
+
 TEST_CASE("stratified: ¬ over an inequality guard is refused, not silently dropped")
 {
     // `!=` is a built-in constraint, not a fact to look up, and it is
-    // dispatched by its predicate before the leaf branch that reads the
-    // negation tag. So `¬(X != Y)` used to reach the guard WITHOUT its tag and
+    // dispatched by its predicate before the leaf branch, which previously
+    // stood as the sole location that read the negation tag. So
+    // `¬(X != Y)` used to reach the guard WITHOUT its tag and
     // be evaluated as `X != Y`: the rule below derived `alice same-as bob` --
     // exactly the pairs that are DIFFERENT -- and printed `¬(alice != bob)` in
     // the justification of it.
@@ -1402,6 +1934,27 @@ TEST_CASE("stratified: .strata names the rules that negate what they derive")
         CHECK(line_index(collector, "¬(:t A)", header + 1) == std::string::npos); });
 }
 
+TEST_CASE("stratified: a negated condition depends on the predicates of its pattern, not on the ~ of its own fact")
+{
+    // A negated condition is the fact `((P) ~ negation)`, and what it
+    // depends on is read from P. Read from the fact itself, `~` would be
+    // treated as a negated predicate, thus the rule that derives
+    // `X ~ okish` would feed both negations: .strata then reported two
+    // levels and a cycle between the first two rules, neither of which
+    // negates anything the other one derives.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+(X go Y, ¬(X p b)) => (X ok Y)
+(X ok Y) => (X ~ okish)
+(X ~ okish, ¬(X q c)) => (X fine yes)
+)");
+        collector.clear();
+        interactive.process(".strata");
+        CHECK(any_output_contains(collector, "1 negation level"));
+        CHECK(line_index(collector, "Not stratifiable") == std::string::npos); });
+}
+
 TEST_CASE("stratified: .strata keeps a cycle that a rule over predicates really closes")
 {
     // A rule that solely extends the predicates it reads maintains the levels
@@ -1653,8 +2206,11 @@ TEST_CASE("negation: a group of conditions cannot be negated")
     // was read as one before its negation tag was ever consulted, so
     // "¬(A is y, A is z)" evaluated as "A is y AND A is z" -- the exact
     // opposite of what was written, and without a word about it. Rejecting
-    // the combination is checked where the tag is created, which catches
-    // the ¬ sugar and the explicit "*(...) ~ negation" spelling alike.
+    // the combination is checked where the negation is created, which
+    // catches the ¬ sugar and the explicit "((...) ~ negation)" spelling
+    // alike. The focus spelling "*(...) ~ negation" is no actual negation
+    // within a rule at all and is therefore refused, before anything is
+    // built.
     run_both_modes([](auto& collector, auto& interactive)
                    {
         (void)collector;
@@ -1663,8 +2219,13 @@ TEST_CASE("negation: a group of conditions cannot be negated")
                              std::runtime_error);
 
         CHECK_THROWS_WITH_AS(
-            interactive.process("(A is x, *(*{(A is y) (A is z)} ~ conjunction) ~ negation) => (A r s)"),
+            interactive.process("(A is x, ((*{(A is y) (A is z)} ~ conjunction) ~ negation)) => (A r s)"),
             doctest::Contains("conjunction and a negation"),
+            std::runtime_error);
+
+        CHECK_THROWS_WITH_AS(
+            interactive.process("(A is x, *(*{(A is y) (A is z)} ~ conjunction) ~ negation) => (A r s)"),
+            doctest::Contains("is not a negation"),
             std::runtime_error);
 
         // The ordinary case is untouched.

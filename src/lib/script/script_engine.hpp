@@ -61,7 +61,20 @@ namespace zelph
         static std::string get_janet_version();
 
         // Parse zelph syntax to Janet AST
-        std::string parse_zelph_to_janet(const std::string& input) const;
+        //
+        // `pattern` indicates that the text represents a fact pattern
+        // associated with a command (.node, .explain, .prune-*, .mermaid)
+        // rather than a statement: it names a node, so a condition operator
+        // written out within it is not refused as one that a statement
+        // would assert.
+        std::string parse_zelph_to_janet(const std::string& input, bool pattern = false) const;
+
+        // Whether a statement writes a condition operator anywhere outside
+        // the rules it mentions -- `¬`, `≈`, `⁺`/`∗`, or any of these
+        // expressed explicitly as the fact they construct. A text that fails
+        // to parse writes none. `is_rule` receives whether the statement is
+        // a rule in its own right, whose condition slots count as well.
+        bool carries_condition_operator(const std::string& input, bool* is_rule = nullptr) const;
 
         // Execute Janet code (either raw or transformed zelph AST)
         // is_zelph_ast determines how the output is handled/printed

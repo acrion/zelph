@@ -1444,6 +1444,92 @@ TEST_CASE("capi: a rule derives what forward chaining makes of it")
     CHECK(exists == 1);
 }
 
+TEST_CASE("capi: zelph_negate returns the negated condition, and the pattern stays positive")
+{
+    // zelph_negate wrote `~ negation` ABOUT the pattern and handed the
+    // pattern back, causing a rule built with it to name the pattern itself
+    // -- and every other rule over the same node did the same, subsequently
+    // reading it as negated. It now returns the fact ((pattern) ~ negation),
+    // which a rule takes in place of the pattern.
+    Engine engine;
+
+    const zelph_node go = engine.node("go");
+    const zelph_node t  = engine.node("t");
+    const zelph_node k  = engine.node("k");
+    const zelph_node b  = engine.node("b");
+
+    zelph_node fact = 0;
+    REQUIRE(zelph_fact(engine, t, go, &k, 1, &fact) == ZELPH_OK);
+
+    zelph_node x = 0;
+    zelph_node y = 0;
+    REQUIRE(zelph_variable(engine, "X", &x) == ZELPH_OK);
+    REQUIRE(zelph_variable(engine, "Y", &y) == ZELPH_OK);
+
+    zelph_node pattern = 0;
+    REQUIRE(zelph_fact(engine, x, engine.node("p"), &b, 1, &pattern) == ZELPH_OK);
+
+    zelph_node negated = 0;
+    REQUIRE(zelph_negate(engine, pattern, &negated) == ZELPH_OK);
+    CHECK(negated != pattern);
+
+    // It is the fact `((X p b) ~ negation)`.
+    zelph_node subject   = 0;
+    zelph_node predicate = 0;
+    zelph_node object    = 0;
+    size_t     count     = 1;
+    REQUIRE(zelph_fact_parts(engine, negated, &subject, &predicate, &object, &count) == ZELPH_OK);
+    REQUIRE(count == 1);
+    CHECK(subject == pattern);
+    CHECK(predicate == engine.node("~"));
+    CHECK(name_of(engine, object) == "negation");
+
+    // A rule governing the negated condition, another rule governing
+    // the pattern itself.
+    zelph_node walks = 0;
+    REQUIRE(zelph_fact(engine, x, go, &y, 1, &walks) == ZELPH_OK);
+    zelph_node ok  = 0;
+    zelph_node bad = 0;
+    REQUIRE(zelph_fact(engine, x, engine.node("ok"), &y, 1, &ok) == ZELPH_OK);
+    REQUIRE(zelph_fact(engine, x, engine.node("bad"), &y, 1, &bad) == ZELPH_OK);
+
+    const zelph_node negating[2] = {walks, negated};
+    const zelph_node positive[2] = {walks, pattern};
+    zelph_node       rule        = 0;
+    REQUIRE(zelph_rule(engine, negating, 2, &ok, 1, &rule) == ZELPH_OK);
+    REQUIRE(zelph_rule(engine, positive, 2, &bad, 1, &rule) == ZELPH_OK);
+    REQUIRE(zelph_run(engine) == ZELPH_OK);
+
+    int32_t exists = 0;
+    REQUIRE(zelph_exists(engine, t, engine.node("ok"), &k, 1, &exists) == ZELPH_OK);
+    CHECK(exists == 1);
+    REQUIRE(zelph_exists(engine, t, engine.node("bad"), &k, 1, &exists) == ZELPH_OK);
+    CHECK(exists == 0);
+}
+
+TEST_CASE("capi: zelph_negate refuses a negated condition and a node that is not a statement")
+{
+    // Applying a second negation to a condition that is already negated
+    // requires a second negation level, and treating a name as negated
+    // results in a fact that no rule reads as negated. Both were written
+    // and returned as though they were conditions.
+    Engine engine;
+
+    zelph_node       pattern = 0;
+    const zelph_node b       = engine.node("b");
+    REQUIRE(zelph_fact(engine, engine.node("a"), engine.node("p"), &b, 1, &pattern) == ZELPH_OK);
+    zelph_node negated = 0;
+    REQUIRE(zelph_negate(engine, pattern, &negated) == ZELPH_OK);
+
+    zelph_node twice = 0;
+    CHECK(zelph_negate(engine, negated, &twice) == ZELPH_RUNTIME_ERROR);
+    CHECK(std::string(zelph_last_error()).find("does not nest") != std::string::npos);
+
+    zelph_node name = 0;
+    CHECK(zelph_negate(engine, engine.node("a"), &name) == ZELPH_RUNTIME_ERROR);
+    CHECK(std::string(zelph_last_error()).find("applies to a statement") != std::string::npos);
+}
+
 TEST_CASE("capi: a query reports its bindings as nodes")
 {
     Engine engine;

@@ -37,6 +37,12 @@ struct ZelphImpl {
   # network in which a whole-file load found rules an older engine saved:
   # they keep those ids.
   templateIds @11 :Bool;
+  # True in every file an engine writes that names a negated rule condition
+  # through the fact ((P) ~ negation). An older engine wrote that fact as a
+  # tag on the pattern P and named P directly, leaving this false. So does a
+  # save of a network in which a whole-file load found such tags: they keep
+  # their older meaning.
+  negationConditions @12 :Bool;
 }
 
 struct NamePair {

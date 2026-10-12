@@ -204,16 +204,7 @@ Node Reasoning::rebuild_condition(const Node pattern, const Variables& variables
     // within a generated rule takes the outer binding in its conditions as
     // well.
     std::vector<Node> history;
-    const Node        inst = instantiate_fact(this, pattern, variables, depth, history, recipe, Place{Position::Value, true, 0});
-    if (inst == 0) return 0;
-
-    // The negation tag is a fact ABOUT the pattern, not a part of it, so
-    // instantiation cannot carry it along -- it has to be restated. When the
-    // pattern came back unchanged the tag is already on the node.
-    if (inst != pattern && check_fact(pattern, core.IsA, {core.Negation}).is_known())
-        fact(inst, core.IsA, {core.Negation});
-
-    return inst;
+    return instantiate_fact(this, pattern, variables, depth, history, recipe, Place{Position::Value, true, 0});
 }
 
 namespace
@@ -580,10 +571,40 @@ const Reasoning::ConsequenceText& Reasoning::consequence_text(const Node deducti
     {
         static const Variables unbound;
         const Recipe           recipe{deduction, &unbound, RecipeMode::Firing, parent, nullptr};
-        text.keeps_rule_variable = keeps_rule_variable(this, recipe, depth);
+        text.keeps_rule_variable = keeps_rule_variable(this, recipe, depth, text.value_rule_variables);
     }
 
     return _consequence_text.emplace(deduction, std::move(text)).first->second;
+}
+
+bool Reasoning::instance_keeps_variable(const Node deduction, const ConsequenceText& text, const Variables& binding, const std::unordered_set<Node>& fresh, const Node parent, const int depth) const
+{
+    if (!text.keeps_rule_variable && text.value_rule_variables.empty()) return false;
+
+    // The text is read without a binding, meaning a relation that is a
+    // variable counts both as one that generates values for its objects
+    // and as a membership, which writes into those objects instead
+    // (walk_instantiation). A binding that makes a variable `in` causes the
+    // statement to be read again: when it makes the relation `in`, the
+    // firing writes into the rule's collection, where the term excludes a
+    // member holding a variable (bucket_term in reasoning.cpp), and builds
+    // no value.
+    bool                            keeps = text.keeps_rule_variable;
+    const std::unordered_set<Node>* vars  = &text.value_rule_variables;
+    std::unordered_set<Node>        in_values;
+    if (std::any_of(binding.begin(), binding.end(), [this](const auto& b)
+                    { return b.second == core.PartOf; }))
+    {
+        const Recipe recipe{deduction, &binding, RecipeMode::Firing, parent, nullptr};
+        keeps = keeps_rule_variable(this, recipe, depth, in_values);
+        vars  = &in_values;
+    }
+    if (keeps) return true;
+    return std::any_of(vars->begin(), vars->end(), [&](const Node v)
+                       {
+                           if (fresh.count(v) != 0) return false;
+                           const auto it = binding.find(v);
+                           return it == binding.end() || Zelph::is_var(it->second); });
 }
 
 const Reasoning::ConsequenceText& Reasoning::consequence_text(const Node deduction, const Node parent, const int depth)
@@ -723,22 +744,30 @@ void Reasoning::deduce(const Variables& variables, const Node parent, const int 
     // not derived (below), thus no witness is made for its variables
     // either: such a witness would stand in no fact. This is checked only
     // for a rule that has fresh variables at all, before a node is created
-    // for one.
+    // for one. A rule contained within a value that a consequence
+    // constructs keeps a fresh variable for which no derived consequence
+    // makes a witness, hence the check is repeated as long as such a rule
+    // exists and a witness drops out.
     if (!fresh_vars.empty())
     {
-        std::unordered_set<Node> derived_vars;
+        std::lock_guard<std::mutex> lock(_mtx_network);
+        for (bool again = true; again;)
         {
-            std::lock_guard<std::mutex> lock(_mtx_network);
+            std::unordered_set<Node> derived_vars;
+            bool                     in_values = false;
             for (const Node deduction : ctx.rule_deductions)
             {
                 if (deduction == core.Contradiction || deduction_is_rule(deduction)) continue;
-                if (consequence_text(deduction, parent, depth).keeps_rule_variable) continue;
+                const ConsequenceText& text = consequence_text(deduction, parent, depth);
+                if (instance_keeps_variable(deduction, text, variables, fresh_vars, parent, depth)) continue;
+                in_values = in_values || !text.value_rule_variables.empty();
                 std::vector<Node> history;
                 collect_variables(this, deduction, derived_vars, depth, history);
             }
+            const auto dropped = std::erase_if(fresh_vars, [&](const Node v)
+                                               { return derived_vars.count(v) == 0; });
+            again              = dropped != 0 && in_values;
         }
-        std::erase_if(fresh_vars, [&](const Node v)
-                      { return derived_vars.count(v) == 0; });
     }
 
     // --- Termination Check ---
@@ -767,7 +796,7 @@ void Reasoning::deduce(const Variables& variables, const Node parent, const int 
             }
         }
 
-        if (consequences_already_exist(variables, ctx.rule_deductions, parent, depth))
+        if (consequences_already_exist(variables, fresh_vars, ctx.rule_deductions, parent, depth))
         {
             if (logging_active())
             {
@@ -898,7 +927,7 @@ void Reasoning::deduce(const Variables& variables, const Node parent, const int 
             // authored. The determination comes before the instantiation,
             // which builds the nested `=>` prior to the fact that holds it: a
             // `=>` belonging to nothing is a rule in force.
-            if (text.keeps_rule_variable)
+            if (instance_keeps_variable(deduction, text, augmented, {}, parent, depth))
             {
                 if (should_log(depth))
                     log(depth, "deduce", "SKIP: " + format(deduction) + " would keep a variable of a rule it mentions");
@@ -1227,10 +1256,11 @@ void Reasoning::deduce(const Variables& variables, const Node parent, const int 
 // uniquely determined only up to homomorphism, not up to renaming of the
 // nodes that were generated.
 bool Reasoning::consequences_already_exist(
-    const Variables&     condition_bindings,
-    const adjacency_set& deductions,
-    Node                 parent,
-    const int            depth)
+    const Variables&                condition_bindings,
+    const std::unordered_set<Node>& fresh_vars,
+    const adjacency_set&            deductions,
+    Node                            parent,
+    const int                       depth)
 {
     std::vector<Node> consequences;
     for (Node deduction : deductions)
@@ -1248,7 +1278,7 @@ bool Reasoning::consequences_already_exist(
         if (!asserts_fact(deduction)) continue;
         {
             std::lock_guard<std::mutex> lock(_mtx_network);
-            if (consequence_text(deduction, parent, depth).keeps_rule_variable) continue;
+            if (instance_keeps_variable(deduction, consequence_text(deduction, parent, depth), condition_bindings, fresh_vars, parent, depth)) continue;
         }
         consequences.push_back(deduction);
     }

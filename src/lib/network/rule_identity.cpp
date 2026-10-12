@@ -162,10 +162,10 @@ namespace zelph::network
 
         // Where a node sits in the rule decides which questions are worth
         // asking about it -- and which ones the ENGINE asks. Only a
-        // condition can be a conjunction or be negated (collect_conditions
-        // tests exactly those two tags, and only there), so the tag lookups
-        // are confined to condition positions instead of being paid for
-        // every atom the walk passes.
+        // condition may serve as a set of conditions (collect_conditions
+        // makes this request, and solely at that point), hence the lookup
+        // is confined to condition positions rather than being paid for
+        // every atom traversed during the walk.
         enum class Role
         {
             Condition, // the => subject, also of a nested rule, and each member of a condition set
@@ -242,20 +242,10 @@ namespace zelph::network
             return Kind::Opaque;
         }
 
-        // Negation is the other tag the engine reads on a CONDITION, and it
-        // has to be spelled out: a negated pattern and the bare pattern are
-        // otherwise structurally identical.
-        bool negated(const Zelph* const z, const Node n, const Role role)
-        {
-            return role == Role::Condition
-                && z->check_fact(n, z->core.IsA, {z->core.Negation}).is_known();
-        }
-
         // When a rule is nested in another rule, it transforms into a rule
-        // upon derivation, so its subject is read as a condition, with the
-        // tags the engine reads at that location. Treated as a plain term,
-        // it lost its negation tag, and `(G go H) => (¬(X p H) => (X q H))`
-        // was the same rule as the one lacking the `¬`.
+        // upon derivation, so its subject is read as a condition, just as
+        // the engine reads it at that location: a set containing a single
+        // condition is equivalent to that condition.
         Role subject_role(const Zelph* const z, const FactStructure& fs)
         {
             return fs.predicate == z->core.Causes ? Role::Condition : Role::Term;
@@ -323,7 +313,7 @@ namespace zelph::network
                     objs.push_back(canon(z, o, depth + 1, Role::Term));
                 std::sort(objs.begin(), objs.end());
 
-                std::string out = (negated(z, n, role) ? "!(" : "(")
+                std::string out = "("
                                 + canon(z, fs.subject, depth + 1, subject_role(z, fs)) + " "
                                 + canon(z, fs.predicate, depth + 1, Role::Term) + " ";
                 for (const auto& o : objs)
@@ -424,8 +414,6 @@ namespace zelph::network
                 case Kind::Fact:
                 default:
                 {
-                    if (negated(z, a, role) != negated(z, b, role)) return false;
-
                     const FactStructure fa = get_preferred_structure(z, a, 3);
                     const FactStructure fb = get_preferred_structure(z, b, 3);
                     if (fa.objects.size() != fb.objects.size()) return false;

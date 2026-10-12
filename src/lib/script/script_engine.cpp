@@ -210,7 +210,16 @@ void ScriptEngine::process_janet(const std::string& code, bool is_zelph_ast)
                 for (const auto& created : statement.mentions)
                     _pImpl->mark_mentioned_rules(created);
 
+            // A pattern is what a query constructed under a condition
+            // operator becomes, and it must be established as such
+            // before the query is echoed and evaluated -- marked
+            // afterwards, the query would find the operand it had just
+            // built (zelph/query-text). Similarly, when the statement
+            // evaluates to no node: a focus on "negation" returns the
+            // name.
             network::Node n = zelph_unwrap_node(out);
+            if (!statement.query_created.empty()) _pImpl->_n->mark_query_operands(n, statement.query_created);
+
             if (n)
             {
                 // A statement typed at the top level is a CLAIM, and a claim
@@ -238,14 +247,21 @@ void ScriptEngine::process_janet(const std::string& code, bool is_zelph_ast)
                                                  return wrote ? network::Zelph::ClaimStep::Enter : network::Zelph::ClaimStep::Claim; });
                 }
 
+                // A query's echo corresponds to its condition, expressed
+                // exactly as it is typed: a negation on its own line prints
+                // as "¬(X p b)", which re-enters as the identical query.
+                const bool asks = _pImpl->has_scoped_variables();
                 if (_pImpl->echo_enabled())
                 {
                     std::string output;
-                    string::node_to_string(_pImpl->_n, output, _pImpl->_n->lang(), n, 3);
+                    if (asks)
+                        string::condition_to_string(_pImpl->_n, output, _pImpl->_n->lang(), n, 3);
+                    else
+                        string::node_to_string(_pImpl->_n, output, _pImpl->_n->lang(), n, 3);
                     if (!output.empty() && output != "??") _pImpl->_n->out(string::unmark_identifiers(output), true);
                 }
 
-                if (_pImpl->has_scoped_variables())
+                if (asks)
                 {
                     _pImpl->_n->apply_rule(0, n);
                 }

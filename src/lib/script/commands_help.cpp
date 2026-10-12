@@ -289,10 +289,10 @@ namespace zelph::console
                       "the argument-less form works in the session -- typed, piped, or a script run\n"
                       "as 'zelph script.zph'. Inside a module (.import) nothing is printed, so there\n"
                       "is no last node to fall back to.\n"
-                      "Facts ABOUT the node that are engine bookkeeping are reported as properties\n"
-                      "instead of being written into the term: 'Negated by a rule' and 'Rule pattern\n"
-                      "(not asserted)', the latter for a statement that exists only because a rule\n"
-                      "was written with it."},
+                      "A fact ABOUT the node that is engine bookkeeping is reported as a property\n"
+                      "instead of being written into the term: 'Rule pattern (not asserted)', for a\n"
+                      "statement that exists only because a rule was written with it, or a query\n"
+                      "wrote it beneath a condition operator (¬, ≈, ⁺, ∗)."},
 
             {".mermaid", ".mermaid [<name|id|fact>] [depth] [max_neighbours]\n"
                          "Generates a Mermaid HTML file visualizing a node and its connections, and outputs\n"
@@ -384,8 +384,6 @@ namespace zelph::console
                          "the forward direction. The labels of a tree:\n"
                          "  [axiom]  no consequence of a rule in force matches the fact:\n"
                          "      an input fact, or a derived one whose rule is gone.\n"
-                         "  [axiom; negated by a rule]  the same, for a fact that some\n"
-                         "      rule reads under a negation.\n"
                          "  [asserted; no derivation found]  the fact holds, a rule's\n"
                          "      consequence matches it, and the search rebuilt no\n"
                          "      instantiation that holds: an input fact that a general\n"
@@ -393,7 +391,9 @@ namespace zelph::console
                          "      justification, or a fact on a cycle (below).\n"
                          "  [rule pattern; not asserted]  the queried node exists only\n"
                          "      because a rule, typed or mentioned, was written with it\n"
-                         "      as a ground pattern; such a node is never a premise.\n"
+                         "      as a ground pattern, or a query wrote it beneath a\n"
+                         "      condition operator (¬, ≈, ⁺, ∗); such a node is never a\n"
+                         "      premise.\n"
                          "  [rule mentioned; not in force]  a queried rule that a\n"
                          "      statement mentions (above). It may have been typed as\n"
                          "      well, since a statement can name a typed rule itself:\n"
@@ -741,7 +741,7 @@ namespace zelph::console
                                  "patterns name predicates of their own, and without their declaration\n"
                                  "the rule arrives structurally complete and unreadable.\n"
                                  "\n"
-                                 "EVERY rule travels, complete with its conjunction and negation tags,\n"
+                                 "EVERY rule travels, complete with its conjunction tags,\n"
                                  "so the slice reasons over the predicates it kept exactly as the\n"
                                  "source does -- contradiction rules included, which used to stay\n"
                                  "behind and take their reports with them. A rule whose conditions\n"
@@ -770,7 +770,12 @@ namespace zelph::console
                              "left alone; delete it with .remove <id> if that is really what you mean.\n"
                              "A statement that is a claim AND part of a rule's condition or consequence\n"
                              "loses the claim and stays as the rule's pattern: the rule stays in force.\n"
-                             "Reports how many facts were removed."},
+                             "Whatever holds it outside a rule's text goes with the claim, together with\n"
+                             "what removing that holder takes along -- but nothing a rule is built from;\n"
+                             "a holder that is itself part of a rule loses its claim the same way and\n"
+                             "stays.\n"
+                             "Reports how many matching facts were removed; what went with them is not\n"
+                             "counted."},
 
             {".prune-nodes", ".prune-nodes <pattern>\n"
                              ".prune-nodes <variable> (<conditions>)\n"

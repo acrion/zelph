@@ -220,12 +220,15 @@ y has {((A r B) => (c q d))}
         CHECK(collect_answers(collector).empty()); });
 }
 
-TEST_CASE("sets: such a literal in a consequence is a container in what the rule derives")
+TEST_CASE("sets: such a literal in a consequence derives nothing for either twin")
 {
-    // The identical pair of literals within a rule's consequence. A
-    // firing writes the literal into the data, and the two-condition
-    // instance reached it as a set constant whose membership `S in O`
-    // answered.
+    // The identical pair of literals within a rule's consequence. A firing
+    // builds a value for the literal, and the two-condition instance
+    // reached the data as a set constant whose membership `S in O`
+    // answered. Either value would hold a rule that keeps A and B, which no
+    // condition binds, so neither twin is derived ("derived rules: a nested
+    // rule a firing writes into a collection or a mention is not
+    // answered").
     run_both_modes([](auto& collector, auto& interactive)
                    {
         process_lines(interactive, R"(
@@ -236,8 +239,8 @@ e p f
 )");
         interactive.run(true, false, false);
 
-        check_answers_name_collections(collector, interactive, "S likes O", 2);
-        check_answers_name_collections(collector, interactive, "S hates O", 2);
+        check_answers_name_collections(collector, interactive, "S likes O", 0);
+        check_answers_name_collections(collector, interactive, "S hates O", 0);
 
         collector.clear();
         interactive.process("S in O");

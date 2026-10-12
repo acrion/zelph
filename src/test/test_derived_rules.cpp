@@ -48,8 +48,8 @@ using namespace zelph::test;
 // A rule is not a fact with a different predicate. Its subject is either one
 // condition pattern or a conjunction SET node, and that set node is created
 // rather than hash-consed; its members hang off it as separate PartOf facts;
-// and the tags that make the engine read it as a conjunction, or a member as
-// a negation, are facts of their own. Instantiating the top-level triple --
+// and the tag that makes the engine interpret it as a conjunction exists as
+// a standalone fact. Instantiating the top-level triple --
 // which is all a fact needs -- therefore produced a rule whose conditions
 // still carried the unbound pattern variables while its conclusion had been
 // filled with freshly created nodes: inert junk. These tests pin the two
@@ -391,9 +391,11 @@ TEST_CASE("derived rules: a switched multi-condition rule works the same way")
 
 TEST_CASE("derived rules: a negated condition survives the derivation")
 {
-    // The negation tag is a fact ABOUT the condition pattern, not a part of
-    // it, so instantiation cannot carry it along -- it has to be restated.
-    // A derived rule that lost it would silently mean the opposite.
+    // When the negation functioned as a tag ABOUT the condition pattern,
+    // instantiation was unable to retain it, requiring its reassertion; a
+    // derived rule that failed to preserve it silently meant the opposite.
+    // The negated condition is the fact `((P) ~ negation)`, a component of
+    // the rule text, and it is instantiated alongside the remainder.
     run_both_modes([](auto& collector, auto& interactive)
                    {
         interactive.process("(R needs check) => ((X R Y, ¬(Y bad yes)) => (X ok Y))");
@@ -1372,12 +1374,21 @@ b p k
             interactive.process("b p k");
 
             collector.clear();
+            interactive.process(".list-rules");
+            const auto generated = std::find_if(collector.events().begin(), collector.events().end(), [](const auto& e)
+                                                { return normalize(e.text).find("(X p k) =>") != std::string::npos; });
+            REQUIRE(generated != collector.events().end());
+            CHECK(normalize(generated->text).find("(Y q k)") != std::string::npos);
+            CHECK(normalize(generated->text).find("(Y p k)") != std::string::npos);
+            CHECK(normalize(generated->text).find('H') == std::string::npos);
+
+            // The value that `b p k` would build holds the nested rule
+            // containing its own variable Y: no firing derives a fact
+            // around it ("derived rules: a nested rule a firing writes into
+            // a collection or a mention is not answered").
+            collector.clear();
             interactive.process("b likes S");
-            const auto answers = collect_answers(collector);
-            REQUIRE(answers.size() == 1);
-            CHECK(answers.front().find("(Y q k)") != std::string::npos);
-            CHECK(answers.front().find("(Y p k)") != std::string::npos);
-            CHECK(answers.front().find('H') == std::string::npos);
+            CHECK(collect_answers(collector).empty());
         }
         SUBCASE("a collection inside a set constant")
         {
@@ -1694,12 +1705,13 @@ TEST_CASE("derived rules: a negated condition in a conjunction nested in a gener
 {
     // The derived rule's conditions are rebuilt via rebuild_condition, yet a
     // conjunction nested within one of those conditions goes on to
-    // instantiate_container, which rebuilds the condition set of a nested
-    // rule as well and reasserts the negation tags of its members. This case
-    // is that path for a negated member; the cases further up have their
+    // instantiate_container, which in turn rebuilds the condition set of a
+    // nested rule, encompassing its negated members as well. This case is
+    // that path for a negated member; the cases further up have their
     // negated condition directly present in the derived rule's conditions or
-    // within a nested rule. Absent the tag, the condition reads
-    // `(X blocks k)`, and c, which blocks k, works.
+    // within a nested rule. If the negation had been lost, the condition
+    // would have appeared as `(X blocks k)`, and c, which blocks k, would
+    // work.
     run_both_modes([](auto& collector, auto& interactive)
                    {
         // The blocker comes first: in check mode, a negation that
@@ -2625,21 +2637,20 @@ y q k
 TEST_CASE("derived rules: a nested rule a firing writes into a collection or a mention is not answered")
 {
     // A firing keeps the condition set of the nested rule exactly as
-    // written, and that set holds variables: the outer rule's own, which
-    // the firing substitutes everywhere else, along with
-    // the nested rule's. In a mention, the instance would be rule text
-    // holding half of a rule that nobody wrote, so the consequence is not
-    // derived in any way ("rule patterns: a firing does not derive a fact
-    // that keeps a variable of a rule it mentions"); it was previously
-    // written and printed. In a collection, the firing builds a value for
-    // the rule's collection, and that check does not enter a value: the
-    // fact around it is derived and answered, and the value holds the same
-    // half of a rule. That is a known residual, pinned below so that a
-    // change is noticed, not a content anyone aims for. Either way, the
-    // nested rule's consequence `b s k` is a part of that rule and is not
-    // answered: the firing marks the ground parts it creates for a rule it
-    // writes, just as the parser marks those of a mention ("derived rules: a
-    // firing that writes a mention claims none of the parts it created").
+    // written, and this set holds variables: those from the outer rule,
+    // which the firing substitutes everywhere else, alongside the nested
+    // rule's own. The instance would hold half of a rule that nobody
+    // authored, thus the consequence is not derived in any way ("rule
+    // patterns: a firing does not derive a fact that keeps a variable of a
+    // rule it mentions"), regardless of whether the nested rule appears
+    // within a mention or within a collection of the rule's text. For a
+    // collection, a firing builds a value, which is data irrespective of
+    // its content: the fact around it was derived and answered, with half
+    // of a rule present in its value, while the check did not enter values.
+    // Inside a value, a firing also keeps a variable it does not bind, so a
+    // rule featuring a single condition constitutes half of a rule in that
+    // context as well. Nothing is written, hence the nested rule's
+    // consequence is not answered either.
     run_both_modes([](auto& collector, auto& interactive)
                    {
         const auto answered = [&](const std::string& query)
@@ -2655,19 +2666,52 @@ TEST_CASE("derived rules: a nested rule a firing writes into a collection or a m
         };
         interactive.process(".deductions all");
 
-        SUBCASE("in a collection: a known residual, the fact holding half of a rule is answered")
+        SUBCASE("in a collection")
         {
+            interactive.process("(X p Y) => (X likes @{((X q Y, X r Y) => (X s Y))})");
+            collector.clear();
             process_lines(interactive, R"(
-(X p Y) => (X likes @{((X q Y, X r Y) => (X s Y))})
 b p k
 c q d
 c r d
 )");
-            const auto liked = answered("S likes O");
-            REQUIRE(liked.size() == 1);
-            CHECK(liked.front().find("(X q Y)") != std::string::npos);
-            CHECK(liked.front().find("=> (b s k)") != std::string::npos);
+            CHECK_FALSE(printed_deduction());
+            CHECK(answered("S likes O").empty());
             CHECK(answered("S in O").empty());
+            CHECK(answered("S s O").empty());
+        }
+        SUBCASE("in a set literal")
+        {
+            // A set literal containing a rule that includes variables
+            // constitutes a collection of the rule's text as well. The
+            // firing derived `a about @{(((X s B), (X r B)) => (c q d))}`,
+            // the query answered it, and `.explain`, which takes the most
+            // recent answer, printed its derivation starting from `a p b`.
+            interactive.process("(X p Y) => (X about {((X r B, X s B) => (c q d))})");
+            collector.clear();
+            interactive.process("a p b");
+            CHECK_FALSE(printed_deduction());
+            CHECK(answered("A about B").empty());
+
+            collector.clear();
+            interactive.process(".explain");
+            CHECK_FALSE(any_output_contains(collector, "=>"));
+            CHECK_FALSE(any_output_contains(collector, "a p b"));
+        }
+        SUBCASE("in a collection, a rule with one condition")
+        {
+            // No condition binds B, thus within the value it stays a
+            // variable beside the `b` that the firing wrote in place of X:
+            // `b likes @{((b q B) => (b s k))}` was derived and answered,
+            // and likewise `b s k`, as an axiom.
+            interactive.process("(X p Y) => (X likes {((X q B) => (X s Y))})");
+            collector.clear();
+            process_lines(interactive, R"(
+b p k
+b q d
+)");
+            CHECK_FALSE(printed_deduction());
+            CHECK(answered("S likes O").empty());
             CHECK(answered("S s O").empty());
         }
         SUBCASE("in a mention")
@@ -2683,15 +2727,19 @@ c r d
             CHECK(answered("S is noted").empty());
             CHECK(answered("S s O").empty());
         }
-        SUBCASE("in a collection, with a fresh variable: the same residual")
+        SUBCASE("in a collection, with a fresh variable")
         {
+            // `W t X` provides W with its witness, but the condition set
+            // within the value maintains W in its original form, alongside
+            // X and Y: solely `W t X` is derived.
             process_lines(interactive, R"(
 (X p Y) => (X likes @{((W r X, W s Y) => (c q d))}) (W t X)
 e r f
 e s g
 a p b
 )");
-            CHECK(answered("S likes O").size() == 1);
+            CHECK(answered("S likes O").empty());
+            CHECK(answered("S t O") == std::vector<std::string>{"?? t a"});
             CHECK(answered("S in O").empty());
             CHECK(answered("S q O").empty());
         }
@@ -5215,17 +5263,22 @@ t go k
 
 TEST_CASE("derived rules: a claim is not found again once a removal took a tag from the claimed rule's text")
 {
-    // A negation tag and a conjunction tag each constitute independent
-    // facts, and the `.remove` of one leaves the rule standing with a
-    // different text: absent `(A r B) ~ negation`, the switch says
-    // `((A r B), (A p B)) => (A t B)`, and without the conjunction tag, its
-    // conditions form a collection. The construction of the switch's
-    // consequence remembered the rule it built from the old text and
-    // continued to return it, thus the switch never wrote its new
-    // consequence, and `a t b` was never derived. The removal of a tag
-    // changes a rule's text in the same manner as the removal of a
-    // variable's membership (see above), and is noted as one: the
-    // construction is rebuilt.
+    // A conjunction tag constitutes an independent fact, and the `.remove`
+    // of it leaves the rule standing with a different text: without the
+    // tag, its conditions form a collection. The construction of the
+    // switch's consequence remembered the rule it built from the old text
+    // and continued to return it, thus the switch never wrote its new
+    // consequence. The removal of a tag changes a rule's text in the same
+    // manner as the removal of a variable's membership (see above), and is
+    // noted as one: the construction is rebuilt.
+    //
+    // A negation once functioned as a tag on the pattern it negates, and its
+    // removal transformed the switch's `¬(A r B)` into `(A r B)`, which the
+    // switch then wrote as a second, positive rule. It is now the condition
+    // itself, the fact `(A r B) ~ negation`, so its removal takes the
+    // condition, the set holding it, and the switch whose text holds that
+    // set along. The rule the switch already wrote remains a rule of its own
+    // and stays as it was written: it derives `a t b` and not `c t d`.
     run_both_modes([](auto& collector, auto& interactive)
                    {
         interactive.process(".log -1");
@@ -5238,15 +5291,21 @@ TEST_CASE("derived rules: a claim is not found again once a removal took a tag f
 s is on
 )");
             collector.clear();
+            interactive.process(".list-rules");
+            REQUIRE(listed_rules(collector) == 2);
+
+            collector.clear();
             interactive.process(".node A");
             const std::string condition = listed_id(collector, "A r B");
             REQUIRE_FALSE(condition.empty());
 
-            const std::uint64_t built = construction_counter(collector, interactive, "built");
             remove_listed(collector, interactive, condition, "(A r B) ~ negation");
-            process_lines(interactive, "a r b\na p b");
-            CHECK(construction_counter(collector, interactive, "built") > built);
+            collector.clear();
+            interactive.process(".list-rules");
+            CHECK(listed_rules(collector) == 1);
+            CHECK(any_output_contains(collector, "¬(A r B)"));
 
+            process_lines(interactive, "a p b\nc r d\nc p d");
             collector.clear();
             interactive.process("S t O");
             CHECK(collect_answers(collector) == std::vector<std::string>{"a t b"});

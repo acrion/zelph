@@ -203,7 +203,7 @@ The graph is not only a store, and this is the surface a program needs to use ru
 | `zelph_variable(engine, name, out_node)` | A variable for a rule or a query pattern. Remembered by name, so asking twice gives the same node - which is what makes a pattern built in one call queryable in another. `zelph_clear_variables` forgets them |
 | `zelph_set(engine, elements, count, out_node)` | A set constant: identified by its members, so the same elements always yield the same node |
 | `zelph_collection(engine, elements, count, out_node)` | A container with an identity of its own: two calls with the same elements yield two different nodes |
-| `zelph_negate(engine, pattern, out_node)` | Mark a pattern as negation as failure - evaluated against the saturated positive fact base, never against in-flight state |
+| `zelph_negate(engine, pattern, out_node)` | The negated condition over a pattern, negation as failure: `out_node` represents the fact `((pattern) ~ negation)`, which a rule takes as its condition instead of the pattern itself. Evaluated against the saturated positive fact base, never against in-flight state |
 | `zelph_exists(engine, s, p, objects, n, out_exists)` | Was this fact *claimed* – asserted or derived? Creates nothing. A fact carrying further objects satisfies it, exactly as a rule condition does; a rule’s own pattern and a refuted fact do not |
 | `zelph_targets(engine, subject, predicate, out_nodes, count)` | The mirror of `zelph_sources` |
 | `zelph_rule(engine, conditions, n, consequences, m, out)` | When every condition holds, deduce every consequence. Returns the condition set |

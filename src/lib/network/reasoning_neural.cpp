@@ -362,7 +362,7 @@ void Reasoning::proceed_after_condition(const RulePos&             rule,
     else
     {
         std::string output;
-        string::node_to_string(this, output, _lang, ctx_copy.current_condition, 3, *vars, rule.node);
+        string::condition_to_string(this, output, _lang, ctx_copy.current_condition, 3, *vars, rule.node);
         out("Answer: " + string::unmark_identifiers(output), true);
     }
 }

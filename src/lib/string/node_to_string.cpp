@@ -913,6 +913,66 @@ void zelph::string::node_to_string(const network::Zelph* const z, std::string& r
         return;
     }
 
+    // A negated condition is the fact `((P) ~ negation)` (see
+    // Zelph::negation_operand), and when it stands as a condition --
+    // specifically, as the condition of a rule, the parent is then the rule,
+    // or as a member within a rule's conjunction set -- it is written the
+    // way it is typed there, `¬(P)`. In all other contexts, it prints as the
+    // fact it is, `(P) ~ negation`, which re-enters as the same node. The
+    // rule also acts as the parent of its conclusion, so merely being placed
+    // under a rule is insufficient: the node must be the rule's condition
+    // part -- likewise where a variable in a pattern stands for it, as in
+    // the premise `G => H` of a rule over rules.
+    const auto is_condition_of_rule = [&]
+    {
+        if (z->parse_relation(parent) != z->core.Causes) return false;
+        network::adjacency_set conclusions;
+        return resolve_var(z->parse_fact(parent, conclusions)) == resolved;
+    };
+    // The parser permits `¬` exclusively within rule slots: the condition
+    // or consequence of a rule, a member of its condition set, or
+    // similarly within a rule nested therein. A plain statement refuses it
+    // at any level of nesting, including within the rule it mentions,
+    // hence above a rule whose condition prints as `¬(P)` only rules and
+    // condition sets may stand; otherwise, the fact form is the one that
+    // re-enters.
+    const auto only_rules_above = [&]
+    {
+        for (const network::Node h : *history)
+            if (z->parse_relation(h) != z->core.Causes && !z->check_fact(h, z->core.IsA, {z->core.Conjunction}).is_known())
+                return false;
+        return true;
+    };
+    // A query typed on its own line is also a condition
+    // (condition_to_string).
+    const bool typed_condition = parent == 0 && ctx->typed_condition;
+    if (parent != 0 || typed_condition)
+    {
+        const network::Node negated_pattern = z->negation_operand(resolved);
+        if (negated_pattern != 0
+            && (typed_condition
+                || ((is_condition_of_rule() || z->check_fact(parent, z->core.IsA, {z->core.Conjunction}).is_known())
+                    && only_rules_above())))
+        {
+            auto pattern_history = history ? std::make_shared<std::unordered_set<network::Node>>(*history)
+                                           : std::make_shared<std::unordered_set<network::Node>>();
+            pattern_history->insert(resolved);
+
+            // The pattern does not appear within a display scheme, just as
+            // no negated condition ever has: the `¬` symbol does not
+            // initiate a scheme region.
+            SchemeContext plain;
+            plain.tables         = ctx->tables;
+            plain.no_scheme      = true;
+            plain.bare_statement = true;
+
+            std::string pattern;
+            node_to_string(z, pattern, lang, negated_pattern, max_objects, variables, resolved, pattern_history, &plain);
+            result = "¬(" + pattern + ")";
+            return;
+        }
+    }
+
     // 5. Proxy / Instance Detection
     // An ANONYMOUS, STRUCTURELESS node that is an instance of a concept is
     // shown as that concept -- a node a rule created for a fresh variable
@@ -922,7 +982,6 @@ void zelph::string::node_to_string(const network::Zelph* const z, std::string& r
     // stays (x + y) after (x + y) ~ t, because "is an instance of" is not
     // "is". Substituting it hid every tagged term behind its concept and
     // echoed the statement as "t ~ t", which is not re-enterable input.
-    bool is_negation = false;
 
     // A REFUTED fact is the other way round from a rule-pattern marking, and
     // the distinction is the one CLAUDE.md draws under "What the mathematics
@@ -946,8 +1005,7 @@ void zelph::string::node_to_string(const network::Zelph* const z, std::string& r
         // once the consequence lost its own reading -- because the rule was
         // used as a predicate (two declared relation types among the node's
         // neighbours, so parse_relation gives up), or because a predicate
-        // slice kept the marking while dropping the triple. Same ruling as
-        // for the negation tag next to it, and the same reason: `.node` and
+        // slice kept the marking while dropping the triple. `.node` and
         // `.explain` report the marking BESIDE the term, never inside it.
         // The lookup is paid only for a node that carries the marking, and
         // is_rule_pattern is one atomic load in a graph that has none.
@@ -968,12 +1026,6 @@ void zelph::string::node_to_string(const network::Zelph* const z, std::string& r
                     // Avoid self-reference loops
                     if (concept_node != resolved)
                     {
-                        if (concept_node == z->core.Negation)
-                        {
-                            is_negation = true;
-                            continue; // Skip metadata, we will format it structurally below
-                        }
-
                         if (rule_pattern_concept != 0 && concept_node == rule_pattern_concept)
                             continue; // metadata as well -- see above
 
@@ -1175,7 +1227,7 @@ void zelph::string::node_to_string(const network::Zelph* const z, std::string& r
     // back through the context, and a boundary node that learns its subtree
     // is not writable re-renders itself once with the scheme disabled.
     const network::OperatorDisplay* op = nullptr;
-    if (scheme_enabled && !is_negation && subject != 0 && objects.size() == 1 && !self_fact_sugar)
+    if (scheme_enabled && subject != 0 && objects.size() == 1 && !self_fact_sugar)
     {
         const network::Node pred = resolve_var(fact_predicate());
         const auto          it   = ctx->tables->operators.find(pred);
@@ -1335,46 +1387,17 @@ void zelph::string::node_to_string(const network::Zelph* const z, std::string& r
     else
         result = subject_name + " " + relation_name + " " + objects_name;
 
-    // The "¬" belongs to the RULE that wrote it, not to the node. The tag is
-    // a fact ABOUT the pattern and a ground pattern is hash-consed, so a
-    // pattern negated in ONE rule carries the tag everywhere -- and writing
-    // it into the term rendered an ASSERTED fact as its own negation:
-    // ".explain (a p b)" answered "¬(a p b) [axiom]" for a fact that holds,
-    // which is neither true nor re-enterable (a top-level "¬" is not the
-    // same statement, and what it would mean is undecided).
-    //
-    // So it is written where it is syntactically part of the statement: as a
-    // rule's condition -- the parent is then the rule -- or as a member of a
-    // rule's conjunction set. Everywhere else the tag is reported BESIDE the
-    // term; see the property line of `.node` and the axiom label of
-    // `.explain`.
-    //
-    // The rule serves as the parent to its conclusion as well, meaning that
-    // merely being positioned beneath a rule is not enough: the node must
-    // specifically be the rule's condition part. A rule that derives the
-    // exact pattern one of its conditions negates, (:p A, ¬(:q A)) => (:q A),
-    // printed its conclusion as (¬(:q A)), and the line returned an error --
-    // "¬" means nothing when used as a conclusion.
-    const auto is_condition_of_rule = [&]
+    if (refuted && parent == 0)
     {
-        if (z->parse_relation(parent) != z->core.Causes) return false;
-        network::adjacency_set conclusions;
-        return z->parse_fact(parent, conclusions) == resolved;
-    };
-    if ((refuted && parent == 0)
-        || (is_negation && parent != 0
-            && (is_condition_of_rule()
-                || z->check_fact(parent, z->core.IsA, {z->core.Conjunction}).is_known())))
-    {
-        // A refutation is the claim this node stands for rather than a tag on
-        // somebody else's pattern, so it needs no test for WHICH parent -- but
-        // it needs the same test for whether there is one. `¬` is a statement
+        // A refutation is the claim this node stands for, not a condition
+        // within a rule, thus requiring no test of WHICH parent -- yet it
+        // does require a test of whether there is one. `¬` is a statement
         // spelling and reads as one only where the node IS the statement: on
         // an answer line, in a `.explain` step, in the echo of the line that
         // wrote it. Inside a composed term it is a different operator -- the
         // negation-as-failure prefix, which a plain statement refuses -- so
         // the marking fact printed itself as "(¬(a p b)) ~ refuted", and that
-        // line came back carrying a negation tag nobody had written. It prints
+        // line came back carrying a negation nobody had written. It prints
         // "(a p b) ~ refuted" now, where the predicate already says it.
         result = "¬(" + result + ")";
     }
@@ -1439,7 +1462,7 @@ void zelph::string::node_to_string(const network::Zelph* const z, std::string& r
     }
     // If this is a statement node used as a value inside another structure,
     // wrap the whole triple in parentheses to make it valid input syntax.
-    else if (parent != 0 && resolved_is_stmt)
+    else if (parent != 0 && resolved_is_stmt && !ctx->bare_statement)
     {
         network::Node pred = fact_predicate();
         if (pred != z->core.Cons) // lists are handled earlier; don't wrap "<...>"
@@ -1452,4 +1475,19 @@ void zelph::string::node_to_string(const network::Zelph* const z, std::string& r
 #ifdef DEBUG_FORMAT_FACT
     z->diagnostic_stream() << indent << "[DEBUG node_to_string] EXIT result='" << result << "'" << std::endl;
 #endif
+}
+
+void zelph::string::condition_to_string(const network::Zelph* const z, std::string& result, const std::string& lang, const network::Node node, const int max_objects, const network::Variables& variables, const network::Node parent)
+{
+    if (parent != 0)
+    {
+        node_to_string(z, result, lang, node, max_objects, variables, parent);
+        return;
+    }
+
+    const std::shared_ptr<const network::DisplayTables> tables = z->display_tables();
+    SchemeContext                                       ctx;
+    ctx.tables          = tables.get();
+    ctx.typed_condition = true;
+    node_to_string(z, result, lang, node, max_objects, variables, 0, nullptr, &ctx);
 }

@@ -103,30 +103,36 @@ void Reasoning::evaluate(RulePos rule, ReasoningContext& ctx, int depth)
     }
     else
     {
+        // A negated condition IS the fact `((P) ~ negation)` (see
+        // Zelph::negation_operand), and it is unwrapped before anything else
+        // reads it: the three guards listed below and the leaf branch all
+        // work on the pattern P, alongside the polarity associated with it.
+        // Each guard returns from here, so a polarity read solely within the
+        // leaf branch would not reach them -- this is why `¬(guard)` once
+        // meant `(guard)`, and why the justification printed the negated
+        // version alongside a deduction that contradicted it.
+        const Node negated_pattern = negation_operand(condition);
+        const bool is_negated      = negated_pattern != 0;
+        if (is_negated)
+        {
+            if (should_log(depth))
+                log(depth, "neg-check", "condition=" + format(condition) + " negates " + format(negated_pattern));
+
+            condition = negated_pattern;
+        }
+
         // --- Inequality Guard Handling ---
         // != is a built-in constraint (guard), not a fact to look up.
         // It filters bindings where both sides resolve to the same node.
         {
             adjacency_set guard_rels = filter(condition, core.IsA, core.RelationTypeCategory);
 
-            // Whether the condition carries the negation tag has to be known
-            // BEFORE the three guards are dispatched, not in the leaf branch
-            // below. Each of them returns from here, so a negated guard used to
-            // reach its evaluator without the tag and was evaluated positively:
-            // `¬(guard)` meant `(guard)`, and the justification printed the
-            // negated form beside a deduction that contradicted it.
-            const bool guard_negated = guard_rels.size() == 1
-                                    && (*guard_rels.begin() == _nn_pred
-                                        || *guard_rels.begin() == _closure_pred
-                                        || *guard_rels.begin() == core.Unequal)
-                                    && is_negated_condition(condition, depth);
-
             // --- Neural Condition (≈) ---
             // An approx condition IS the tag fact (pattern nn net), so its
             // predicate identifies it -- same detection scheme as != below.
             if (_nn_pred != 0 && guard_rels.size() == 1 && *guard_rels.begin() == _nn_pred)
             {
-                evaluate_neural(condition, rule, ctx, depth, guard_negated);
+                evaluate_neural(condition, rule, ctx, depth, is_negated);
                 return;
             }
 
@@ -135,7 +141,7 @@ void Reasoning::evaluate(RulePos rule, ReasoningContext& ctx, int depth)
             // (pattern closure mode), so its predicate identifies it.
             if (_closure_pred != 0 && guard_rels.size() == 1 && *guard_rels.begin() == _closure_pred)
             {
-                evaluate_closure(condition, rule, ctx, depth, guard_negated);
+                evaluate_closure(condition, rule, ctx, depth, is_negated);
                 return;
             }
 
@@ -150,7 +156,7 @@ void Reasoning::evaluate(RulePos rule, ReasoningContext& ctx, int depth)
                 // has no notion of, for a shape nothing gains by. So it is
                 // refused rather than implemented -- but refused out loud,
                 // because it used to be accepted and silently mean `!=`.
-                if (guard_negated)
+                if (is_negated)
                 {
                     if (should_log(depth))
                         log(depth, "evaluate", "negated != guard refused: " + format(condition));
@@ -274,7 +280,7 @@ void Reasoning::evaluate(RulePos rule, ReasoningContext& ctx, int depth)
                             else
                             {
                                 std::string output;
-                                string::node_to_string(this, output, _lang, ctx_copy.current_condition, 3, *vars, rule.node);
+                                string::condition_to_string(this, output, _lang, ctx_copy.current_condition, 3, *vars, rule.node);
                                 out("Answer: " + string::unmark_identifiers(output), true);
                             }
                         }
@@ -293,8 +299,6 @@ void Reasoning::evaluate(RulePos rule, ReasoningContext& ctx, int depth)
         if (should_log(depth))
             log(depth, "evaluate", "Processing leaf condition: " + format(condition));
 
-        bool is_negated = is_negated_condition(condition, depth);
-
         if (logging_active() && is_negated)
             _prof.negated_conditions.fetch_add(1, std::memory_order_relaxed);
 
@@ -302,8 +306,8 @@ void Reasoning::evaluate(RulePos rule, ReasoningContext& ctx, int depth)
             this, condition, rule.node, rule.variables, rule.unequals, is_negated ? nullptr : _pool.get(), depth + 1, &_prof);
 
         // --- Negation Handling ---
-        // A condition tagged with `negation` succeeds if and only if
-        // no match exists. Variables bound by earlier conditions are
+        // A negated condition succeeds precisely when its pattern
+        // fails to match. Variables bound by earlier conditions are
         // used; no new bindings are produced by a negated condition.
         if (is_negated)
         {
@@ -371,7 +375,7 @@ void Reasoning::evaluate(RulePos rule, ReasoningContext& ctx, int depth)
                         else
                         {
                             std::string output;
-                            string::node_to_string(this, output, _lang, ctx_copy.current_condition, 3, *bindings, rule.node);
+                            string::condition_to_string(this, output, _lang, ctx_copy.current_condition, 3, *bindings, rule.node);
                             out("Answer: " + string::unmark_identifiers(output), true);
                         }
                     }
@@ -591,7 +595,7 @@ void Reasoning::evaluate(RulePos rule, ReasoningContext& ctx, int depth)
                     else
                     {
                         std::string output;
-                        string::node_to_string(this, output, _lang, ctx_copy.current_condition, 3, *joined, rule.node);
+                        string::condition_to_string(this, output, _lang, ctx_copy.current_condition, 3, *joined, rule.node);
                         out("Answer: " + string::unmark_identifiers(output), true);
                     }
                 }
@@ -679,15 +683,14 @@ bool Reasoning::is_negated_condition(Node condition, int depth)
         return false;
     }
 
-    Answer ans    = check_fact(condition, core.IsA, {core.Negation});
-    bool   result = ans.is_known();
+    const bool result = negation_operand(condition) != 0;
 
     // Only log at depth+1 to reduce noise (these are almost always NO)
     // Exception: log at current depth when the result is YES (rare, important)
     if (result && should_log(depth))
-        log(depth, "neg-check", "condition=" + format(condition) + " IsA Negation? YES");
+        log(depth, "neg-check", "condition=" + format(condition) + " negated? YES");
     else if (should_log(depth + 1))
-        log(depth + 1, "neg-check", "condition=" + format(condition) + " IsA Negation? NO");
+        log(depth + 1, "neg-check", "condition=" + format(condition) + " negated? NO");
 
     return result;
 }

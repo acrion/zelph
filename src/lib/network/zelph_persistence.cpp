@@ -193,6 +193,7 @@ void Zelph::Impl::clear_loaded_state()
     _node_of_name.clear();
     _string_pool.clear();
     _older_rule_literals.clear();
+    _older_negations = false;
 }
 #endif
 
@@ -992,6 +993,7 @@ void Zelph::Impl::saveToFile(const std::string& filename, const ankerl::unordere
     impl.setLast(_last);
     impl.setLastVar(_last_var);
     impl.setTemplateIds(_older_rule_literals.empty());
+    impl.setNegationConditions(!_older_negations);
 
     const bool filtering = keep != nullptr;
 
@@ -1204,7 +1206,7 @@ std::string Zelph::Impl::read_error_text(const std::string& filename, const kj::
 #endif
 
 #ifndef __EMSCRIPTEN__
-bool Zelph::Impl::loadFromFile(const std::string& filename)
+bool Zelph::Impl::loadFromFile(const std::string& filename, bool& negation_conditions)
 {
     #ifdef _WIN32
         #define fileno _fileno
@@ -1232,6 +1234,7 @@ bool Zelph::Impl::loadFromFile(const std::string& filename)
         note_load();
         loadSmallData(impl);
         const bool template_ids = impl.getTemplateIds();
+        negation_conditions     = impl.getNegationConditions();
 
         uint32_t leftChunkCount       = impl.getLeftChunkCount();
         uint32_t rightChunkCount      = impl.getRightChunkCount();

@@ -103,6 +103,42 @@ TEST_CASE("pruning: a variable pattern still removes every match")
         CHECK(answers_contain(collector, "a other x")); });
 }
 
+// A negated pattern is valid when its pattern is ABSENT, meaning it does not
+// match any fact for removal. ".prune-facts ¬(X p b)" read its operand in a
+// positive manner and removed every `X p b` -- the facts that the line says are
+// not present.
+TEST_CASE("pruning: a condition operator is refused as a pattern")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("t p b");
+        interactive.process("u p b");
+
+        CHECK_THROWS_WITH(interactive.process(".prune-facts ¬(X p b)"), doctest::Contains("condition operator"));
+        CHECK_THROWS_WITH(interactive.process(".prune-nodes ¬(X p b)"), doctest::Contains("condition operator"));
+
+        collector.clear();
+        interactive.process("X p Y");
+        CHECK(collect_answers(collector).size() == 2); });
+}
+
+// Following "X go Y, ¬(a p b)", the operand `a p b` is present solely as
+// the query's pattern, and the hint said it was present only as a rule's
+// pattern: a diagnosis that sends the reader to seek a rule that does not
+// exist.
+TEST_CASE("pruning: a query's operand is no claim, and the hint names the query")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("t go k");
+        interactive.process("X go Y, ¬(a p b)");
+
+        collector.clear();
+        interactive.process(".prune-facts (a p b)");
+        CHECK(any_output_contains(collector, "Pruned 0"));
+        CHECK(any_event_contains(collector, "or as one a query wrote beneath a condition operator")); });
+}
+
 TEST_CASE("pruning: .prune-nodes deletes the node's names with the node")
 {
     // It used to drop the node from the adjacency maps but keep its name
@@ -741,6 +777,81 @@ a p b
         CHECK(any_output_contains(collector, "(a p b) => (e q f)"));
     }
 
+    // While the scratch cluster holding its pattern remained active, the
+    // variable form operated, recording within it the marking that makes
+    // the statement a pattern again, and this marking went with the
+    // scratch. The session continued interpreting it as a pattern from the
+    // index, yet the .save did not write any marking, and the .load read
+    // the statement back as asserted.
+    SUBCASE("the variable form's withdrawal survives a .save and .load")
+    {
+        const std::filesystem::path out =
+            std::filesystem::temp_directory_path() / "zelph_prune_withdrawal_roundtrip.bin";
+        std::filesystem::remove(out);
+
+        zelph::io::OutputCollector  collector;
+        zelph::console::Interactive interactive(collector.sink());
+        process_lines(interactive, R"(
+a p b
+(a p b) => (e q f)
+)");
+        interactive.process(".prune-facts (S p b)");
+        interactive.process(".save " + out.string());
+        interactive.process(".new");
+        interactive.process(".load " + out.string());
+
+        collector.clear();
+        interactive.process("S p O");
+        CHECK(collect_answers(collector).empty());
+
+        collector.clear();
+        interactive.process(".list-rules");
+        CHECK(any_output_contains(collector, "(a p b) => (e q f)"));
+
+        std::filesystem::remove(out);
+    }
+
+    // A withdrawal equates to a removal, yet dropping a cluster undoes no
+    // removal. The marking that makes the statement a pattern again was
+    // logged within the cluster the user had active nonetheless, and
+    // .cluster-drop took it: the session continued interpreting the
+    // statement as a pattern, even as the next .save wrote no marking, and
+    // a .load retrieved it as asserted.
+    SUBCASE("a withdrawal survives dropping the cluster it was made in")
+    {
+        const std::filesystem::path out =
+            std::filesystem::temp_directory_path() / "zelph_prune_withdrawal_cluster.bin";
+
+        for (const std::string prune : {".prune-facts (a p b)", ".prune-facts (S p b)"})
+        {
+            CAPTURE(prune);
+            std::filesystem::remove(out);
+
+            zelph::io::OutputCollector  collector;
+            zelph::console::Interactive interactive(collector.sink());
+            process_lines(interactive, R"(
+a p b
+(a p b) => (e q f)
+)");
+            interactive.process(".cluster exp");
+            interactive.process(prune);
+            interactive.process(".cluster-drop exp");
+            interactive.process(".save " + out.string());
+            interactive.process(".new");
+            interactive.process(".load " + out.string());
+
+            collector.clear();
+            interactive.process("S p O");
+            CHECK(collect_answers(collector).empty());
+
+            collector.clear();
+            interactive.process(".list-rules");
+            CHECK(any_output_contains(collector, "(a p b) => (e q f)"));
+        }
+
+        std::filesystem::remove(out);
+    }
+
     // A statement enclosed within a condition or a consequence is also part
     // of the rule: the rule is built from it, and removing its node took the
     // rule with it, regardless of the command's form -- the variable form
@@ -849,6 +960,494 @@ x r y
         collector.clear();
         interactive.process(".list-rules");
         CHECK(any_output_contains(collector, "(X r Y) => (a p b)"));
+    }
+}
+
+// ---------------------------------------------------------------------------
+// What holds a rule's pattern once its claim is withdrawn. Without a rule,
+// `.prune-facts (a p b)` removes the fact through the cascade remove_node
+// runs, and every statement that holds it also ceases to exist. Beside
+// `(a p b) => (c r d)`, only the claim went: `(a p b) q z` went on answering
+// `S q O`, a claimed statement that retains an unclaimed part, which the
+// claims walk deems impossible. The holders now disappear just as they would
+// without the rule, while the rule's text stays. Both forms of the command
+// are checked whenever a rule is present, as they arrive at the withdrawal
+// via distinct routes.
+// ---------------------------------------------------------------------------
+
+namespace
+{
+    constexpr const char* kRulePatternPrunes[] = {".prune-facts (a p b)", ".prune-facts (A p b)"};
+
+    std::string listed_rules(const zelph::console::Interactive& interactive, zelph::io::OutputCollector& collector)
+    {
+        collector.clear();
+        interactive.process(".list-rules");
+        std::string listed;
+        for (const auto& e : collector.events())
+            if (e.channel == zelph::io::OutputChannel::Out) listed += e.text + "\n";
+        return listed;
+    }
+} // namespace
+
+TEST_CASE("pruning: what holds a rule's pattern goes with its claim")
+{
+    // The reference the rule case is held to.
+    SUBCASE("without a rule, the statements holding the fact go with it")
+    {
+        zelph::io::OutputCollector  collector;
+        zelph::console::Interactive interactive(collector.sink());
+        process_lines(interactive, R"(
+(a p b) q z
+x says ((a p b) q z)
+)");
+        interactive.process(".prune-facts (a p b)");
+
+        collector.clear();
+        interactive.process("S q O");
+        CHECK(collect_answers(collector).empty());
+
+        collector.clear();
+        interactive.process("S says O");
+        CHECK(collect_answers(collector).empty());
+    }
+
+    SUBCASE("a statement holding the fact goes")
+    {
+        for (const std::string prune : kRulePatternPrunes)
+        {
+            CAPTURE(prune);
+            zelph::io::OutputCollector  collector;
+            zelph::console::Interactive interactive(collector.sink());
+            process_lines(interactive, R"(
+(a p b) => (c r d)
+(a p b) q z
+)");
+            collector.clear();
+            interactive.process(prune);
+            CHECK(any_output_contains(collector, "Pruned 1"));
+
+            collector.clear();
+            interactive.process("S q O");
+            CHECK(collect_answers(collector).empty());
+        }
+    }
+
+    SUBCASE("a statement holding the holder goes as well")
+    {
+        for (const std::string prune : kRulePatternPrunes)
+        {
+            CAPTURE(prune);
+            zelph::io::OutputCollector  collector;
+            zelph::console::Interactive interactive(collector.sink());
+            process_lines(interactive, R"(
+(a p b) => (c r d)
+x says ((a p b) q z)
+)");
+            interactive.process(prune);
+
+            collector.clear();
+            interactive.process("S says O");
+            CHECK(collect_answers(collector).empty());
+        }
+    }
+
+    // A pattern lacking variables does not bind anything for .prune-nodes
+    // to remove, thus it prunes the single fact along the route the ground
+    // .prune-facts takes, and the holders follow accordingly.
+    SUBCASE("the ground form of .prune-nodes takes the holders as well")
+    {
+        zelph::io::OutputCollector  collector;
+        zelph::console::Interactive interactive(collector.sink());
+        process_lines(interactive, R"(
+(a p b) => (c r d)
+(a p b) q z
+)");
+        const std::string before = listed_rules(interactive, collector);
+        collector.clear();
+        interactive.process(".prune-nodes (a p b)");
+        CHECK(any_output_contains(collector, "Pruned 1 matching facts and 0 nodes"));
+        CHECK(listed_rules(interactive, collector) == before);
+
+        collector.clear();
+        interactive.process("S q O");
+        CHECK(collect_answers(collector).empty());
+    }
+
+    // The auto-run feature is disabled, meaning the rule did not trigger
+    // before the prune operation, and the subsequent firing represents its
+    // initial execution.
+    SUBCASE("the rule stays, and fires once the fact is asserted again")
+    {
+        for (const std::string prune : kRulePatternPrunes)
+        {
+            CAPTURE(prune);
+            zelph::io::OutputCollector  collector;
+            zelph::console::Interactive interactive(collector.sink());
+            interactive.process(".auto-run");
+            process_lines(interactive, R"(
+(a p b) => (c r d)
+(a p b) q z
+)");
+            interactive.process(prune);
+            CHECK(listed_rules(interactive, collector).find("(a p b) => (c r d)") != std::string::npos);
+
+            process_lines(interactive, "a p b\n.run\n");
+            collector.clear();
+            interactive.process("S r O");
+            CHECK(answers_contain(collector, "c r d"));
+        }
+    }
+
+    // A prune withdraws claims; it does not retract what was derived from
+    // them during their validity.
+    SUBCASE("derived facts stay as they are")
+    {
+        for (const std::string prune : kRulePatternPrunes)
+        {
+            CAPTURE(prune);
+            zelph::io::OutputCollector  collector;
+            zelph::console::Interactive interactive(collector.sink());
+            process_lines(interactive, R"(
+(a p b) => (c r d)
+(a p b) q z
+)");
+            collector.clear();
+            interactive.process("S r O");
+            REQUIRE(answers_contain(collector, "c r d"));
+
+            interactive.process(prune);
+            collector.clear();
+            interactive.process("S r O");
+            CHECK(answers_contain(collector, "c r d"));
+        }
+    }
+
+    // The expression `(a p b) q z` functions as a claim, and serves as the
+    // condition within a second rule. It remains within that rule, and
+    // since it is a claim holding the withdrawn fact, its claim goes too,
+    // just as the fact's own claim did.
+    SUBCASE("a holder that is part of another rule stays as that rule's pattern")
+    {
+        for (const std::string prune : kRulePatternPrunes)
+        {
+            CAPTURE(prune);
+            zelph::io::OutputCollector  collector;
+            zelph::console::Interactive interactive(collector.sink());
+            interactive.process(".auto-run");
+            process_lines(interactive, R"(
+(a p b) => (c r d)
+((a p b) q z) => (e f g)
+(a p b) q z
+)");
+            const std::string before = listed_rules(interactive, collector);
+            interactive.process(prune);
+            CHECK(listed_rules(interactive, collector) == before);
+
+            collector.clear();
+            interactive.process("S q O");
+            CHECK(collect_answers(collector).empty());
+
+            // Asserting it once more claims it and the fact it holds, with
+            // both rules being triggered.
+            process_lines(interactive, "(a p b) q z\n.run\n");
+            collector.clear();
+            interactive.process("S f O");
+            CHECK(answers_contain(collector, "e f g"));
+            collector.clear();
+            interactive.process("S r O");
+            CHECK(answers_contain(collector, "c r d"));
+        }
+    }
+
+    // The holder whose claim went in turn is a claim that has been
+    // withdrawn, just as the fact is, and what holds it goes in the same
+    // manner as what holds the fact.
+    SUBCASE("a statement holding that rule's pattern goes")
+    {
+        for (const std::string prune : kRulePatternPrunes)
+        {
+            CAPTURE(prune);
+            zelph::io::OutputCollector  collector;
+            zelph::console::Interactive interactive(collector.sink());
+            process_lines(interactive, R"(
+(a p b) => (c r d)
+((a p b) q z) => (e f g)
+x says ((a p b) q z)
+)");
+            interactive.process(prune);
+
+            collector.clear();
+            interactive.process("S says O");
+            CHECK(collect_answers(collector).empty());
+        }
+    }
+
+    // Saying a rule claims the rule itself as a node and nothing inside it,
+    // thus the statement does not hold the fact as a claim.
+    SUBCASE("a rule that a statement mentions stays, and so does the statement")
+    {
+        for (const std::string prune : kRulePatternPrunes)
+        {
+            CAPTURE(prune);
+            zelph::io::OutputCollector  collector;
+            zelph::console::Interactive interactive(collector.sink());
+            process_lines(interactive, R"(
+a p b
+x says ((a p b) => (c r d))
+)");
+            interactive.process(prune);
+
+            collector.clear();
+            interactive.process("S says O");
+            CHECK(answers_contain(collector, "x says ((a p b) => (c r d))"));
+
+            collector.clear();
+            interactive.process("S p O");
+            CHECK(collect_answers(collector).empty());
+        }
+    }
+
+    // The negation functions as a tag attached to the condition's
+    // statement, and so it is a holder of the fact; lacking this tag, the
+    // rule activates upon `a p b` rather than upon its absence.
+    SUBCASE("a negated condition stays negated")
+    {
+        for (const std::string prune : kRulePatternPrunes)
+        {
+            CAPTURE(prune);
+            zelph::io::OutputCollector  collector;
+            zelph::console::Interactive interactive(collector.sink());
+            process_lines(interactive, R"(
+a p b
+(X go Y, ¬(a p b)) => (X ok Y)
+)");
+            const std::string before = listed_rules(interactive, collector);
+            interactive.process(prune);
+            CHECK(listed_rules(interactive, collector) == before);
+        }
+    }
+
+    // A statement used as a predicate is declared a relation type, and
+    // the declaration holds the statement as one among other facts
+    // concerning it. It was kept as rule text whether a rule read the
+    // statement as a predicate or not, thus leaving behind a claimed
+    // `(a p b) ~ ->`; subsequently, the .cleanup every prune recommends
+    // identified the predicate as unused and removed its node, the rule's
+    // condition, and the rule with it.
+    SUBCASE("a declaration no rule reads goes, and .cleanup keeps the rule")
+    {
+        for (const std::string prune : kRulePatternPrunes)
+        {
+            CAPTURE(prune);
+            zelph::io::OutputCollector  collector;
+            zelph::console::Interactive interactive(collector.sink());
+            process_lines(interactive, R"(
+(a p b) => (c r d)
+x (a p b) y
+)");
+            const std::string before = listed_rules(interactive, collector);
+            interactive.process(prune);
+
+            collector.clear();
+            interactive.process("S ~ O");
+            CHECK_FALSE(answers_contain(collector, "(a p b) ~ ->"));
+
+            interactive.process(".cleanup");
+            CHECK(listed_rules(interactive, collector) == before);
+        }
+    }
+
+    // When a rule reads the statement as a predicate, the declaration
+    // enables the rule to treat its condition as a fact in the first place:
+    // it remains attached to the rule, whereas the data using the predicate
+    // goes.
+    SUBCASE("a declaration a rule reads stays, and the rule fires on new data")
+    {
+        for (const std::string prune : kRulePatternPrunes)
+        {
+            CAPTURE(prune);
+            zelph::io::OutputCollector  collector;
+            zelph::console::Interactive interactive(collector.sink());
+            process_lines(interactive, R"(
+(X (a p b) Y) => (X r Y)
+x (a p b) y
+)");
+            interactive.process(prune);
+
+            collector.clear();
+            interactive.process("S (a p b) O");
+            CHECK(collect_answers(collector).empty());
+
+            process_lines(interactive, "u (a p b) v\n");
+            collector.clear();
+            interactive.process("S r O");
+            CHECK(answers_contain(collector, "u r v"));
+        }
+    }
+
+    // A collection consists of its members, thus eliminating the fact took
+    // the collection and the rule holding it: the fact was not counted as
+    // part of the rule, and `.list-rules` answered "No rules found."
+    // Expressed using only ground members, the collection is a set
+    // constant; if a variable is present among them, it becomes the rule's
+    // own collection.
+    SUBCASE("a rule's own collection holding the fact stays, and the rule with it")
+    {
+        for (const std::string rule : {"(X r Y) => (X about {(a p b)})", "(X r Y) => (X about {(a p b) Y})"})
+        {
+            for (const std::string prune : kRulePatternPrunes)
+            {
+                CAPTURE(rule);
+                CAPTURE(prune);
+                zelph::io::OutputCollector  collector;
+                zelph::console::Interactive interactive(collector.sink());
+                process_lines(interactive, "a p b\n" + rule + "\n");
+                const std::string before = listed_rules(interactive, collector);
+                REQUIRE(before.find("(a p b)") != std::string::npos);
+
+                interactive.process(prune);
+                CHECK(listed_rules(interactive, collector) == before);
+            }
+        }
+    }
+
+    // A set constant is a single node regardless of where its members are
+    // specified, enabling data to hold the exact collection that a rule
+    // holds. The collection stays with the rule, and the data holding it
+    // goes as a holder of the fact.
+    SUBCASE("data holding a collection the rule holds as well goes")
+    {
+        for (const std::string prune : kRulePatternPrunes)
+        {
+            CAPTURE(prune);
+            zelph::io::OutputCollector  collector;
+            zelph::console::Interactive interactive(collector.sink());
+            process_lines(interactive, R"(
+(X r Y) => (X about {(a p b)})
+k has {(a p b)}
+)");
+            const std::string before = listed_rules(interactive, collector);
+            interactive.process(prune);
+            CHECK(listed_rules(interactive, collector) == before);
+
+            collector.clear();
+            interactive.process("S has O");
+            CHECK(collect_answers(collector).empty());
+        }
+    }
+
+    // Without a rule, the membership goes with the fact, the collection
+    // goes with its member, and the statement with the collection.
+    SUBCASE("a data collection holding the fact goes, as it does without a rule")
+    {
+        std::vector<std::pair<std::string, std::string>> cases{{"", ".prune-facts (a p b)"}};
+        for (const std::string prune : kRulePatternPrunes)
+            cases.emplace_back("(a p b) => (c r d)\n", prune);
+
+        for (const auto& [rule, prune] : cases)
+        {
+            CAPTURE(rule);
+            CAPTURE(prune);
+            zelph::io::OutputCollector  collector;
+            zelph::console::Interactive interactive(collector.sink());
+            process_lines(interactive, rule + "k has {e (a p b)}\n");
+            interactive.process(prune);
+
+            collector.clear();
+            interactive.process("S has O");
+            CHECK(collect_answers(collector).empty());
+
+            collector.clear();
+            interactive.process("S in O");
+            CHECK(collect_answers(collector).empty());
+        }
+    }
+
+    // The membership functions as a holder and goes. Without a rule, the
+    // container that loses the member departs alongside it; here, `k`
+    // constitutes a component of the second rule and remains, as do the facts
+    // associated with it. The membership was treated as rule text whenever
+    // its container formed part of any rule: it stayed, and the walk advanced
+    // from `k`, eliminating every fact holding it.
+    SUBCASE("a membership in a node a rule names goes, and the node keeps its facts")
+    {
+        for (const std::string prune : kRulePatternPrunes)
+        {
+            CAPTURE(prune);
+            zelph::io::OutputCollector  collector;
+            zelph::console::Interactive interactive(collector.sink());
+            process_lines(interactive, R"(
+(a p b) => (c r d)
+(X likes k) => (X happy yes)
+(a p b) in k
+z likes k
+)");
+            const std::string before = listed_rules(interactive, collector);
+            interactive.process(prune);
+            CHECK(listed_rules(interactive, collector) == before);
+
+            collector.clear();
+            interactive.process("S in O");
+            CHECK(collect_answers(collector).empty());
+
+            collector.clear();
+            interactive.process("S likes O");
+            CHECK(answers_contain(collector, "z likes k"));
+        }
+    }
+
+    // A contradiction record is a set constant comprising the facts it is
+    // about, and it goes with any of them, just as it would without a
+    // rule; thus, reasserting the fact results in reporting the
+    // contradiction once more. Alongside the rule, the record remained
+    // unchanged, and the new assertion remained silent.
+    SUBCASE("a contradiction record goes with the fact")
+    {
+        for (const std::string prune : kRulePatternPrunes)
+        {
+            CAPTURE(prune);
+            zelph::io::OutputCollector  collector;
+            zelph::console::Interactive interactive(collector.sink());
+            process_lines(interactive, R"(
+(a p b) => (c r d)
+(X p Y, X s Y) => !
+a p b
+a s b
+)");
+            interactive.process(prune);
+
+            collector.clear();
+            interactive.process("S in O");
+            CHECK(collect_answers(collector).empty());
+
+            collector.clear();
+            process_lines(interactive, "a p b\n");
+            CHECK(any_event_contains(collector, "Found one or more contradictions"));
+        }
+    }
+
+    // A prune represents a one-off adjustment to the network and does not
+    // retain any trace, thus a statement that writes the fact afterwards
+    // claims it anew.
+    SUBCASE("a statement writing the fact afterwards claims it again")
+    {
+        for (const std::string prune : kRulePatternPrunes)
+        {
+            CAPTURE(prune);
+            zelph::io::OutputCollector  collector;
+            zelph::console::Interactive interactive(collector.sink());
+            process_lines(interactive, R"(
+(a p b) => (c r d)
+(a p b) q z
+)");
+            interactive.process(prune);
+            process_lines(interactive, "(a p b) q y\n");
+
+            collector.clear();
+            interactive.process("S p O");
+            CHECK(answers_contain(collector, "a p b"));
+        }
     }
 }
 

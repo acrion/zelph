@@ -749,6 +749,30 @@ knet nn-layers <KIn KOut>
     CHECK(collect_answers(collector).empty());
 }
 
+// The neural condition expressed as `((P) nn net)` constitutes the node
+// that "≈net(P)" builds, and it is refused where the sugar is: when typed
+// as a statement, it asserted P as a claim of what the net believes.
+TEST_CASE("neural: the neural condition written out is refused in a statement that asserts")
+{
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+
+    process_lines(interactive, R"(
+s7 in KIn
+o7 in KOut
+knet nn-layers <KIn KOut>
+)");
+    const std::size_t before = node_count(collector, interactive);
+
+    CHECK_THROWS(interactive.process("(a relK b) nn knet"));
+    CHECK_THROWS(interactive.process("x q ((a relK b) nn knet)"));
+    CHECK(node_count(collector, interactive) == before);
+
+    collector.clear();
+    interactive.process("S relK O");
+    CHECK(collect_answers(collector).empty());
+}
+
 TEST_CASE("neural: a negated ≈ with an unbound object is refused")
 {
     run_both_modes([](auto& collector, auto& interactive)
@@ -801,6 +825,58 @@ s2 marked yes
 )");
         CHECK(any_output_starts_with(collector, "( s2 suggestedH c1 )"));
         CHECK_FALSE(any_output_starts_with(collector, "( s2 suggestedH c2 )")); });
+}
+
+// With a variable in it, "≈net(s X)" functions as a query directed at the
+// net, inquiring what a rule condition would yield. It was refused on the
+// grounds that a statement cannot assert what a network holds to be true --
+// something that applies to a line that asserts, but not to one that poses a
+// question.
+TEST_CASE("neural: ≈ alone with a variable is a query in generator mode")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+s2 in HIn
+c1 in HOut
+c2 in HOut
+%(zelph/nn-connect "s2" "c1" 0.9)
+%(zelph/nn-connect "s2" "c2" 0.1)
+hnet nn-layers <HIn HOut>
+)");
+        collector.clear();
+        interactive.process("≈hnet(s2 relH X)");
+        CHECK(collect_answers(collector) == std::vector<std::string>{"(s2 relH c1) nn hnet"}); });
+}
+
+// "X go Y, ≈net(a r b)" built `a r b` as data on its way to querying the net
+// about it, and `S r O` answered it from then on. Underneath the operator it
+// is a pattern, and the query serves as an examination of what the net holds
+// as true.
+TEST_CASE("neural: a query asks the net about a ground pattern without asserting it")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+s2 in HIn
+c1 in HOut
+c2 in HOut
+%(zelph/nn-connect "s2" "c1" 0.9)
+%(zelph/nn-connect "s2" "c2" 0.1)
+hnet nn-layers <HIn HOut>
+t go k
+)");
+        collector.clear();
+        interactive.process("X go Y, ≈hnet(s2 relH c1)");
+        CHECK(collect_answers(collector).size() == 1);
+
+        collector.clear();
+        interactive.process("X go Y, ≈hnet(s2 relH c2)");
+        CHECK(collect_answers(collector).empty());
+
+        collector.clear();
+        interactive.process("S relH O");
+        CHECK(collect_answers(collector).empty()); });
 }
 
 TEST_CASE("neural: approx with missing net definition fails the condition gracefully")

@@ -283,10 +283,12 @@ extern "C"
        same elements yield two different nodes. */
     ZELPH_EXPORT int32_t zelph_collection(zelph_engine* engine, const zelph_node* elements, size_t count, zelph_node* out_node);
 
-    /* Mark a fact pattern as a negation, i.e. negation as failure. Evaluated
+    /* The negated condition over a fact pattern, specifically negation as
+       failure: the fact ((pattern) ~ negation), returned in out_node, which
+       a rule takes as its condition instead of the pattern. Evaluated
        against the SATURATED positive fact base, never against in-flight
-       state - that is zelph's stratification rule and it is what makes
-       "no defender remains" expressible. */
+       state - that is zelph's stratification rule and it is what makes "no
+       defender remains" expressible. */
     ZELPH_EXPORT int32_t zelph_negate(zelph_engine* engine, zelph_node pattern, zelph_node* out_node);
 
     /* Was this fact CLAIMED -- asserted or derived? Creates nothing.

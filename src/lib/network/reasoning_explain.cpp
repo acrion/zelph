@@ -418,8 +418,8 @@ namespace zelph::network
         // and negated), and detect neural conditions. Apply the same
         // detection mechanism used by Reasoning::evaluate: detect
         // conjunction sets through (IsA Conjunction) along with PartOf
-        // membership, identify negation by the presence of the
-        // (IsA Negation) tag on the pattern itself, and handle all other
+        // membership, recognize a negation as the fact `((P) ~ negation)`
+        // and keep the pattern P that is negated, and handle all other
         // cases based on the declared relation type of the condition.
         //
         // `parts`, when provided, gathers each node that the reading
@@ -440,20 +440,21 @@ namespace zelph::network
                 return;
             }
 
-            const adjacency_set rels = z->filter(part, z->core.IsA, z->core.RelationTypeCategory);
-
-            if (z->check_fact(part, z->core.IsA, {z->core.Negation}).is_known())
+            if (const Node negated = z->negation_operand(part); negated != 0)
             {
                 // A negated path condition is a walk too, not a pattern: when
                 // tested as such, it never matched -- a walk lacks a fact node
                 // -- thus it was reported as absent despite the path being
                 // present.
-                if (closure_pred != 0 && rels.size() == 1 && *rels.begin() == closure_pred)
-                    negated_closures.push_back(part);
+                const adjacency_set negated_rels = z->filter(negated, z->core.IsA, z->core.RelationTypeCategory);
+                if (closure_pred != 0 && negated_rels.size() == 1 && *negated_rels.begin() == closure_pred)
+                    negated_closures.push_back(negated);
                 else
-                    negative.push_back(part);
+                    negative.push_back(negated);
                 return;
             }
+
+            const adjacency_set rels = z->filter(part, z->core.IsA, z->core.RelationTypeCategory);
 
             if (rels.size() == 1)
             {
@@ -1754,13 +1755,10 @@ namespace zelph::network
                 charge(ctx, 1 + held.scanned() / scan_per_unit + held.fruitless() / tries_per_unit);
                 if (matched) return false; // the negated pattern is matched NOW
 
-                // Keep the rule's PATTERN, not the ground node: the pattern
-                // carries the (IsA Negation) tag, so it renders as ¬(...) on
-                // its own, and the caller supplies `bindings` to substitute
-                // the variables the join fixed. A ground node would render
-                // without the negation and force the caller to re-add it --
-                // which is how the display grew a second ¬ around a pattern
-                // that already had one.
+                // Keep the rule's PATTERN, not the ground node: the caller
+                // supplies `bindings` to substitute the variables that the
+                // join fixed, and writes the ¬(...) around it precisely
+                // one time.
                 c.absent.push_back(m);
             }
 

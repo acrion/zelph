@@ -184,6 +184,18 @@ namespace zelph::console
             throw std::runtime_error("Invalid pattern");
         }
 
+        // A condition operator matches no fact: a negation holds when its
+        // pattern is ABSENT, a path is walked, a net is queried. When
+        // treated as a pattern, ".prune-facts ¬(X p b)" removed every `X p
+        // b` -- the facts the line says are absent.
+        if (_n->is_condition_tag(pattern_fact))
+        {
+            discard_pattern();
+            throw std::runtime_error(std::string(command) + " removes what its pattern matches, and a condition operator "
+                                                            "(¬, ≈, ⁺, ∗) matches no fact: it is read only as a condition. "
+                                                            "Write the plain fact pattern.");
+        }
+
         // A pattern without variables denotes exactly ONE fact, and the
         // unification scan that finds "all facts matching the pattern" has
         // nothing to bind, so it found none -- ".prune-facts a rel b"
@@ -285,12 +297,14 @@ namespace zelph::console
             const bool exists  = present && _n->is_asserted_fact(pattern_fact);
             if (exists)
             {
-                // The claim goes; a statement that is also included within a
-                // rule -- either as its condition, its consequence, or
-                // embedded within one of those -- remains as the rule's
-                // pattern (see Reasoning::part_of_rule).
-                if (_n->part_of_rule(pattern_fact))
-                    _n->restore_rule_patterns({pattern_fact});
+                // The claim goes, and whatever holds the statement goes along
+                // with it; a statement that is also included within a rule --
+                // whether as its condition, its consequence, or embedded within
+                // one of those -- continues to serve as the rule's pattern (see
+                // Reasoning::withdraw_claims).
+                const network::adjacency_set parts = _n->rule_parts();
+                if (parts.count(pattern_fact) != 0)
+                    _n->withdraw_claims({pattern_fact}, parts);
                 else
                     _n->remove_node(pattern_fact);
             }
@@ -319,9 +333,9 @@ namespace zelph::console
                                    "and .remove to delete the node itself.",
                                    true);
                 else if (_n->is_rule_pattern(pattern_fact))
-                    _n->diagnostic("That statement exists only as a rule's own pattern, not as data -- "
-                                   "the prune commands remove claims. Use .node to get its ID and .remove "
-                                   "to delete graph structure.",
+                    _n->diagnostic("That statement exists only as a rule's own pattern, or as one a query wrote "
+                                   "beneath a condition operator, not as data -- the prune commands remove "
+                                   "claims. Use .node to get its ID and .remove to delete graph structure.",
                                    true);
                 else
                     _n->diagnostic("That statement carries variables, so nobody claimed it -- the prune "

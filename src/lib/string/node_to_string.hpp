@@ -66,6 +66,16 @@ namespace zelph::string
         // IN: forbid scheme rendering for this node (bail-out re-render).
         bool no_scheme{false};
 
+        // IN: the caller writes the parentheses around this statement
+        // directly (`¬(...)`), so it gets none as a value within another
+        // one.
+        bool bare_statement{false};
+
+        // IN: the node represents a query's condition, typed on its
+        // own line (condition_to_string); solely the top-level call
+        // reads it.
+        bool typed_condition{false};
+
         // OUT: this node is writable in the parent's scheme.
         bool expressible{false};
         // OUT: the rendering used forms the default renderer would not have
@@ -84,6 +94,14 @@ namespace zelph::string
     void          node_to_string(const network::Zelph* const z, std::string& result, const std::string& lang, network::Node node, const int max_objects = default_display_max_neighbors, const network::Variables& variables = {}, network::Node parent = 0, std::shared_ptr<std::unordered_set<network::Node>> history = nullptr, SchemeContext* ctx = nullptr);
     bool          is_inside_node_to_wstring();
     bool          is_var(std::string token);
+
+    /// A query's condition, expressed exactly as entered: a negated
+    /// condition appearing on its own line prints as `¬(P)`, just like in a
+    /// rule's condition slot, where node_to_string writes the fact it is,
+    /// `(P) ~ negation` -- the echo and response to "¬(X p b)" then re-enter
+    /// as the identical query. Every other node, and any node possessing a
+    /// parent, prints as node_to_string prints it.
+    void condition_to_string(const network::Zelph* const z, std::string& result, const std::string& lang, network::Node node, const int max_objects = default_display_max_neighbors, const network::Variables& variables = {}, network::Node parent = 0);
 
     /// Is the self-fact sugar ":pred subject" re-enterable for this
     /// predicate NAME? Display and the test helpers ask the same function,

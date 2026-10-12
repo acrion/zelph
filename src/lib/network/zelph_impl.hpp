@@ -135,7 +135,7 @@ namespace zelph::network
         void               loadFromManifest(const std::string& manifest_path, const Zelph::BinChunkSelection& selection, const std::string& shard_root, const std::string& bin_path_hint, const bool skip_payload);
         void               saveToFile(const std::string& filename, const ankerl::unordered_dense::set<Node>* const keep = nullptr) const;
         static std::string read_error_text(const std::string& filename, const kj::Exception& e, const bool state_discarded);
-        bool               loadFromFile(const std::string& filename); // if the file was written using template ids
+        bool               loadFromFile(const std::string& filename, bool& negation_conditions); // if the file was written using template ids
         void               loadFromFile(const std::string& filename, const Zelph::BinChunkSelection& selection, const bool skip_payload);
 #endif // __EMSCRIPTEN__
 
@@ -375,6 +375,14 @@ namespace zelph::network
         // older engine saved with such rules has entries, one per member of
         // their literals.
         std::unordered_set<Node> _older_rule_literals;
+
+        // Whether a whole-file load read a file previously saved by an
+        // engine that predates negation conditions (its negationConditions
+        // field set to false) and which holds a negation fact: the negated
+        // conditions of its rules read as positive within this context. A
+        // subsequent save sets the field to false, ensuring the next load of
+        // the file will say so again. Cleared via clear_loaded_state.
+        bool _older_negations{false};
 
         int               _max_log_depth{0};
         bool              _logging{false};

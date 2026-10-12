@@ -310,12 +310,15 @@ namespace zelph
     // closure tag off it that nothing ever reads, because only a rule
     // condition is ever walked.
     //
-    // Whether the ends are variables is not visible to the parser -- it is
-    // decided when the tokens are RESOLVED -- so the refusal cannot live
-    // beside the one for a path in a consequence slot. It cannot live in
-    // zelph/path either: by then the operand FACT has been built, which is the
-    // half that does the damage. So the sugar emits this guard ahead of the
-    // construction, with the two ends bound exactly once.
+    // The determination of whether the ends are variables occurs when the
+    // tokens are RESOLVED, and the parser lacks visibility into all of it: an
+    // `,unquote` or an end that an island returns remains opaque to it. It
+    // reads a line containing a variable as a query, where a ground path is a
+    // test and gets no guard; in a line it reads as one that asserts, the
+    // guard is emitted. It cannot live in zelph/path either: by that stage the
+    // operand FACT has already been built, which is the half that causes harm.
+    // Thus, the sugar emits this guard prior to construction, with both ends
+    // bound exactly once.
     //
     // A Janet block is exempt: there the caller is using the API directly and
     // may well be assembling a condition for zelph/rule by hand.
@@ -349,7 +352,7 @@ namespace zelph
 
         janet_panicf("\"⁺\" and \"∗\" are condition operators: reachability is what the engine "
                      "WALKS, not what you assert. Write a variable to ASK (\"S p⁺ b\"), or use "
-                     "the path condition in a rule.");
+                     "the path as a condition -- in a rule, or in a query (a line with a variable).");
     }
 
     // Emit a line through zelph's output handler. Janet's own print writes to

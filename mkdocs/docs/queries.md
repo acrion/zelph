@@ -63,6 +63,52 @@ Combine for intersections.
 
   > Note: In this example we use the comma `,` [syntax sugar for conjunctions](rules.md#syntax-sugar-for-conditions). The fully explicit form is `*{(X "is located in" Europe) (X "is capital of" Y)} ~ conjunction`, which answers identically.
 
+## Conditions in Queries
+
+A query consists of a condition list that undergoes evaluation just once. Every condition that a rule’s condition list accepts carries the same significance within a query, and the outcomes correspond to the bindings established by those conditions: [negation as failure](logic.md#negation-as-failure) `¬`, the [inequality guard](logic.md#inequality-constraints) `!=`, [path conditions](logic.md#transitive-path-conditions) `⁺` and `∗`, and [neural conditions](neural.md#neural-rule-conditions) `≈`. Continuing with the geography graph:
+
+```
+zelph> X "is capital of" Y, ¬(Y "is located in" Asia)
+Answer: {(Berlin "is capital of" Germany) (¬(Germany "is located in" Asia))}
+zelph> X "is located in" Europe, X != Germany
+Answer: {(Berlin != Germany) (Berlin "is located in" Europe)}
+```
+
+Under a condition operator, a query constructs a pattern, much like a rule: the operand, each fact contained within it, and the operator’s own fact are never asserted. Asking whether Germany is located in Asia does not assert that fact:
+
+```
+zelph> X "is capital of" Germany, ¬(Germany "is located in" Asia)
+Answer: {(¬(Germany "is located in" Asia)) (Berlin "is capital of" Germany)}
+zelph> A "is located in" Asia
+```
+
+A fact existing before the query keeps its status. A ground fact located outside any operator, including a rule the query mentions there, is created and thereby asserted, just as any statement would be (see "Queries that leave no trace" in [Where the logic goes next](about.md#where-the-logic-goes-next)). A ground path such as `a P279⁺ d` situated next to a condition with a variable functions as a reachability test, precisely as it does within a rule.
+
+A query consisting of a single negation establishes no bindings. It yields a result precisely one time, returning the condition itself when no fact satisfies it, and produces no result at all when a fact does satisfy it:
+
+```
+zelph> ¬(X "is located in" Asia)
+Answer: ¬(X "is located in" Asia)
+zelph> ¬(X "is located in" Europe)
+```
+
+When a variable is present, `¬(…)` appearing alone on a line represents this query; in its absence, `¬(a p b)` says that the fact does not hold (refer to [Negation as Failure](logic.md#negation-as-failure)).
+
+The conditions expressed as the facts they build are the same conditions: `((P) ~ negation)` equates to `¬(P)`, `((S p O) closure one-or-more)` translates to `S p⁺ O`, and `((P) nn net)` corresponds to `≈net(P)`. These are recognised by the nodes their names denote within the current language, meaning that, under `.lang en`, a statement concerning a node named `closure` remains a standard fact.
+
+A line that lacks a variable asserts its content, and a condition operator – `¬`, `≈`, `⁺` or `∗` – carries no significance in that context, regardless of spelling or depth, when located outside a rule that the line mentions; `a != b` within such a line functions as a standard fact. The sole exception is `¬(P)` appearing by itself on a line, which refutes `P`:
+
+```
+zelph> Germany "is located in" Europe, ¬(Germany "is located in" Asia)
+Error in line "Germany "is located in" Europe, ¬(Germany "is located in" Asia)":
+"¬" is a condition operator and has no meaning in a statement that asserts: it
+succeeds when a pattern is ABSENT, which only a condition can ask -- in a rule,
+or in a query (a line with a variable). On its own line "¬(a p b)" says that
+the fact does not hold.
+```
+
+A set or collection literal constitutes data, hence a condition operator among its members, regardless of spelling, is refused wherever the literal appears, whether within a rule or not; a rule contained within the literal keeps its own condition slots. The comma list, when written out, is not such a literal: in `*{…} ~ conjunction`, the focus returns the set that represents the condition list, with its members being conditions. The `?` prefix asserts the statement it queries, and it refuses a condition operator before anything is asserted. `.prune-facts` and `.prune-nodes` refuse a pattern that functions as a condition operator, which matches no fact for removal.
+
 ## Wikidata-Specific Queries
 
 For Wikidata, switch to `.lang wikidata` after loading a dump (`.load path/to/dump.json` or `.load cached.bin`). Queries use Q/P IDs or names (if set). Examples from paleontology (e.g., Brontosaurus Q3222766).

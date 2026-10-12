@@ -46,10 +46,10 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 //
 // What "structurally identical" covers is deliberately exactly what the
 // reasoner interprets (see collect_conditions / Reasoning::evaluate): set
-// membership, the Conjunction and Negation tags, and each condition's
-// subject / predicate / object set. Predicate identity is what separates a
-// != guard and an ≈ neural condition from an ordinary pattern, so those
-// need no special case. Consequently "alpha-equivalent" here means
+// membership, the Conjunction tag, and each condition's subject / predicate
+// / object set. Predicate identity is what separates a != guard, an ≈
+// neural condition and a negation from an ordinary pattern, so those need
+// no special case. Consequently "alpha-equivalent" here means
 // "operationally indistinguishable to the engine", which is the property
 // that makes skipping the second rule safe.
 

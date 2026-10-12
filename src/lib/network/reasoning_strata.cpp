@@ -134,7 +134,13 @@ void Reasoning::read_footprint(const Node condition, RuleFootprint& f)
         return;
     }
 
-    const adjacency_set rels    = filter(condition, core.IsA, core.RelationTypeCategory);
+    // A negated condition is the fact `((P) ~ negation)`, and all content
+    // beneath is read from P: collected from the wrapper, `~` would be
+    // treated as a negated predicate, and each rule that derives a `~` fact
+    // would feed every negation.
+    const Node          negated = negation_operand(condition);
+    const Node          pattern = negated != 0 ? negated : condition;
+    const adjacency_set rels    = filter(pattern, core.IsA, core.RelationTypeCategory);
     const Node          rel     = rels.size() == 1 ? *rels.begin() : Node{0};
     const bool          neural  = _nn_pred != 0 && rel == _nn_pred;
     const bool          closure = _closure_pred != 0 && rel == _closure_pred;
@@ -142,15 +148,15 @@ void Reasoning::read_footprint(const Node condition, RuleFootprint& f)
     // net whatsoever (refer to footprint for path conditions).
     if (neural) f.checkable = false;
 
-    if (is_negated_condition(condition, 1))
+    if (negated != 0)
     {
         // Neither the re-test nor explain() walks a negated path: both
         // would match it as a literal fact.
         if (closure) f.checkable = false;
         f.has_negation = true;
-        f.negated_conditions.push_back(condition);
+        f.negated_conditions.push_back(pattern);
         std::unordered_set<Node> vars;
-        collect_predicates(this, condition, f.negates, vars, history);
+        collect_predicates(this, pattern, f.negates, vars, history);
         if (!vars.empty()) f.negates_any = true;
         return;
     }

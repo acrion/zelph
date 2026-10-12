@@ -31,6 +31,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include <algorithm>
 #include <cstdint>
 #include <filesystem>
+#include <fstream>
 #include <utility>
 
 using namespace zelph::test;
@@ -567,6 +568,51 @@ TEST_CASE("rule patterns: a query claims none of the facts nested in it")
         collector.clear();
         interactive.process("C q D");
         CHECK_FALSE(answers_contain(collector, "c q d")); });
+}
+
+// Under a condition operator, a query constructs a pattern, and a query read
+// from a file proceeds in the same manner as a typed one: via the statement,
+// toward the marks located at its end.
+TEST_CASE("rule patterns: a query in an imported file marks what it builds beneath an operator")
+{
+    const auto file = fs::temp_directory_path() / "zelph_query_marks_import.zph";
+    {
+        std::ofstream out(file);
+        out << "t go k\nX go Y, ¬(a p b)\n";
+    }
+
+    run_both_modes([&file](auto& collector, auto& interactive)
+                   {
+        interactive.process(".import \"" + file.string() + "\"");
+
+        collector.clear();
+        interactive.process("A p B");
+        CHECK(collect_answers(collector).empty());
+
+        collector.clear();
+        interactive.process(".explain (a p b)");
+        CHECK(any_output_contains(collector, "[rule pattern; not asserted]")); });
+
+    fs::remove(file);
+}
+
+// A query executes within an isolated scratch cluster, which gets integrated
+// into the cluster that was active before, and its marks are also recorded
+// there: dropping a cluster takes back the entire query entered within it,
+// including all patterns.
+TEST_CASE("rule patterns: dropping a cluster takes a query's patterns with it")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("t go k");
+        const std::size_t before = node_count(collector, interactive);
+
+        interactive.process(".cluster exp");
+        interactive.process("X go Y, ¬(a p b)");
+        interactive.process(".cluster-drop exp");
+
+        CHECK(node_count(collector, interactive) == before);
+        CHECK_THROWS(interactive.process(".node a p b")); });
 }
 
 TEST_CASE("rule patterns: the Janet read surface answers about claims")
@@ -1238,6 +1284,34 @@ TEST_CASE("rule patterns: a read-only command that parses a mention leaves no ma
         CHECK(any_output_contains(collector, "[axiom]")); });
 }
 
+// A command refers to a node, and a condition operator expressed in full
+// refers to one as well -- `.node (a p b) ~ negation` is the way a rule's
+// negated condition is looked at -- thus, a command's pattern does not
+// constitute a statement that asserts it. What the pattern constructs is
+// discarded along with the command's scratch cluster and leaves no mark: the
+// fact nested beneath it becomes data once a statement claims it.
+TEST_CASE("rule patterns: a command's operator pattern is no assertion and leaves no mark")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("(X go Y, ¬(a p b)) => (X ok Y)");
+
+        collector.clear();
+        CHECK_NOTHROW(interactive.process(".node (a p b) ~ negation"));
+        CHECK(any_output_contains(collector, "Representation: (a p b) ~ negation"));
+
+        CHECK_NOTHROW(interactive.process(".explain ¬(X q (c r d))"));
+        CHECK_NOTHROW(interactive.process(".explain (c r d) ~ negation"));
+        interactive.process("x says (c r d)");
+
+        collector.clear();
+        interactive.process("S r O");
+        CHECK(collect_answers(collector) == std::vector<std::string>{"c r d"});
+        collector.clear();
+        interactive.process(".explain (c r d)");
+        CHECK(any_output_contains(collector, "[axiom]")); });
+}
+
 TEST_CASE("rule patterns: a query that names a mention leaves no mark")
 {
     // A query builds its pattern through the calls a claim makes, and nothing
@@ -1480,6 +1554,12 @@ TEST_CASE("rule patterns: a firing does not derive a fact that keeps a variable 
     // printed, a witness `??` was made for the fresh variable of sib1 and
     // b4, and b4's `c q k` was answered as data.
     //
+    // Inside the value a firing builds for a collection of the rule's text,
+    // the firing retains every variable that it neither binds nor makes a
+    // witness for, meaning that any rule within it that holds such a
+    // variable is likewise considered half a rule, regardless of whether it
+    // contains one condition or several.
+    //
     // The choice stems solely from the consequence, before any construction:
     // fresh nodes are made before the consequences are processed, and the
     // instantiation builds the nested `=>` before the fact that holds it,
@@ -1577,6 +1657,67 @@ TEST_CASE("rule patterns: a firing does not derive a fact that keeps a variable 
                   == 1);
             CHECK_FALSE(any_output_contains(collector, "(c q k)"));
         }
+        SUBCASE("a fresh variable of its own beside a value")
+        {
+            // Within a value, the firing keeps a variable that it does not
+            // bind, thus the rule in that context keeps B. V exists only in
+            // the consequence around that value: the firing makes the
+            // witness for W and establishes the fact that names it, with no
+            // node assigned to V.
+            interactive.process(".deductions all");
+            interactive.process(".semi-naive off");
+            interactive.process(".auto-run"); // a toggle: off
+            process_lines(interactive, "(X p Y) => (V about {((X r B) => (c q d))}) (W t X)\na p b");
+            const std::size_t before = node_count(collector, interactive);
+            interactive.process(".run-once");
+            const std::size_t after = node_count(collector, interactive);
+            CHECK(after == before + 2);
+            for (int pass = 0; pass < 3; ++pass)
+            {
+                interactive.process(".run-once");
+                CHECK(node_count(collector, interactive) == after);
+            }
+            CHECK(answered("S t O") == std::vector<std::string>{"?? t a"});
+            CHECK(answered("S about O").empty());
+        }
+        SUBCASE("a fresh variable that only a consequence not derived places outside a value")
+        {
+            // The first consequence is not derived, since its value would
+            // keep B, and it is the sole one that holds W outside every
+            // container. No witness is made for W, hence the value of the
+            // second consequence would keep W, and that one too is not
+            // derived. Both were formerly derived, with a witness for W.
+            passes("(X p Y) => (W about {((X r B) => (c q d))}) (X has {((W r X) => (c q d))})\na p b");
+            CHECK(answered("S about O").empty());
+            CHECK(answered("S has O").empty());
+        }
+        SUBCASE("a witness that the check drops only when it repeats")
+        {
+            // W stands outside a value only in the first consequence, which is
+            // not derived, because its value would keep B. Lacking a witness
+            // for W, the value of the second consequence keeps W, meaning that
+            // consequence is also not derived, and V, which only the second
+            // consequence positions outside a value, needs no witness: the
+            // check repeats once a witness has dropped out. Checked only once,
+            // the firing made a witness for V that stood in no fact. The single
+            // new node is the fact `a t b`.
+            interactive.process(".deductions all");
+            interactive.process(".semi-naive off");
+            interactive.process(".auto-run"); // a toggle: off
+            process_lines(interactive, "(X p Y) => (W about {((X r B) => (c q d))}) (V has {((W r X) => (c q d))}) (X t Y)\na p b");
+            const std::size_t before = node_count(collector, interactive);
+            interactive.process(".run-once");
+            const std::size_t after = node_count(collector, interactive);
+            CHECK(after == before + 1);
+            for (int pass = 0; pass < 3; ++pass)
+            {
+                interactive.process(".run-once");
+                CHECK(node_count(collector, interactive) == after);
+            }
+            CHECK(answered("S t O") == std::vector<std::string>{"a t b"});
+            CHECK(answered("S has O").empty());
+            CHECK(answered("S about O").empty());
+        }
         SUBCASE("the control: a mention the substitution makes ground (c3)")
         {
             interactive.process(".deductions all");
@@ -1585,6 +1726,49 @@ TEST_CASE("rule patterns: a firing does not derive a fact that keeps a variable 
             interactive.process("k p m");
             CHECK(any_deduction_of(collector, "k about ((k r m) => (k q m))"));
             CHECK(answered("S about O") == std::vector<std::string>{"k about ((k r m) => (k q m))"});
+        }
+        SUBCASE("the control: a value whose rule the substitution makes ground")
+        {
+            // Within a value, the firing substitutes the variables its
+            // conditions bind and the fresh variable it makes a witness
+            // for, so no rule keeps a variable, and data located beside a
+            // rule within a value has no effect. The witness identified
+            // during the next run is the one created beforehand.
+            interactive.process(".deductions all");
+            process_lines(interactive, "(X p Y) => (X with {foo ((X r Y) => (X q Y))})\n(X p Y) => (W t X) (X holds {((W r X) => (c q d))})");
+            collector.clear();
+            interactive.process("k p m");
+            CHECK(any_deduction_of(collector, "k with {foo ((k r m) => (k q m))}"));
+            CHECK(answered("S with O") == std::vector<std::string>{"k with {foo ((k r m) => (k q m))}"});
+            CHECK(answered("S holds O") == std::vector<std::string>{"k holds {((?? r k) => (c q d))}"});
+
+            const std::size_t after = node_count(collector, interactive);
+            interactive.process(".run");
+            CHECK(node_count(collector, interactive) == after);
+        }
+        SUBCASE("the control: a relation the firing binds to `in` writes into the rule's collection")
+        {
+            // A relation that the firing binds to `in` writes into the rule's
+            // collection rather than building a value of it, and the term it
+            // writes into omits the nested rule, which holds a variable: the
+            // membership is derived, both at the top of the consequence and
+            // below a fact. Read without a binding, the statement counts such
+            // a relation as one that builds a value as well, and the rule
+            // inside that value had kept both memberships from being derived.
+            // `a p b` binds the relation to `b`: there the firing builds the
+            // value, whose nested rule would keep B, and derives nothing.
+            interactive.process(".deductions all");
+            process_lines(interactive, "(X p R) => (X R {((X s B) => (c q d))})\n(X p R) => ((X R {((X s B, X u B) => (c q d))}) noted yes)");
+            collector.clear();
+            interactive.process("e p in");
+            CHECK(any_deduction_of(collector, "(e in @{e}) noted yes"));
+            CHECK(answered("S in O") == std::vector<std::string>{"e in @{e}", "e in @{e}"});
+
+            collector.clear();
+            interactive.process("a p b");
+            CHECK_FALSE(printed_deduction());
+            CHECK(answered("S b O").empty());
+            CHECK(answered("S noted O") == std::vector<std::string>{"(e in @{e}) noted yes"});
         } });
 }
 
@@ -2091,12 +2275,14 @@ TEST_CASE("rule patterns: a mention whose consequence carries a variable stays a
 TEST_CASE("rule patterns: a rule inside a rule's collection is not data after a firing")
 {
     // The rule's collection holds a nested rule whose variables reside
-    // within its conditions. Upon firing, it writes the collection into the
-    // data; its member remains the nested rule's text, never a statement,
-    // hence `S in O` answers nothing -- after the typed rule fired and after
-    // a generator that writes the same structure has run. The generator's
-    // rule had emerged as a set constant around its partially substituted
-    // nested rule, and `S in O` answered that membership.
+    // within its conditions. The value that a firing builds for the
+    // collection would keep them, thus the firing derives nothing
+    // ("derived rules: a nested rule a firing writes into a collection or
+    // a mention is not answered"), and neither `S likes O` nor `S in O`
+    // answers anything -- after the typed rule fired and after a generator
+    // that writes the same structure has run. The generator's rule had
+    // emerged as a set constant around its partially substituted nested
+    // rule, and `S in O` answered that membership.
     run_both_modes([](auto& collector, auto& interactive)
                    {
         process_lines(interactive, R"(
@@ -2107,7 +2293,7 @@ a p b
 
         collector.clear();
         interactive.process("S likes O");
-        CHECK(collect_answers(collector).size() == 1);
+        CHECK(collect_answers(collector).empty());
 
         collector.clear();
         interactive.process("S in O");
@@ -2118,6 +2304,10 @@ a p b
 t go k
 )");
         interactive.run(true, false, false);
+
+        collector.clear();
+        interactive.process("S likes O");
+        CHECK(collect_answers(collector).empty());
 
         collector.clear();
         interactive.process("S in O");
@@ -2356,6 +2546,40 @@ TEST_CASE("rule patterns: the marks of a mention survive .save and .load")
         collector.clear();
         interactive.process("C q D");
         CHECK(collect_answers(collector).empty());
+    }
+
+    fs::remove(file);
+}
+
+TEST_CASE("rule patterns: the marks of a query survive .save and .load")
+{
+    // The marks the query writes under its operators are facts in the graph,
+    // just as a rule's are: following a round trip, the operand still
+    // answers nothing.
+    const auto file = fs::temp_directory_path() / "zelph_query_pattern_test.bin";
+
+    {
+        zelph::io::OutputCollector  collector;
+        zelph::console::Interactive interactive(collector.sink());
+        interactive.process(".semi-naive check");
+        interactive.process("t go k");
+        interactive.process("X go Y, ¬(a p b)");
+        interactive.process(".save \"" + file.string() + "\"");
+    }
+
+    {
+        zelph::io::OutputCollector  collector;
+        zelph::console::Interactive interactive(collector.sink());
+        interactive.process(".semi-naive check");
+        interactive.process(".load \"" + file.string() + "\"");
+
+        collector.clear();
+        interactive.process("A p B");
+        CHECK(collect_answers(collector).empty());
+
+        collector.clear();
+        interactive.process(".explain (a p b)");
+        CHECK(any_output_contains(collector, "[rule pattern; not asserted]"));
     }
 
     fs::remove(file);

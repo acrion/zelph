@@ -407,7 +407,7 @@ alarm is on  [rule pattern; not asserted]
 
 When the user types the identical `(rust is bad) seen (alarm is on)`, it writes both parts and claims them.
 
-A firing does not derive a statement whose instance would keep a variable from a rule it mentions. It writes the conditions of such a rule exactly as they are, meaning that `(X p Y) => (X about ((A r B, A s B) => (c q d)))` would write rule text that no query answers, and the rule below would produce half of a rule that was never written, with `b` and `k` appearing in its consequence while `X` and `Y` remain in its conditions. Neither is derived: nothing is written, claimed, or printed, and no witness is made for a fresh variable that exists solely in that context. The check does not analyse a rule within a collection of the rule’s text, as the firing builds a value for that collection: `(X p Y) => (X likes @{((X q Y, X r Y) => (X s Y))})` derives `b likes @{(((X r Y), (X q Y)) => (b s k))}` from `b p k`, a value that holds half of a rule no one authored.
+A firing does not derive a statement whose instance would keep a variable from a rule it mentions. It writes the conditions of such a rule exactly as they are, meaning that `(X p Y) => (X about ((A r B, A s B) => (c q d)))` would write rule text that no query answers, and the first rule below would produce half of a rule that was never written, with `b` and `k` appearing in its consequence while `X` and `Y` remain in its conditions. Neither is derived: nothing is written, claimed, or printed, and no witness is made for a fresh variable that exists solely in that context. The same applies within a collection of the rule’s text, for which the firing builds a value, as seen in the second rule below. There, the firing also keeps a variable it does not bind, such as `B` in the third rule, whereas a rule that the firing makes ground, as in the fourth, is derived:
 
 ```
 zelph> .deductions all
@@ -416,6 +416,12 @@ Deduction printing mode: all
 zelph> (X p Y) => (((X q Y, X r Y) => (X s Y)) is noted)
 zelph> b p k
 zelph> S is noted
+zelph> (X p Y) => (X about {((X r B, X s B) => (c q d))})
+zelph> (X p Y) => (X near {((X r B) => (c q d))})
+zelph> (X p Y) => (X like {((X r Y) => (X q Y))})
+(b like {((b r k) => (b q k))}) ⇐ (b p k)
+zelph> S about O
+zelph> S near O
 zelph>
 ```
 
@@ -579,11 +585,11 @@ The idiomatic syntax uses `¬`:
 
 ```
 zelph> (A is yellow, ¬(A is green)) => (A "is not" green)
-((A is yellow), ¬(A is green)) => (A "is not" green)
+(¬(A is green), (A is yellow)) => (A "is not" green)
 zelph> plant is green
 zelph> plant is yellow
 zelph> plant2 is yellow
-(plant2 "is not" green) ⇐ {(plant2 is yellow) (¬(plant2 is green))}
+(plant2 "is not" green) ⇐ {(¬(plant2 is green)) (plant2 is yellow)}
 ```
 
 `plant` is both yellow and green, so `¬(plant is green)` fails and the rule does not fire for `plant`.
@@ -602,8 +608,8 @@ zelph> elem3 partoflist mylist
 zelph> elem4 partoflist mylist
 zelph> elem5 partoflist mylist
 zelph> (A partoflist L, ¬(A --> X)) => (A "is last of" L)
-((A partoflist L), ¬(A --> X)) => (A "is last of" L)
-(elem5 "is last of" mylist) ⇐ {(elem5 partoflist mylist) (¬(elem5 --> X))}
+(¬(A --> X), (A partoflist L)) => (A "is last of" L)
+(elem5 "is last of" mylist) ⇐ {(¬(elem5 --> X)) (elem5 partoflist mylist)}
 ```
 
 The negated condition `¬(A --> X)` succeeds only when `A` has no outgoing `-->` link — identifying the last element purely declaratively.
@@ -620,8 +626,8 @@ zelph> c ~ interval
 zelph> a before b
 zelph> b before c
 zelph> (A ~ interval, ¬(A before B)) => (A is latest)
-(¬(A before B), (A ~ interval)) => (A is latest)
-(c is latest) ⇐ {(¬(c before B)) (c ~ interval)}
+((A ~ interval), ¬(A before B)) => (A is latest)
+(c is latest) ⇐ {(c ~ interval) (¬(c before B))}
 zelph> (A ~ interval, ¬(B before A)) => (A is earliest)
 ((A ~ interval), ¬(B before A)) => (A is earliest)
 (a is earliest) ⇐ {(a ~ interval) (¬(B before a))}
@@ -648,7 +654,14 @@ candidates — the negation then only filters. The justification of each
 derived fact names both, so a result can be traced back to why the entity was
 considered at all.
 
-The explicit (ASCII-only) equivalent of `¬(pattern)` is `*(pattern) ~ negation`, using the [focus operator `*`](concepts.md#the-focus-operator).
+As with a [path condition](#transitive-path-conditions), `¬` serves as input syntax over an ordinary fact: `¬(F)` represents the condition `((F) ~ negation)`, just as `(C P279⁺ T)` denotes the condition `((C P279 T) closure one-or-more)`. A rule names that fact as its condition rather than the pattern `F` directly, meaning a pattern that one rule negates stays positive in every other rule that employs it. Expressed in full, the fact corresponds to the explicit (ASCII-only) spelling of `¬(F)`: within a condition, it is the identical condition, and it prints as `¬(F)`:
+
+```
+zelph> (X go Y, ((X p b) ~ negation)) => (X ok Y)
+(¬(X p b), (X go Y)) => (X ok Y)
+zelph> t go k
+(t ok k) ⇐ {(¬(t p b)) (t go k)}
+```
 
 **What `¬` applies to.** A single fact pattern, not a group of them —
 `¬(A is y, A is z)` is rejected rather than guessed at. Use De Morgan:
@@ -664,7 +677,7 @@ consequence:
 Negating a group directly is an open direction, not a decision against it —
 see [Where the logic goes next](about.md#where-the-logic-goes-next).
 
-**Where `¬` may stand, and what it means there.** In a rule condition it is the negation-as-failure operator above. Alone on a line it is a claim: the fact does _not_ hold.
+**Where `¬` may stand, and what it means there.** Within a condition, it functions as the negation-as-failure operator above – in a rule, and in a [query](queries.md#conditions-in-queries), which constitutes a condition list evaluated once. Positioned alone on a line and lacking a variable, it expresses a claim: the fact does _not_ hold.
 
 ```
 zelph> ¬(a p b)
@@ -683,14 +696,22 @@ Error in line "a p b": fact(): this fact is known to be wrong
 
 This is the mechanism zelph uses for a negative claim: a fact carries a probability, and one below 0.5 makes it known-wrong. The claim survives `.save` and `.load`, and it prints as what it is – the echo of `¬(a p b)` is `¬(a p b)`, not `a p b`.
 
-That reading belongs to the line, not to the prefix, so it does not extend to a statement that merely _contains_ a pattern. There `¬` is refused:
+When a variable appears within it, the line asks instead: `¬(X q d)` constitutes a query featuring a single negated condition. It establishes no bindings, thus yields a single response – displaying the condition as written – whenever no fact satisfies it, and produces nothing otherwise; in the first session above, `c p d` matches `X p d`:
+
+```
+zelph> ¬(X q d)
+Answer: ¬(X q d)
+zelph> ¬(X p d)
+```
+
+Both readings are part of the line, not of the prefix, thus neither reaches a statement that only _includes_ a pattern. There, the symbol `¬` is refused:
 
 ```
 zelph> x mentions (¬(a p b))
 Error in line "x mentions (¬(a p b))": "¬" is a condition operator and has no
-meaning inside a plain statement: it succeeds when a pattern is ABSENT, which
-only a rule condition can ask. On its own line "¬(a p b)" says that the fact
-does not hold.
+meaning in a statement that asserts: it succeeds when a pattern is ABSENT, which
+only a condition can ask -- in a rule, or in a query (a line with a variable).
+On its own line "¬(a p b)" says that the fact does not hold.
 ```
 
 The marking a refutation writes is printed without the prefix for the same reason – `(a p b) ~ refuted` – since the predicate is already saying it, and a `¬` inside the subject would be interpreted as the condition operator when the line is re-entered.
@@ -716,12 +737,23 @@ zelph> c P279 d
 zelph> a P279⁺ d
 Error in line "a P279⁺ d": "⁺" and "∗" are condition operators: reachability is
 what the engine WALKS, not what you assert. Write a variable to ASK ("S p⁺ b"),
-or use the path condition in a rule.
+or use the path as a condition -- in a rule, or in a query (a line with a
+variable).
 zelph> S P279⁺ d
 (S P279 d) closure one-or-more
 Answer: (a P279 d) closure one-or-more
 Answer: (b P279 d) closure one-or-more
 Answer: (c P279 d) closure one-or-more
+```
+
+In a query, the ground path functions as a condition in addition to the others, and when both endpoints are bound, it acts as a reachability test, just as it does within a rule. The single step beneath the marker constitutes a pattern at that location, hence `S P279 d` does not answer `a P279 d`:
+
+```
+zelph> X P279 b, a P279⁺ d
+Answer: {(a P279 b) ((a P279 d) closure one-or-more)}
+zelph> X P279 b, d P279⁺ a
+zelph> S P279 d
+Answer: c P279 d
 ```
 
 Writing `¬` in front makes no difference to that. `¬(F)` denies a fact, and neither of these two is one – there is no claim of reachability, or of what a net believes, for a line to deny:
@@ -730,38 +762,41 @@ Writing `¬` in front makes no difference to that. `¬(F)` denies a fact, and ne
 zelph> ¬(a P279⁺ d)
 Error in line "¬(a P279⁺ d)": "⁺" and "∗" are condition operators, and a "¬" in
 front does not change that: reachability is what the engine WALKS, so there is
-no claim of it to deny. Use the path condition in a rule, under "¬" if what you
-want is the absence of a path.
+no claim of it to deny. Write the path as a condition -- in a rule, or in a
+query (a line with a variable) -- under "¬" if what you want is the absence of a
+path.
 zelph> ¬≈net(a p b)
 Error in line "¬≈net(a p b)": "≈" is a condition operator, and a "¬" in front
-does not change that: it asks what a network believes, which a rule condition
-can read and a statement can neither claim nor deny. Use it in a rule condition,
-under "¬" for the case the net does not confirm.
+does not change that: it asks what a network believes, which a condition can
+read and a statement can neither claim nor deny. Write it as a condition -- in a
+rule, or in a query (a line with a variable) -- under "¬" for the case the net
+does not confirm.
 ```
 
-Nor does putting them one argument down. A plain statement has no condition slot at any depth, so all three operators are refused inside one:
+Nor does putting them one argument down. A line lacking a variable possesses no condition slot at any level of nesting, thus all three operators are rejected within one:
 
 ```
 zelph> x mentions (≈net(a p b))
 Error in line "x mentions (≈net(a p b))": "≈" is a condition operator and has no
-meaning inside a plain statement: it asks what a network believes, which a rule
-condition can read and a statement cannot claim. Use it in a rule condition.
+meaning in a statement that asserts: it asks what a network believes, which a
+condition can read -- in a rule, or in a query (a line with a variable) -- and a
+statement cannot claim.
 zelph> x mentions (a P279⁺ d)
 Error in line "x mentions (a P279⁺ d)": "⁺" and "∗" are condition operators and
-have no meaning inside a plain statement: reachability is what the engine WALKS.
-On its own line "S p⁺ b" is a question and answers one; inside a rule it is a
-condition.
+have no meaning inside a statement that asserts: reachability is what the engine
+WALKS. A condition reads it -- in a rule, or in a query (a line with a
+variable), where "S p⁺ b" asks for it.
 ```
 
-Under `¬` in a rule _condition_ both are ordinary tests, which is the next section.
+Under `¬` in a _condition_ – whether part of a rule or a query – both constitute ordinary tests, as detailed in the next section.
 
 Inside a rule the three do have slots – but the slot is a whole condition, and an operator one argument further in is read by nothing. It is refused there too, in a condition and in a consequence alike:
 
 ```
 zelph> (x q (¬(a p b))) => (c r d)
 Error in line "(x q (¬(a p b))) => (c r d)": "¬" applies to a whole condition,
-not to something inside one: the tag it writes is read where the condition is,
-and nowhere below it. Write it in front of the condition --
+not to something inside one: it negates the condition it stands in front of,
+and nothing below a condition reads it. Write it in front of the condition --
 "(A q B, ¬(A p B)) => ...".
 zelph> (A p B) => (x q (a P279⁺ d))
 Error in line "(A p B) => (x q (a P279⁺ d))": "⁺" and "∗" mark the predicate of
@@ -784,7 +819,7 @@ and until a fact reaches the rule there is nothing to run.
 
 ```
 zelph> (A prop X, A prop Y, ¬(X != Y)) => (A pair X)
-((A prop Y), ¬(X != Y), (A prop X)) => (A pair X)
+((A prop Y), (A prop X), ¬(X != Y)) => (A pair X)
 zelph> a prop v1
 Error: ¬ cannot be applied to "!=" -- write the same variable on both sides to
 require two terms to be equal.
@@ -803,12 +838,12 @@ The levels guarantee precisely that. A rule depends on another when the latter i
 
 ```
 zelph> (¬(:blockp A), (:start A)) => (:q A)
-((:start A), ¬(:blockp A)) => (:q A)
+(¬(:blockp A), (:start A)) => (:q A)
 zelph> (:q A) => (:blockr A)
 zelph> ((:start A), ¬(:blockr A)) => (:s A)
 (¬(:blockr A), (:start A)) => (:s A)
 zelph> :start w
-(:q w) ⇐ {(:start w) (¬(:blockp w))}
+(:q w) ⇐ {(¬(:blockp w)) (:start w)}
 (:blockr w) ⇐ (:q w)
 ```
 
@@ -839,7 +874,7 @@ Both boundaries may leave behind the same signature: a fact that was derived und
 zelph> .strata
 2 negation levels:
 Level 1:
-  ((:start A), ¬(:blockp A)) => (:q A)
+  (¬(:blockp A), (:start A)) => (:q A)
 Level 2:
   (¬(:blockr A), (:start A)) => (:s A)
 ```
@@ -848,15 +883,15 @@ The rule that derives `blockr` carries no negated condition and thus possesses n
 
 ```
 zelph> (¬(:q A), (:p A)) => (:r A)
-((:p A), ¬(:q A)) => (:r A)
+(¬(:q A), (:p A)) => (:r A)
 zelph> (:r A) => (:q A)
 zelph> .strata
 1 negation level:
 Level 1:
-  ((:p A), ¬(:q A)) => (:r A)
+  (¬(:q A), (:p A)) => (:r A)
 Not stratifiable, on level 1 -- these rules negate what they derive:
-  ((:p A), ¬(:q A)) => (:r A)
   (:r A) => (:q A)
+  (¬(:q A), (:p A)) => (:r A)
 ```
 
 The analysis examines predicates rather than patterns, which means it also reports a cycle that would only be resolved by the arguments of the facts. Two shipped modules exemplify this behaviour. The gate rule in `binary-nand-arithmetic` negates `((A nand B) out 0)` and derives `((A nand B) out 1)`. The primality rule referenced earlier appears alongside the entire arithmetic set, because the rule that reports its result, `(N testprime N, N isprime N) => ((N testprime N) = prime)`, closes the cycle twice: it creates an `=` fact, which serves as the predicate for every arithmetic result the divisor scan reads, and the `(N testprime N)` within it initiates the scan. Neither element can produce a fact that the negation depends on. The `=` fact features a `testprime` term as its subject, never one of the arithmetic terms the scan reads, and `(N testprime N)` is already present, as it is the rule’s own premise. Consequently, every `hasdivisor` fact is derived before the rule’s level runs, and check mode confirms this during every run.
@@ -1027,7 +1062,7 @@ It is the same node in both lines; a node the engine generated has no name to pr
 The default mode is `quiet`, which prints a deduction only when its subject came from something you entered ([reference](quickstart.md#full-command-reference)) — and the subject of a generative rule's consequence is the generated node itself, which by definition never did.
 The fact is derived and stored either way; only the line announcing it is suppressed.
 
-**No duplicate witnesses:** Before producing a new node, zelph checks whether any assignment of the fresh variables already makes every consequence of the rule into a fact; if such an assignment exists, the rule creates nothing for this match. This verification operates as a join akin to the one applied across a rule’s conditions, meaning that any node can function as a witness, including the subject itself – `a q a` satisfies `(A q B)` for `a` – whereas a pattern that a rule merely records, among them its own consequence, never qualifies. A consequence is considered present even though it is not a fact when its instance would keep a variable from a rule it mentions, such as `k about ((C r D, C s D) => (c q d))`: a firing keeps the conditions of a mentioned rule exactly as written, meaning the instance would be rule text, no firing derives it (see [Mentioning a Rule Is Not Asserting It](#mentioning-a-rule-is-not-asserting-it)), and the check concentrates exclusively on the remaining consequences. A rule contained within a value constructed by the firing does not cause a consequence to be treated as present: such a consequence is derived, and the check requests it just like any other. A witness that has already been made stays, even if a subsequent fact alone would have satisfied the consequence.
+**No duplicate witnesses:** Before producing a new node, zelph checks whether any assignment of the fresh variables already makes every consequence of the rule into a fact; if such an assignment exists, the rule creates nothing for this match. This verification operates as a join akin to the one applied across a rule’s conditions, meaning that any node can function as a witness, including the subject itself – `a q a` satisfies `(A q B)` for `a` – whereas a pattern that a rule merely records, among them its own consequence, never qualifies. A consequence is considered present even though it is not a fact when its instance would keep a variable from a rule it mentions, such as `k about ((C r D, C s D) => (c q d))`: a firing keeps the conditions of a mentioned rule exactly as written, meaning the instance would be rule text, no firing derives it (see [Mentioning a Rule Is Not Asserting It](#mentioning-a-rule-is-not-asserting-it)), and the check concentrates exclusively on the remaining consequences. A consequence is likewise considered present when a rule inside a value constructed by the firing would keep a variable: within a value, the firing keeps every variable it leaves unbound, including a fresh variable for which only a consequence that is not derived would make a witness. A witness that has already been made stays, even if a subsequent fact alone would have satisfied the consequence.
 
 The arithmetic that follows requires no such thing: a rule builds a result list like `(D cons T)` using variables its conditions bound, and a fact node built from those identical components is the same node.
 

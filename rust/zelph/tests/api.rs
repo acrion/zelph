@@ -497,6 +497,47 @@ fn a_rules_condition_set_takes_no_further_condition() {
 }
 
 #[test]
+fn negate_returns_the_negated_condition_and_the_pattern_stays_positive() {
+    // `negate` wrote `~ negation` about the pattern and returned the
+    // pattern, thus a rule built with it named the pattern itself - and
+    // every other rule over the same node did the same, subsequently reading
+    // it as negated. It now returns the fact `((pattern) ~ negation)`, which
+    // a rule takes in place of the pattern.
+    let _guard = engine_lock();
+    let z = silent_engine();
+
+    let go = z.resolve("go").unwrap();
+    let ok = z.resolve("ok").unwrap();
+    let bad = z.resolve("bad").unwrap();
+    let t = z.resolve("t").unwrap();
+    let k = z.resolve("k").unwrap();
+    let b = z.resolve("b").unwrap();
+    z.fact(t, go, &[k]).unwrap();
+
+    let x = z.variable("X").unwrap();
+    let y = z.variable("Y").unwrap();
+    let pattern = z.fact(x, z.resolve("p").unwrap(), &[b]).unwrap();
+
+    let negated = z.negate(pattern).unwrap();
+    assert_ne!(negated, pattern);
+    let (subject, predicate, objects) = z.fact_parts(negated).unwrap();
+    assert_eq!(subject, pattern);
+    assert_eq!(predicate, z.resolve("~").unwrap());
+    assert_eq!(objects.len(), 1);
+    assert_eq!(z.name(objects[0]).unwrap().as_deref(), Some("negation"));
+
+    // A single rule applies to the negated condition, another rule
+    // applies to the pattern directly.
+    let walks = z.fact(x, go, &[y]).unwrap();
+    z.rule(&[walks, negated], &[z.fact(x, ok, &[y]).unwrap()]).unwrap();
+    z.rule(&[walks, pattern], &[z.fact(x, bad, &[y]).unwrap()]).unwrap();
+    z.run().unwrap();
+
+    assert!(z.exists(t, ok, &[k]).unwrap());
+    assert!(!z.exists(t, bad, &[k]).unwrap());
+}
+
+#[test]
 fn a_cluster_is_a_rollback() {
     let _guard = engine_lock();
     let z = silent_engine();

@@ -93,6 +93,10 @@ uint64_t Zelph::name_map_scans() const
 // `out` and explores nothing `out` already holds, so a caller may accumulate
 // several victims into one set and a node reached twice is walked once.
 //
+// A node listed in `keep` is never doomed, and the walk stops at it:
+// Reasoning::withdraw_claims passes the parts of each rule, which remain
+// after the removal of the rule pattern's holders.
+//
 // READ-ONLY -- it touches no adjacency and no name map, which is what lets a
 // bulk removal run MANY of these at once. Erasing is the half that cannot be
 // parallelised: there is one shared_mutex per adjacency map, so every writer
@@ -109,7 +113,7 @@ uint64_t Zelph::name_map_scans() const
 // node is doomed with it. The union is therefore the same -- and, unlike the
 // sequential answer, it does not depend on the order an unordered_set
 // happened to iterate in.
-void Zelph::collect_doomed(const Node node, adjacency_set& out) const
+void Zelph::collect_doomed(const Node node, adjacency_set& out, const adjacency_set* const keep) const
 {
     if (out.count(node) != 0) return; // walked already, cascade included
 
@@ -145,6 +149,7 @@ void Zelph::collect_doomed(const Node node, adjacency_set& out) const
         if (out.count(candidate) != 0) return;
         // The engine's vocabulary is not data, as in prune_nodes.
         if (!get_core_name(candidate).empty()) return;
+        if (keep != nullptr && keep->count(candidate) != 0) return;
 
         out.insert(candidate);
         pending.push_back(candidate);
@@ -298,14 +303,13 @@ void Zelph::collect_doomed(const Node node, adjacency_set& out) const
                 note_rule_text_changed();
             }
         }
-        // A negation or conjunction tag is also rule text, and the rule
-        // remains without it: a negated condition transforms into a
-        // positive one, a condition set turns into a collection.
+        // A conjunction tag functions as rule text, and the rule remains
+        // without it: a condition set turns into a collection.
         else if (relation == core.IsA)
         {
             adjacency_set tags;
             parse_fact(current, tags, 0);
-            if (tags.count(core.Negation) != 0 || tags.count(core.Conjunction) != 0) note_rule_text_changed();
+            if (tags.count(core.Conjunction) != 0) note_rule_text_changed();
         }
     }
 }
@@ -845,9 +849,9 @@ void Zelph::rebuild_rule_pattern_index() const
 // writing a rule, and a statement that binds one writes into its data term --
 // thus, the text changes when note_rule_text_changed is called: a name merge,
 // which rebuilds rules and merges the members of their templates
-// (rehash_dependents); a variable's membership, a negation tag, or a
-// conjunction tag being taken away from a rule's text (collect_doomed); and a
-// load, which writes rules without invoking fact(). The subsequent lookup
+// (rehash_dependents); a variable's membership or a conjunction tag being
+// excised from a rule's text (collect_doomed); and a load, which writes rules
+// without invoking fact(). The subsequent lookup
 // then clears the index and fingerprints every rule anew, operating at
 // rule-scale, once per batch of such modifications. Unrecorded: a tag added
 // to a condition afterwards, and a membership inserted into another rule's
@@ -1005,6 +1009,31 @@ bool Zelph::is_condition_set(const Node condition) const
 {
     adjacency_set members;
     return condition_set_members(condition, members);
+}
+
+Node Zelph::negation_operand(const Node condition) const
+{
+    // Each condition within every rule is asked, hence the common answer
+    // must be cheap: only a fact that names core.Negation has an edge from
+    // it, and a single edge probe settles every other condition.
+    if (condition == 0 || !Impl::is_hash(condition) || Impl::is_var(condition)) return 0;
+    if (!_pImpl->has_left_edge(condition, core.Negation)) return 0;
+
+    const FactStructure fs = get_preferred_structure(this, condition, 3);
+    if (fs.predicate != core.IsA || fs.objects.size() != 1 || *fs.objects.begin() != core.Negation) return 0;
+
+    const Node operand = fs.subject;
+    if (operand == 0 || Impl::is_var(operand)) return 0;
+    if (predicate_of(operand) != 0 || check_fact(operand, core.IsA, {core.Conjunction}).is_known()) return operand;
+    return 0;
+}
+
+Node Zelph::negate(const Node pattern)
+{
+    if (predicate_of(pattern) == 0 && !check_fact(pattern, core.IsA, {core.Conjunction}).is_known())
+        throw std::runtime_error("\"¬\" applies to a statement, and \"" + format(pattern) + "\" is not one: its negation could never be read as a condition.");
+
+    return fact(pattern, core.IsA, {core.Negation});
 }
 
 std::vector<std::pair<Node, Zelph::HashRecipe>> Zelph::collect_hash_dependents(const Node node) const
@@ -1236,10 +1265,7 @@ void Zelph::mark_rule_parts(const Node condition, const adjacency_set& consequen
     if (created.empty() || condition == 0) return;
 
     std::unordered_set<Node> fresh(created.begin(), created.end());
-
     std::vector<Node>        pending(consequences.begin(), consequences.end());
-    std::unordered_set<Node> seen;
-    std::vector<Node>        patterns;
 
     // A conjunction set carries no structure of its own; its members hang off
     // it as PartOf facts.
@@ -1258,12 +1284,21 @@ void Zelph::mark_rule_parts(const Node condition, const adjacency_set& consequen
         pending.push_back(condition);
     }
 
+    mark_patterns(constructed_patterns(std::move(pending), fresh, nullptr));
+}
+
+std::vector<Node> Zelph::constructed_patterns(std::vector<Node> pending, std::unordered_set<Node>& fresh, const std::function<bool(Node)>& stop) const
+{
+    std::unordered_set<Node> seen;
+    std::vector<Node>        patterns;
+
     while (!pending.empty())
     {
         const Node nd = pending.back();
         pending.pop_back();
         if (nd == 0 || !seen.insert(nd).second) continue;
         if (Impl::is_var(nd)) continue;
+        if (stop && stop(nd)) continue;
 
         // A COLLECTION carries no intrinsic structure -- its members are
         // attached via PartOf facts, precisely as for the conjunction set
@@ -1348,6 +1383,11 @@ void Zelph::mark_rule_parts(const Node condition, const adjacency_set& consequen
             pending.push_back(o);
     }
 
+    return patterns;
+}
+
+void Zelph::mark_patterns(const std::vector<Node>& patterns) const
+{
     if (patterns.empty()) return;
 
     const Node pred = rule_pattern_predicate(true);
@@ -1360,6 +1400,96 @@ void Zelph::mark_rule_parts(const Node condition, const adjacency_set& consequen
         _pImpl->_rule_patterns.insert(p);
     }
     _pImpl->_has_rule_patterns.store(true, std::memory_order_release);
+}
+
+bool Zelph::is_condition_tag(const Node node) const
+{
+    if (negation_operand(node) != 0) return true;
+    if (node == 0 || !Impl::is_hash(node) || Impl::is_var(node)) return false;
+
+    // The remaining two are recognised by their predicate
+    // (Reasoning::evaluate), and similarly to a negation, they pertain to
+    // a statement: `x nn y` on an atom constitutes the parser's ordinary
+    // fact (explicit_condition_op).
+    const Node closure = get_node("closure", "zelph");
+    const Node nn      = get_node("nn", "zelph");
+    if (closure == 0 && nn == 0) return false;
+
+    const FactStructure fs = get_preferred_structure(this, node, 3);
+    if (fs.subject == 0 || Impl::is_var(fs.subject) || fs.objects.size() != 1) return false;
+    if ((closure == 0 || fs.predicate != closure) && (nn == 0 || fs.predicate != nn)) return false;
+    return predicate_of(fs.subject) != 0 || check_fact(fs.subject, core.IsA, {core.Conjunction}).is_known();
+}
+
+void Zelph::mark_query_operands(const Node statement, const std::vector<Node>& created) const
+{
+    if (created.empty()) return;
+
+    // A query consists of a condition list that undergoes evaluation just
+    // once, and it is assembled before evaluation -- thus, "X go Y, ¬(a p
+    // b)" built `a p b` as data and subsequently found its own
+    // counterexample. What it built beneath an operator is what a rule's
+    // parts are: a pattern. The specific nodes involved depend on
+    // structure, not on the sequence in which the calls were executed: the
+    // traversal beginning at the statement stops at each operator's fact,
+    // the walk from those facts goes through all elements located beneath
+    // them, and only what the initial traversal fails to reach is marked --
+    // in "X go Y, (a p b), ¬(a p b)" the positive part is created and
+    // thereby asserted, regardless of which of the two appears first.
+    //
+    // Both walks remain confined to what the query created: a node that
+    // existed before cannot hold one created afterwards, since its
+    // identifier is the hash of its parts.
+    const std::unordered_set<Node> made(created.begin(), created.end());
+    const auto                     beyond = [&](const Node nd)
+    { return made.count(nd) == 0; };
+
+    // A rule mentioned by the query outside every operator constitutes part
+    // of what it creates and thereby asserts, including conditions
+    // expressed explicitly, as zelph/rule-text leaves a mention inside a
+    // query: in "X knows ((a p b) => (c q d)), ¬(a p b)", `a p b` stays
+    // data just as `c q d` does.
+    std::unordered_set<Node> entered;
+    std::vector<Node>        mentions;
+    const auto               stop_outside = [&](const Node nd)
+    {
+        if (beyond(nd) || is_condition_tag(nd)) return true;
+        if (predicate_of(nd) == core.Causes)
+        {
+            mentions.push_back(nd);
+            return true;
+        }
+        entered.insert(nd);
+        return false;
+    };
+    const auto stop_in_mention = [&](const Node nd)
+    {
+        if (beyond(nd)) return true;
+        entered.insert(nd);
+        return false;
+    };
+    std::unordered_set<Node> fresh_outside = made;
+    std::vector<Node>        outside       = constructed_patterns({statement}, fresh_outside, stop_outside);
+    const std::vector<Node>  mentioned     = constructed_patterns(mentions, fresh_outside, stop_in_mention);
+    outside.insert(outside.end(), mentioned.begin(), mentioned.end());
+
+    // The operators are every operator's fact the query created and the
+    // walk outside did not enter, also one it cannot reach: in "(X p (a q
+    // b)) ~ *negation" the focus makes the statement the node `negation`,
+    // and the negation fact hangs off nothing the query returns.
+    std::vector<Node> operators;
+    for (const Node nd : created)
+        if (entered.count(nd) == 0 && is_condition_tag(nd)) operators.push_back(nd);
+    if (operators.empty()) return;
+
+    std::unordered_set<Node> fresh_inside = made;
+    const std::vector<Node>  inside       = constructed_patterns(operators, fresh_inside, beyond);
+
+    const std::unordered_set<Node> reached_outside(outside.begin(), outside.end());
+    std::vector<Node>              patterns;
+    for (const Node nd : inside)
+        if (reached_outside.count(nd) == 0) patterns.push_back(nd);
+    mark_patterns(patterns);
 }
 
 bool Zelph::has_rule_form(const Node node) const
@@ -1765,7 +1895,8 @@ void Zelph::load_from_file(const std::string& filename) const
 {
     invalidate_fact_structures_cache();
 
-    const bool template_ids = _pImpl->loadFromFile(filename);
+    bool       negation_conditions = true;
+    const bool template_ids        = _pImpl->loadFromFile(filename, negation_conditions);
     rebuild_rule_pattern_index();
     rebuild_refuted_index();
     note_rule_text_changed();
@@ -1782,6 +1913,28 @@ void Zelph::load_from_file(const std::string& filename) const
     {
         out("Note: rules in this network were saved by an older zelph, and their collections are data here; "
             "rebuild the network from its scripts before reasoning over it.",
+            true);
+    }
+
+    // An older engine negated a condition by a fact concerning its pattern
+    // and named the pattern itself as the condition, so here each such
+    // condition reads as positive. Nothing within such a file says which
+    // rule negated what, and a file saved by this engine cannot be told from
+    // it based solely on its facts: the header field decides, and any
+    // negation fact within the network gets the note.
+    if (!negation_conditions && !_pImpl->_older_negations)
+    {
+        for (const Node f : _pImpl->get_right(core.Negation))
+        {
+            if (negation_operand(f) == 0) continue;
+            _pImpl->_older_negations = true;
+            break;
+        }
+    }
+    if (!negation_conditions && _pImpl->_older_negations)
+    {
+        out("Note: negated rule conditions in this network were saved by an older zelph and read as positive "
+            "here; rebuild the network from its scripts before reasoning over it.",
             true);
     }
 }

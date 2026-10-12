@@ -244,3 +244,50 @@ TEST_CASE("? prefix: error handling and non-trigger cases")
         interactive.process(R"js(%(string "RQ-ATOM-" (zelph/exists "?maybe" "~" "atom")))js");
         CHECK(any_output_contains(collector, "RQ-ATOM-true")); });
 }
+
+// "?" asserts the statement it queries and subsequently requests its value,
+// whereas a condition operator has neither. "? ¬(a p b)" refuted `a p b`
+// during the quiet pass and only later failed, on its value; "? X go Y, ¬(a p
+// b)" asserted `a p b` and then failed. Rejected before any pass: no assertion
+// occurs, no refutation takes place. The self-path ":p⁺ m" functions as a path
+// condition too, and "? X go Y, :p⁺ m" passed the check and asserted `m p m`.
+TEST_CASE("? prefix: a condition operator is refused before anything is asserted")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("t go k");
+        const std::size_t before = node_count(collector, interactive);
+
+        for (const char* request : {"? ¬(a p b)", "? X go Y, ¬(a p b)", "? (a p b) ~ negation", "? a P279⁺ d", "? X go Y, :p⁺ m"})
+        {
+            CAPTURE(request);
+            CHECK_THROWS_WITH(interactive.process(request), doctest::Contains("'?' asserts the statement it asks about"));
+        }
+        CHECK(node_count(collector, interactive) == before);
+
+        collector.clear();
+        interactive.process("S ~ refuted");
+        CHECK(collect_answers(collector).empty());
+        collector.clear();
+        interactive.process("A p B");
+        CHECK(collect_answers(collector).empty()); });
+}
+
+// A rule is a statement that "?" can ask about, and a rule with a condition
+// operator was put in force by the quiet pass, after which the request failed
+// on it as a rule mentioned inside "(...) = _Result". Dismissed before any
+// pass as well, and the message says to write the rule on its separate line,
+// rather than framing it as a query.
+TEST_CASE("? prefix: a rule with a condition operator is refused before it is built")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("t go k");
+
+        CHECK_THROWS_WITH(interactive.process("? (X go Y, ¬(X p b)) => (X ok Y)"),
+                          doctest::Contains("Write the rule on a line of its own"));
+
+        collector.clear();
+        interactive.process(".list-rules");
+        CHECK(any_output_contains(collector, "No rules found")); });
+}

@@ -953,9 +953,7 @@ int32_t zelph_negate(zelph_engine* engine, const zelph_node pattern, zelph_node*
 
     return guarded([&]
                    {
-        auto* graph = engine->interactive.graph();
-        graph->fact(pattern, graph->core.IsA, {graph->core.Negation});
-        *out_node = pattern;
+        *out_node = engine->interactive.graph()->negate(pattern);
         return succeed(); });
 }
 

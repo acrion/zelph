@@ -210,7 +210,7 @@ The `.load` command is general-purpose:
 zelph provides powerful commands for targeted data removal:
 
 - `.prune-facts <pattern>` – Eliminates solely the matching facts (statement nodes).  
-  Useful for erasing particular properties without affecting the entities they belong to. A pattern lacking variables deletes precisely the single fact it identifies; one that finds no match leaves everything unchanged. A statement that is simultaneously asserted and included in a rule’s condition or consequence retains its role as the rule’s pattern: only its claim is removed, and the rule remains active.
+  Useful for erasing particular properties without affecting the entities they belong to. A pattern lacking variables deletes precisely the single fact it identifies; one that finds no match leaves everything unchanged. A statement that is simultaneously asserted and included in a rule’s condition or consequence retains its role as the rule’s pattern: only its claim is removed, and the rule remains active. Any statement that holds it outside a rule’s text is removed along with the claim – beside `(a p b) => (c q d)`, pruning `a p b` also removes `(a p b) q z` – and a holder that is itself embedded in a rule likewise loses its claim in the same way and stays.
 
 - `.prune-nodes <pattern>` – Removes matching facts **and** the nodes bound to the pattern's variable.  
   Requirements: exactly one variable (subject or a single object), fixed relation. Two variables are rejected — the variable names what gets deleted, so there can only be one.  

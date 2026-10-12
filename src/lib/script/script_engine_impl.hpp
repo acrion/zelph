@@ -99,6 +99,10 @@ namespace zelph
         // has most reason to look at. Under this flag the pattern is LOOKED UP
         // instead of asserted -- exactly, and only where the graph holds it; see
         // the note at the lookup itself for why both halves of that matter.
+        //
+        // The operand in a condition operator functions as a pattern
+        // for the same reason, and `zelph/operand` sets the flag during
+        // its construction.
         bool _resolving_pattern = false;
 
         // Save/restore around a nested evaluation (an .import inside a block, a
@@ -142,6 +146,12 @@ namespace zelph
             // statement asks. The variables of a rule it mentions do not
             // count.
             bool asks = false;
+            // What a query containing a condition operator created
+            // (`zelph/query-text`). Of these elements, those lying under an
+            // operator are a pattern, and they are marked at the end of the
+            // statement, just before the query is evaluated
+            // (Zelph::mark_query_operands).
+            std::vector<network::Node> query_created;
         };
         ParsedStatement* _statement = nullptr;
 
@@ -311,6 +321,8 @@ namespace zelph
         static Janet  janet_cfun_zelph_rule_star(int32_t argc, Janet* argv);
         void          mark_mentioned_rules(const std::vector<network::Node>& created) const;
         static Janet  janet_cfun_zelph_rule_text(int32_t argc, Janet* argv);
+        static Janet  janet_cfun_zelph_query_text(int32_t argc, Janet* argv);
+        static Janet  janet_cfun_zelph_operand(int32_t argc, Janet* argv);
         static Janet  janet_cfun_zelph_list_chars(int32_t argc, Janet* argv);
         static Janet  janet_cfun_zelph_list(int32_t argc, Janet* argv);
         static Janet  janet_cfun_zelph_set(int32_t argc, Janet* argv);
@@ -377,9 +389,22 @@ namespace zelph
         static bool     split_path_marker(const std::string& token, std::string& base, std::string& mode);
         static bool     atom_text(Janet arg, std::string& text);
         static bool     is_path_ast(Janet node);
-        static NestedOp nested_condition_op(Janet node);
-        static NestedOp misplaced_condition_op(Janet node, const bool in_condition);
+        static bool     writes_path_marker(Janet node);
+        static NestedOp nested_condition_op(Janet node, const bool into_rules = true);
+        static NestedOp misplaced_condition_op(Janet node, const bool in_condition, const bool reopen_rules = true);
+        static NestedOp mentioned_rule_op(Janet node);
+        NestedOp        set_literal_op(Janet node, const bool in_set = false) const;
+        bool            denotes_zelph_name(Janet token, const char* name) const;
+        NestedOp        explicit_condition_op(const Janet* parts, const int32_t count) const;
+        NestedOp        explicit_condition_op(Janet node) const;
+        NestedOp        written_out_condition_op(Janet node) const;
         std::string     build_smart_call(const std::string& func_name, const std::vector<Janet>& args, const std::string& role = "") const;
         std::string     transform_arg(Janet arg_tuple) const;
+
+        // Set while the code for a QUERY is generated. A ground path within a
+        // query functions as a reachability test, just as it does in a rule;
+        // therefore, the guard that refuses one in a statement that asserts
+        // is not emitted (janet_cfun_zelph_path_guard).
+        mutable bool _query_code = false;
     };
 }

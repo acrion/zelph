@@ -75,9 +75,9 @@ is compared against the existing rules **up to a renaming of its
 variables** (alpha-equivalence, as in the lambda calculus); if one matches,
 the newly built rule is rolled back and the statement evaluates to the rule
 that was already there. What counts as "the same rule" is exactly what the
-reasoner reads — set membership, the conjunction and negation tags, and each
-condition's subject, predicate and objects — so two rules that survive the
-check are guaranteed to behave differently.
+reasoner reads — set membership, the conjunction tag, and each condition's
+subject, predicate and objects, including any negated condition — so two
+rules that survive the check are guaranteed to behave differently.
 
 This matters most in a place where it is easy to miss. `.load` restores the
 graph but not the Janet side of a module (`zelph/number`, digit alphabets,

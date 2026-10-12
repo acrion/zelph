@@ -4006,15 +4006,13 @@ TEST_CASE("explain: twenty thousand generated rules are read and told apart quic
     CHECK(generated < 0.6);
 }
 
-// The interpretation of a rule is decided by the tags attached to its
-// condition, not by the rule node itself: a ground condition is jointly
-// held by the asserted fact and every rule that writes it, and any
-// subsequent rule that writes it negated tags it for all of them. The list
-// of rules kept from one explanation to the next was validated solely
-// against the rule nodes, hence a rule kept its positive interpretation
-// even when a fresh session reads it as negated, as occurs during a forward
-// pass.
-TEST_CASE("explain: a condition that comes to be negated is read again")
+// A ground condition consists of a single node, held jointly by the asserted
+// fact and each rule that names it. As long as `¬` served as a tag on that
+// node, a later rule that negated it turned all earlier rules over it into
+// negating ones, and the explanation followed: `(:r n)` lost its derivation.
+// The rule that writes `¬(:a n)` now names its own condition, the fact
+// `((:a n) ~ negation)`, and the first rule reads as it was written.
+TEST_CASE("explain: a condition that another rule negates is read as written")
 {
     zelph::io::OutputCollector  collector;
     zelph::console::Interactive interactive(collector.sink());
@@ -4027,7 +4025,7 @@ TEST_CASE("explain: a condition that comes to be negated is read again")
     process_lines(interactive, "¬(:a n) => (:z n)\n");
     collector.clear();
     interactive.process(".explain (:r n) 0");
-    CHECK(explained(collector) == ":r n  [asserted; no derivation found]");
+    CHECK(explained(collector) == ":r n\n   └─ :a n  [axiom]");
 }
 
 // A lattice in which the search meets shared subproofs deep down first,
@@ -4036,83 +4034,108 @@ TEST_CASE("explain: a condition that comes to be negated is read again")
 // good) against all of the lattice before the edges that bind Y -- 16 s at
 // limit 50, with a fourteenth of that time allocated to anything else. The
 // join starts at the edges now.
+namespace
+{
+    // A rule whose reading undergoes modification in place while each node
+    // from which it is read maintains its edge count. The rule is built in
+    // Janet, thus the script holds its condition set: `.remove` takes the
+    // set's conjunction tag -- the rule subsequently interprets the whole
+    // set as a single condition -- and a note concerning the set restores to
+    // it the edge that the tag took. A rule's text is immutable after being
+    // written, and the tag is the sole component that a removal may extract
+    // while the rule remains intact.
+    const char* const held_conditions_rule = R"(a p b
+x q y
+%(def conditions (zelph/rule [(zelph/fact "a" "p" "b") (zelph/fact 'X "q" 'Y)] (zelph/fact 'X "r" 'Y))))";
+
+    const char* const derivation = "x r y\n   ├─ x q y  [axiom]\n   └─ a p b  [axiom]";
+
+    void take_conjunction_tag_keeping_edges(zelph::io::OutputCollector& collector, const zelph::console::Interactive& interactive)
+    {
+        collector.clear();
+        interactive.process(".node conjunction");
+        std::string id;
+        for (const auto& e : collector.events())
+        {
+            const std::size_t at = e.text.find("~ conjunction (ID ");
+            if (at == std::string::npos) continue;
+            const std::size_t from = at + std::string("~ conjunction (ID ").size();
+            id                     = e.text.substr(from, e.text.find(')', from) - from);
+        }
+        REQUIRE_FALSE(id.empty());
+        interactive.process(".remove " + id);
+        interactive.process(R"(%(zelph/fact conditions "note" "v"))");
+    }
+}
+
 // The rules read for one explanation are kept for the next as long as nothing
 // they were read from has altered. The count of edges from the nodes they were
-// read from did not indicate this: eliminating two statements regarding the
-// ground condition (a p b) and writing a rule that negates it put the count to
-// its prior state, the rule was adopted along with its positive condition, and
-// the explanation printed a step that the rule currently in force does not
-// permit -- a step that a session lacking the earlier explanation would not
-// have produced.
+// read from did not indicate this: a removal and an addition might restore it
+// to its earlier state, even though the rule now reads differently. A rule
+// kept with its old reading made the explanation print a step that the
+// current rule does not permit -- a step that a session lacking the earlier
+// explanation would not have produced.
 TEST_CASE("explain: a rule read before edges were removed and others added is read again")
 {
     const auto session = [](const bool explain_first)
     {
         zelph::io::OutputCollector  collector;
         zelph::console::Interactive interactive(collector.sink());
-        process_lines(interactive, R"(
-a p b
-(a p b) note z
-(a p b) note w
-(a p b) note v
-((a p b), (X q Y)) => (X r Y)
-x q y
-)");
-        if (explain_first) interactive.process(".explain (x r y) 0");
-        process_lines(interactive, R"(
-.prune-facts (a p b) note z
-.prune-facts (a p b) note w
-(¬(a p b), (X s Y)) => (X t Y)
-)");
+        process_lines(interactive, held_conditions_rule);
+        if (explain_first)
+        {
+            interactive.process(".explain (x r y) 0");
+            REQUIRE(explained(collector) == derivation);
+        }
+        take_conjunction_tag_keeping_edges(collector, interactive);
         collector.clear();
         interactive.process(".explain (x r y) 0");
         return explained(collector);
     };
     CHECK(session(true) == session(false));
-    CHECK(session(true) == "x r y  [asserted; no derivation found]");
+    CHECK(session(true) != derivation);
 }
 
 // A load writes into the graph without a removal the rules read for an
 // explanation could see: .load merges a file into the session node by node,
-// such that a node acquires the edges the file holds. g2 is g1 with the two
-// statements regarding (a p b) pruned and a rule written that negates it,
-// thereby maintaining the count of edges of (a p b) unchanged, so only the
-// epoch of the graph can tell that the rule now reads negated -- and only a
-// load that cleared the graph advanced it. The rule was adopted with its
-// positive condition, and the explanation printed a step the rule in force
-// does not license, over a premise it labelled "[axiom; negated by a rule]".
-// The removals were made in the session that saved g2, so the session that
-// loads it never saw them; both loads are ordinary commands.
+// such that a node acquires the edges the file holds. g1 and g2 are saved by
+// two sessions that typed identical lines, except that g2's rule negates
+// `a p b`: the rule node, its condition set, and the patterns it holds share
+// the same ids and the same counts of edges in both files, yet one set holds
+// `(a p b)` while the other holds `¬(a p b)`. Thus, only the epoch of the
+// graph can tell that the rule now reads negated -- and only a load advances
+// it. The rule was adopted with its positive reading, and the explanation
+// printed a step the rule in force does not license. Both loads are ordinary
+// commands.
 TEST_CASE("explain: a rule read before a .load is read again after it")
 {
     namespace fs      = std::filesystem;
     const fs::path g1 = fs::temp_directory_path() / "zelph_explain_load_g1.bin";
     const fs::path g2 = fs::temp_directory_path() / "zelph_explain_load_g2.bin";
+    for (const auto& [file, rule] : {std::pair{g1, "((a p b), (X q Y)) => (X r Y)"}, std::pair{g2, "(¬(a p b), (X q Y)) => (X r Y)"}})
     {
         zelph::io::OutputCollector  collector;
         zelph::console::Interactive interactive(collector.sink());
-        process_lines(interactive, R"(
-a p b
-(a p b) note z
-(a p b) note w
-((a p b), (X q Y)) => (X r Y)
-x q y
-)");
-        interactive.process(".save " + g1.generic_string());
-        process_lines(interactive, R"(
-.prune-facts (a p b) note z
-.prune-facts (a p b) note w
-(¬(a p b), (X s Y)) => (X t Y)
-)");
-        interactive.process(".save " + g2.generic_string());
+        process_lines(interactive, "a p b\nx q y\n" + std::string(rule));
+        interactive.process(".save " + file.generic_string());
     }
     const auto session = [&](const bool explain_first)
     {
         zelph::io::OutputCollector  collector;
         zelph::console::Interactive interactive(collector.sink());
         interactive.process(".load " + g1.generic_string());
-        if (explain_first) interactive.process(".explain (x r y) 0");
+        if (explain_first)
+        {
+            interactive.process(".explain (x r y) 0");
+            REQUIRE(explained(collector) == "x r y\n   ├─ a p b  [axiom]\n   └─ x q y  [axiom]");
+        }
         interactive.process(".load " + g2.generic_string());
+        // One rule: the two files name the same rule node, which is what
+        // keeps every count of edges the same.
+        collector.clear();
+        interactive.process(".list-rules");
+        REQUIRE(count_outputs_containing(collector, "=>") == 1);
+        REQUIRE(any_output_contains(collector, "¬(a p b)"));
         collector.clear();
         interactive.process(".explain (x r y) 0");
         return explained(collector);
@@ -4126,39 +4149,36 @@ x q y
 // The rules read for one explanation name the nodes they were read from to
 // the graph, and a removal notes those of them it touches, nothing else: a
 // prune of a hundred thousand other facts neither grows that record nor hides
-// the two removals that matter among it. Stamping every node a removal
-// touched cost a predicate-wide prune of the Wikidata class hierarchy by 3 to
-// 5 percent, and a capped record of them would have needed to be discarded
+// the removal that matters among it. Stamping every node a removal touched
+// cost a predicate-wide prune of the Wikidata class hierarchy by 3 to 5
+// percent, and a capped record of them would have needed to be discarded
 // entirely once full.
 TEST_CASE("explain: a rule is read again after a removal touched it among many others")
 {
-    zelph::io::OutputCollector  collector;
-    zelph::console::Interactive interactive(collector.sink());
-    process_lines(interactive, R"(
-a p b
-(a p b) note z
-(a p b) note w
-(a p b) note v
-((a p b), (X q Y)) => (X r Y)
-x q y
-)");
-    const auto graph = interactive.graph();
-    for (int i = 0; i < 100000; ++i)
-        assert_fact(graph, "f" + std::to_string(i), "s", "g");
+    const auto session = [](const bool explain_first)
+    {
+        zelph::io::OutputCollector  collector;
+        zelph::console::Interactive interactive(collector.sink());
+        process_lines(interactive, held_conditions_rule);
+        const auto graph = interactive.graph();
+        for (int i = 0; i < 100000; ++i)
+            assert_fact(graph, "f" + std::to_string(i), "s", "g");
 
-    collector.clear();
-    interactive.process(".explain (x r y) 0");
-    REQUIRE(explained(collector) == "x r y\n   ├─ x q y  [axiom]\n   └─ a p b  [axiom]");
+        if (explain_first)
+        {
+            collector.clear();
+            interactive.process(".explain (x r y) 0");
+            REQUIRE(explained(collector) == derivation);
+        }
 
-    process_lines(interactive, R"(
-.prune-facts S s g
-.prune-facts (a p b) note z
-.prune-facts (a p b) note w
-(¬(a p b), (X s Y)) => (X t Y)
-)");
-    collector.clear();
-    interactive.process(".explain (x r y) 0");
-    CHECK(explained(collector) == "x r y  [asserted; no derivation found]");
+        interactive.process(".prune-facts S s g");
+        take_conjunction_tag_keeping_edges(collector, interactive);
+        collector.clear();
+        interactive.process(".explain (x r y) 0");
+        return explained(collector);
+    };
+    CHECK(session(true) == session(false));
+    CHECK(session(true) != derivation);
 }
 
 TEST_CASE("explain: a lattice under a depth limit is explained without joining every fact per step")
@@ -5788,12 +5808,28 @@ TEST_CASE("help: every label .explain prints is explained in .help .explain")
     zelph::io::OutputCollector  collector;
     zelph::console::Interactive interactive(collector.sink());
     interactive.process(".help .explain");
-    for (const char* label : {"[axiom]", "[axiom; negated by a rule]", "[asserted; no derivation found]", "[rule pattern; not asserted]", "[rule mentioned; not in force]", "[closure]", "[absent]", "[depth limit", "[see above]", "[one of several justifications]"})
+    for (const char* label : {"[axiom]", "[asserted; no derivation found]", "[rule pattern; not asserted]", "[rule mentioned; not in force]", "[closure]", "[absent]", "[depth limit", "[see above]", "[one of several justifications]"})
     {
         CAPTURE(label);
         CHECK(any_event_contains(collector, label));
     }
     CHECK_FALSE(any_event_contains(collector, "full provenance"));
+}
+
+// The operand of a query bears the label of a rule's pattern ("X go Y, ¬(a
+// p b)" builds `a p b` as a pattern), but the two help texts that explain
+// the label named only a rule as the justification for a node possessing
+// it.
+TEST_CASE("help: the rule-pattern label names a query's operand too")
+{
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+    interactive.process(".help .explain");
+    CHECK(any_event_contains(collector, "or a query wrote it beneath a"));
+
+    collector.clear();
+    interactive.process(".help .node");
+    CHECK(any_event_contains(collector, "wrote it beneath a condition operator"));
 }
 
 TEST_CASE("help: a topic may be named with or without its dot")
