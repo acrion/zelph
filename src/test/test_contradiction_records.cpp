@@ -835,42 +835,90 @@ v p u
     CHECK(any_event_contains(collector, "1 contradictions found (1 already recorded in this network)."));
 }
 
-// A rule with a SINGLE condition has no condition set to point at, so
-// record_contradiction has nothing to record and returns "new" every time.
-// That is why it is announced on every run -- and why it must not appear in
-// the count either: the note is about what the graph HOLDS, and it holds
-// nothing here. Pinning it keeps the sentence exact rather than approximately
-// true.
-TEST_CASE("contradiction record: a single-condition rule leaves nothing to count")
+// A rule featuring a SINGLE condition lacks a condition set to reference, and
+// it was not recorded in any way: announced on each run, and absent from the
+// count. The engine reads a condition set containing a single member as that
+// condition itself, so the plain spelling and the one-element set are one
+// rule (rule_identity.cpp), with the graph holding whichever was entered
+// first. The condition now becomes part of the record as-is, and the record
+// is the one the one-element set leaves: the matched fact, isolated within a
+// refuted set.
+TEST_CASE("contradiction record: a single-condition rule is recorded once, like any other")
 {
     zelph::io::OutputCollector  collector;
     zelph::console::Interactive interactive(collector.sink());
-    // The quantity that is counted is the announcements of a single
-    // evaluation. In check mode, a second classic run follows the initial
-    // one, and a contradiction lacking a record is declared once more during
-    // this process.
-    interactive.process(".semi-naive on");
     process_lines(interactive, R"(
 x p y
 (A p B) => !
 )");
     REQUIRE(contradiction_lines(collector) == 1);
+    CHECK(recorded_contradictions(collector, interactive) == std::vector<std::string>{"{(x p y)}"});
 
     collector.clear();
     interactive.run(true, false, false);
-    CHECK(contradiction_lines(collector) == 1); // announced again, no record
-    CHECK(any_event_contains(collector, "1 contradictions found."));
-    CHECK_FALSE(any_event_contains(collector, "already recorded"));
+    CHECK(contradiction_lines(collector) == 0);
+    CHECK(any_event_contains(collector, "0 contradictions found (1 already recorded in this network)."));
 }
 
-// The way out of the case above, and a promise a program can build on: a
-// rule possessing a single condition within a condition set of its own --
+// The case that made the distinction apparent: a program builds its
+// one-condition rules as one-element sets to ensure they are recorded, yet on
+// a graph that already holds the plain spelling, its rule is the plain one,
+// and the contradictions reappeared with every run. Both spellings are now
+// recorded identically, so it no longer matters which version the graph
+// holds.
+TEST_CASE("contradiction record: a one-element set that meets the plain rule entered first is recorded once")
+{
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+    interactive.process("(X ~ man) => !");
+    interactive.process(R"js(%(zelph/dedup-rule (fn [] (def x (zelph/var "X")) (def c (zelph/collection (zelph/fact x "~" "man"))) (zelph/fact c "~" "conjunction") (zelph/fact c "=>" (zelph/resolve "!")))))js");
+    collector.clear();
+    interactive.process(".list-rules");
+    REQUIRE(count_outputs_containing(collector, "=>") == 1);
+
+    interactive.process("john ~ man");
+    REQUIRE(contradiction_lines(collector) == 1);
+    CHECK(recorded_contradictions(collector, interactive) == std::vector<std::string>{"{(john ~ man)}"});
+
+    collector.clear();
+    interactive.run(true, false, false);
+    CHECK(contradiction_lines(collector) == 0);
+    CHECK(any_event_contains(collector, "0 contradictions found (1 already recorded in this network)."));
+}
+
+// A consequence the engine refuses to build is reported as a contradiction,
+// and a rule having a single condition records it in the same way as a rule
+// whose conditions form a set: the facts that were matched, refuted together.
+// The refusal is thus announced during the first run that meets it, and later
+// runs find the record; `.contradiction-records off` brings the repetition
+// back.
+TEST_CASE("contradiction record: a refused consequence of a single-condition rule is announced once")
+{
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+    process_lines(interactive, R"(
+a p a
+(X p Y) => (X r Y Z)
+)");
+    REQUIRE(any_event_contains(collector, "refused: facts with same subject and object"));
+
+    collector.clear();
+    interactive.run(true, false, false);
+    CHECK_FALSE(any_event_contains(collector, "refused:"));
+    CHECK(any_event_contains(collector, "0 contradictions found (1 already recorded in this network)."));
+
+    interactive.process(".contradiction-records off");
+    collector.clear();
+    interactive.run(true, false, false);
+    CHECK(any_event_contains(collector, "refused: facts with same subject and object"));
+}
+
+// A rule that includes one condition inside a condition set unique to it --
 // the collection of that condition, labelled `~ conjunction`, the `=>` fact
-// built over it -- has a member to point at, thus its contradiction is
-// recorded just like any other, and the next run is quiet. A program
-// requiring a record for a rule with a solitary condition constructs the
-// condition in this manner, since the plain spelling provides none;
-// constructed within zelph/dedup-rule, as a typed rule is.
+// established upon it -- has a member to point at, hence its contradiction
+// is recorded in the same manner as any other, and the next run proceeds
+// silently. The rule is constructed within zelph/dedup-rule, just as a
+// typed rule is.
 TEST_CASE("contradiction record: a one-condition rule built as a one-element condition set is recorded once")
 {
     zelph::io::OutputCollector  collector;
@@ -885,11 +933,12 @@ TEST_CASE("contradiction record: a one-condition rule built as a one-element con
     CHECK(any_event_contains(collector, "0 contradictions found (1 already recorded in this network)."));
 }
 
-// The rule above printed as `((X ~ man)) => !`, a comma list containing a
-// single item, and the parser reads `((X ~ man))` as a grouping: when typed
-// back into a network that did not hold the rule, the line was the plain rule,
-// whose contradictions are never recorded. It prints in the explicit form,
-// which builds the one-element condition set once more.
+// The rule above was once displayed as `((X ~ man)) => !`, a comma-separated
+// list with just one component, and the parser reads `((X ~ man))` as a
+// grouping: when entered again into a network that did not hold the rule,
+// the line was the plain rule, whose contradictions were not recorded at
+// that time. It prints in the explicit form, which builds the one-element
+// condition set anew.
 TEST_CASE("contradiction record: the printed one-condition set re-enters as the same rule")
 {
     std::string printed;

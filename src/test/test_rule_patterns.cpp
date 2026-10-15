@@ -260,12 +260,14 @@ TEST_CASE("rule patterns: a mark written by hand is refused on every route, so a
         // interpreted as the engine's.
         SUBCASE("in a query's comma list") { refused(R"(X q Y, (a p b) ~ "rule pattern")"); }
         SUBCASE("under a negation in a query") { refused(R"(X q Y, ¬((a p b) ~ "rule pattern"))"); }
+        // The auto-run initiated after the rule's line issues a refusal
+        // report and records it: the explicit run below finds the record.
         SUBCASE("by a firing")
         {
-            interactive.process(R"((X p Y) => ((X p Y) ~ "rule pattern"))");
             collector.clear();
-            interactive.run(true, false, false);
+            interactive.process(R"((X p Y) => ((X p Y) ~ "rule pattern"))");
             CHECK(any_event_contains(collector, "only the engine writes it"));
+            CHECK_NOTHROW(interactive.run(true, false, false));
         }
         // One level down in the consequence, the act of firing builds the
         // mark as a part before the statement that holds it. The refusal
@@ -274,10 +276,10 @@ TEST_CASE("rule patterns: a mark written by hand is refused on every route, so a
         // exactly as the one above is.
         SUBCASE("by a firing that nests it")
         {
-            CHECK_NOTHROW(interactive.process(R"((X p Y) => (z says ((X p Y) ~ "rule pattern")))"));
             collector.clear();
-            CHECK_NOTHROW(interactive.run(true, false, false));
+            CHECK_NOTHROW(interactive.process(R"((X p Y) => (z says ((X p Y) ~ "rule pattern")))"));
             CHECK(any_event_contains(collector, "only the engine writes it"));
+            CHECK_NOTHROW(interactive.run(true, false, false));
         }
 
         interactive.process(".save \"" + file.string() + "\"");

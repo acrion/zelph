@@ -251,11 +251,12 @@ namespace zelph::network
             return fs.predicate == z->core.Causes ? Role::Condition : Role::Term;
         }
 
-        // A condition set containing one member is equivalent to that
+        // A condition set with a single element is equivalent to that
         // condition: the engine reads it in this way (collect_conditions),
-        // and a rule whose condition set holds one member is displayed as
-        // `((X p Y)) => ...`, which re-enters as the rule with the single
-        // condition `(X p Y)` and no set.
+        // and it records contradictions for both in the same fashion
+        // (record_contradiction). A rule typed with the single condition
+        // `(X p Y)` and no set therefore meets the rule whose set contains
+        // `(X p Y)` exclusively, regardless of entry order.
         Node single_condition(const Zelph* const z, const Node n, const Role role)
         {
             if (role != Role::Condition || Zelph::is_hash(n) || Zelph::is_var(n)) return n;

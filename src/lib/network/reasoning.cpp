@@ -250,20 +250,19 @@ Reasoning::ContradictionRecord Reasoning::record_contradiction(const contradicti
 
     std::vector<Node> members = condition_elements(condition);
 
-    // A rule with a single condition outside a set contains no members,
-    // and unless a claimed fact joins it (as detailed below), it remains
-    // unrecorded (see count_contradiction_records). A quiet run still names
-    // the fact that the condition matched.
-    //
-    // A refutation obtained through derivation that met a claimed fact: the
-    // record consists of the conditions along with that fact, distinguishing
-    // it from a denial over the conditions alone. A plain single condition,
-    // possessing no members, joins as itself in this context, so a marking
-    // rule with a solitary condition leaves the record that the equivalent
-    // denial `(X p Y, X q Y) => !` would leave.
-    const bool single  = members.empty();
+    // A rule featuring a solitary condition situated outside a set contains
+    // no members, and the condition joins as itself: the resulting record
+    // is the one a condition set holding that condition alone produces. The
+    // two formulations represent a single rule (rule_identity.cpp keeps
+    // whichever was entered first), thus they must record alike.
+    if (members.empty()) members.push_back(condition);
+
+    // A refutation achieved via derivation that met a claimed fact: the
+    // record comprises the conditions along with that fact, distinguishing
+    // it from a denial based solely on the conditions, hence a marking
+    // rule featuring a single condition results in a record identical to
+    // what the equivalent denial `(X p Y, X q Y) => !` would leave.
     const Node claimed = error.get_claimed();
-    if (single && (conditions != nullptr || claimed != 0)) members.push_back(condition);
 
     std::unordered_set<Node> matched;
     bool                     nameable = true;
@@ -311,7 +310,7 @@ Reasoning::ContradictionRecord Reasoning::record_contradiction(const contradicti
         std::sort(conditions->begin(), conditions->end());
     }
 
-    if (!_record_contradictions || !nameable || (single && claimed == 0)) return ContradictionRecord::None;
+    if (!_record_contradictions || !nameable) return ContradictionRecord::None;
     if (claimed != 0) matched.insert(claimed);
 
     // A rule whose conditions are ALL guards or negations leaves nothing to

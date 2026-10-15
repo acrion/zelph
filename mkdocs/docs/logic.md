@@ -1918,7 +1918,7 @@ zelph> ({(a p b) (a q b)} ~ refuted) => (k r s)
 zelph> S r O
 ```
 
-A rule that has one condition not part of a condition set does not generate a record and is announced on every run; the [overview page](rules.md#examples) says how to write it so that it is recorded.
+A rule featuring one condition not enclosed within a condition set is recorded just like any other (refer to the [overview page](rules.md#examples)). A rule whose conditions consist entirely of negations, guards, or paths does not have a matched fact to record and is announced on every run.
 
 Silence differs from a clean graph, thus the summary of a run says which of the two applies. A network that already holds records reports them next to the count of what this run found: `0 contradictions found (1 already recorded in this network)`. The number is extracted from the graph rather than counted as the run meets them, so it counts contradictions and not the rule instantiations that reach them – a symmetric rule matches the same pair twice and still reports one. A network you downloaded therefore states what it holds on the very first run over it.
 

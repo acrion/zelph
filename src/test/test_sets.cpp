@@ -1814,6 +1814,15 @@ TEST_CASE("sets: a rule whose consequence nests an extension of a set constant s
         CHECK_NOTHROW(interactive.process("S r O"));
         CHECK(collect_answers(collector) == std::vector<std::string>{"m r n"});
 
+        // A subsequent run encounters the refusal once more and detects it
+        // as recorded; when records are off, it issues a report on it a
+        // second time.
+        collector.clear();
+        CHECK_NOTHROW(interactive.process(".run"));
+        CHECK_FALSE(has_contradiction(collector));
+        CHECK(any_event_contains(collector, "1 already recorded in this network"));
+
+        interactive.process(".contradiction-records off");
         collector.clear();
         CHECK_NOTHROW(interactive.process(".run"));
         CHECK(any_output_contains(collector, "refused: a set constant cannot be extended")); });

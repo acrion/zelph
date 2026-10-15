@@ -374,27 +374,21 @@ zelph-> .run-once
 Starting reasoning with 24 worker threads.
 --- Reasoning iteration 1 (single pass) ---
 (a ok ??) ⇐ (a p b)
-! ⇐ (a p b)
-   └─ refused: a set constant cannot be extended -- {c d} IS its members. Write the collection literal @{...} for a container that membership can grow.
-Reasoning complete. Total unification matches processed: 1. Total contradictions found: 1.
-Found one or more contradictions!
+Reasoning complete. Total unification matches processed: 1. Total contradictions found: 0 (1 already recorded in this network).
 Warning: Additional reasoning iterations are required, but have been suppressed.
-Reasoning summary: 1 matches processed, 1 contradictions found.
+Reasoning summary: 1 matches processed, 0 contradictions found (1 already recorded in this network).
 Parallel unifications activated for 1 distinct fixed relations.
-Reasoning complete in 0h0m0.000s – 1 matches processed, 1 contradictions found.
+Reasoning complete in 0h0m0.000s – 1 matches processed, 0 contradictions found (1 already recorded in this network).
 Ready.
 zelph-> .run-once
 Starting reasoning with 24 worker threads.
 --- Reasoning iteration 1 (single pass) ---
 (a ok ??) ⇐ (a p b)
-! ⇐ (a p b)
-   └─ refused: a set constant cannot be extended -- {c d} IS its members. Write the collection literal @{...} for a container that membership can grow.
-Reasoning complete. Total unification matches processed: 1. Total contradictions found: 1.
-Found one or more contradictions!
+Reasoning complete. Total unification matches processed: 1. Total contradictions found: 0 (1 already recorded in this network).
 Warning: Additional reasoning iterations are required, but have been suppressed.
-Reasoning summary: 1 matches processed, 1 contradictions found.
+Reasoning summary: 1 matches processed, 0 contradictions found (1 already recorded in this network).
 Parallel unifications activated for 1 distinct fixed relations.
-Reasoning complete in 0h0m0.000s – 1 matches processed, 1 contradictions found.
+Reasoning complete in 0h0m0.000s – 1 matches processed, 0 contradictions found (1 already recorded in this network).
 Ready.
 zelph-> S ok O
 Answer: a ok ??

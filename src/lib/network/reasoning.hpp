@@ -489,12 +489,12 @@ namespace zelph::network
         // network locks, and deduce establishes network-then-output as the
         // order (see "// _mtx_network released" in reasoning_deduce.cpp).
         //
-        // Using `conditions`, it also gathers the instances of the positive
-        // conditions, sorted by node id, regardless of whether records are
-        // kept: a quiet run returns them for every contradiction it meets.
-        // A single condition outside a set is likewise gathered, even though
-        // it is recorded only alongside a claimed fact (see
-        // count_contradiction_records).
+        // With `conditions`, it additionally collects the instances of
+        // positive conditions, sorted by node identifier, regardless of
+        // whether records are kept: a quiet run returns them for each
+        // contradiction encountered. A solitary condition not within a set is
+        // considered the sole member of its set, both in this context and
+        // within the record (see count_contradiction_records).
         ContradictionRecord record_contradiction(const contradiction_error& error, std::vector<Node>* conditions = nullptr);
 
         // A single contradiction encountered during a quiet run appears
@@ -555,19 +555,16 @@ namespace zelph::network
         std::string contradiction_symbol() const;
         std::string known_contradiction_note() const;
 
-        // The contradiction records the graph holds. They are the refuted
-        // nodes that are SET constants: record_contradiction marks exactly
-        // those -- set(matched) over the facts that matched -- while an
-        // ordinary refutation, `¬(a p b)`, marks the relation node of a fact,
-        // which never hashes back to its own members. A rule with a SINGLE
-        // condition has no condition set to point at and is therefore not
-        // recorded at all; it is announced on every run and counted there.
-        // The sole exception arises when a derived refutation meets a
-        // claimed fact: that fact becomes a second member, and the record is
-        // written. Written as a condition set with one constituent -- the
-        // tagged spelling, or any rule zelph/rule builds -- the identical
-        // condition has a member to point at and is recorded in the same
-        // manner as any other.
+        // The contradiction records the graph holds. These are the
+        // refuted nodes that qualify as SET constants: record_contradiction
+        // marks precisely those -- set(matched) across the facts that
+        // matched -- whereas a standard refutation, `¬(a p b)`, marks the
+        // relation node of a fact, which never hashes back to its own
+        // members. A rule featuring a SINGLE condition lacks a condition
+        // set to point at, and its condition joins the record as itself:
+        // the record corresponds to the one that the identical condition,
+        // written as a condition set with a single constituent, produces,
+        // because the two formulations represent the same rule.
         std::size_t count_contradiction_records() const;
 
         // The premises of one rule instantiation, rendered individually.

@@ -47,7 +47,7 @@ answers:
 "John is a man." is the class fact `John ~ man`; an adjective after `is` is a fact with the
 predicate `is`; a verb is a predicate of its own; "Every man is mortal." is one rule. The rule's
 single condition is written as a one-element condition set, `*{(X ~ man)} ~ conjunction`, which is
-how zelph prints such a rule and why its contradictions are recorded (see [Rules](#rules)). Content
+how zelph prints such a rule (see [Rules](#rules)). Content
 words live in the naming language `ace`, so a native line meets them under `.lang ace`. The same
 rule, typed by hand into today's zelph under `.lang ace`, fires on the two men it is given, and typing
 it a second time adds no second rule:
@@ -1007,17 +1007,20 @@ Src being the sentence of the implication's first condition.
 with every `zelph/var` created inside the thunk; `zelph/conjunction` joins two or more conditions;
 **a rule with exactly one condition gets a one-element tagged condition set**,
 `(def c (zelph/collection cond))`, `(zelph/fact c "~" "conjunction")`, `(zelph/fact c "=>" head …)`
-(DEC-RECORD-SINGLE). The reason: `zelph/conjunction` refuses arity 1, and the engine records every
-contradiction of a rule whose condition is a condition set, while a rule with a plain single condition
-has one recorded only when it derives the refutation of a claimed fact; every other one, a denial's or
-a conclusion's that meets a refuted fact, would be reported again on every run. Such a rule lists and prints as `(*{(X ~ man)} ~ conjunction) => …`, which
-re-enters as the same, recorded rule ([DEC-ONE-CONDITION-PRINT](decisions.md#dec-one-condition-print)); `((X ~ man)) => …` or `(X ~ man) => …` typed natively on a graph that lacks the rule builds the
-plain rule instead (the parentheses only group), so `ace/zelph-of` never prints those forms. This
+(DEC-RECORD-SINGLE). The reason: `zelph/conjunction` refuses arity 1, and the one-element set gives
+every rule `ace` builds a condition set, in the form zelph lists for it. Records do not depend on it:
+since 2026-10-15 the engine records a contradiction of a rule with a plain single condition as it
+records one of a rule whose single condition stands in a one-element condition set, the condition
+counting as the only member, so a denial, a conclusion that meets a refuted fact and a refused
+consequence are recorded once in either form. Such a rule lists and prints as `(*{(X ~ man)} ~ conjunction) => …`, which
+re-enters as the same rule ([DEC-ONE-CONDITION-PRINT](decisions.md#dec-one-condition-print)); `((X ~ man)) => …` or `(X ~ man) => …` typed natively on a graph that lacks the rule builds the
+plain rule instead (the parentheses only group), which `.list-rules` shows as `(X ~ man) => …`;
+`ace/zelph-of` prints what `.list-rules` shows for the rule `ace` builds, so it never prints those forms. This
 holds for every rule `ace` writes: rules, denials, helper rules and the inner rules of a generator.
 On a graph that already holds a one-condition rule in force, in either form, each of these spellings, and the
 idiom too, meets that rule and adds nothing: a rule typed natively in the plain form before stays
-plain, and its contradictions, except a derived refutation of a claimed fact, are reported again on
-every run ([DEC-RECORD-SINGLE](decisions.md#dec-record-single)).
+plain, and its contradictions are recorded as those of the set form are
+([DEC-RECORD-SINGLE](decisions.md#dec-record-single)).
 The thunk returns the `=>` node. `ace` never uses `zelph/rule`, because it does no deduplication and
 returns the condition set rather than the `=>` node, and it never writes a fact that names a rule
 node, which would take the rule out of force. A head whose predicate is a variable is bound by a
@@ -2185,8 +2188,8 @@ Each is recorded with its question, the alternatives and the milestone on [Desig
 | [DEC-STRATA](decisions.md#dec-strata) | (a) refuse `:rule/in-body`, `:naf/nested-in-body`, `:naf/unstratified`; the dry run also takes the engine's verdict | zelph orders these shapes only in the core profile and without feedback; a wrong answer is worse than a refusal |
 | [DEC-NAF-RECORDS](decisions.md#dec-naf-records) | a defeated "not provably" conclusion is reported, never withdrawn; records on from the first such rule | the warning must work at the REPL default; sessions without such a rule pay nothing |
 | [DEC-REFUTED](decisions.md#dec-refuted) | (ii) a derived refutation of a claimed fact is a reported contradiction | nothing disappears silently |
-| [DEC-RECORD-SINGLE](decisions.md#dec-record-single) | one-condition rules as one-element condition sets | outside a condition set, a one-condition rule has a contradiction recorded only when it derives the refutation of a claimed fact |
-| [DEC-ONE-CONDITION-PRINT](decisions.md#dec-one-condition-print) | `ace/zelph-of` prints a one-condition rule as `(*{(X ~ man)} ~ conjunction) => …` | the only form that re-enters as the same, recorded rule on a graph that lacks it |
+| [DEC-RECORD-SINGLE](decisions.md#dec-record-single) | one-condition rules as one-element condition sets | every rule `ace` builds has a condition set, in the form zelph lists; since 2026-10-15 records no longer depend on it |
+| [DEC-ONE-CONDITION-PRINT](decisions.md#dec-one-condition-print) | `ace/zelph-of` prints a one-condition rule as `(*{(X ~ man)} ~ conjunction) => …` | exactly what `.list-rules` shows for the rule `ace` builds, and the form [RT-3](tests.md#rt-3-native-equivalence-of-the-shown-zelph) enters natively; every spelling re-enters as the same rule and records alike |
 | [DEC-VAR-LETTERS](decisions.md#dec-var-letters) | letters in order of first occurrence; a class pattern takes one only where it has a variable of its own | a printed rule reads as a user would type it, in either profile |
 | [DEC-NUMERIC-REFERENT](decisions.md#dec-numeric-referent) | a referent the math typing makes numeric gets no class pattern from a relational noun | a number is no instance of the noun |
 | [DEC-YESNO-WIDER](decisions.md#dec-yesno-wider) | a yes/no atom is probed exactly, then plainly on a miss | a native fact with several objects answers as a rule condition reads it |

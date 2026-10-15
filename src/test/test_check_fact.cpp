@@ -370,15 +370,19 @@ TEST_CASE("fact: a derivation whose nested part lands on a colliding node is ref
         CHECK_FALSE(graph->check_fact(s, q, {first.relation()}).is_known()); });
 }
 
-// A firing makes its fresh witnesses before writing a consequence. When
-// fact() refused the consequence -- here `a r a Z`, whose subject the binding
-// makes one of its objects -- the witness remained an independent node, and
-// each subsequent run, which reports the refusal again, introduced one
-// additional witness.
+// A firing makes its fresh witnesses before writing a consequence. When fact()
+// refused the consequence -- specifically `a r a Z`, whose subject the
+// binding designates as one of its objects -- the witness remained an
+// independent node, and each subsequent run, which fires the rule once more,
+// added one additional witness. With records disabled, each run reports the
+// refusal it encounters, demonstrating that every `.run` below fires the
+// rule; when recording is enabled, the refusal is declared solely by the
+// first run.
 TEST_CASE("fact: a derivation that fact() refuses leaves no fresh witness behind")
 {
     zelph::test::run_both_modes([](zelph::io::OutputCollector& collector, const zelph::console::Interactive& interactive)
                                 {
+        interactive.process(".contradiction-records off");
         zelph::test::process_lines(interactive, "a p a\n(X p Y) => (X r Y Z)\n");
         const std::size_t before = zelph::test::node_count(collector, interactive);
         collector.clear();
@@ -419,8 +423,13 @@ TEST_CASE("fact: a derivation that writes nothing leaves no part and no fresh wi
         // A contradiction among the consequences halts the firing before the
         // remaining consequences are written, and the witness that was made
         // for them stayed: one additional node on each run.
+        //
+        // With records off, each run emits the denial anew, and this is what
+        // indicates every run below is firing the rule; once recorded, the
+        // denial is announced only once.
         SUBCASE("beside a contradiction")
         {
+            interactive.process(".contradiction-records off");
             setup         = "a p b\n(X p Y) => (Z q X) !\n";
             contradiction = true;
         }

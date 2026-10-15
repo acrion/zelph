@@ -402,15 +402,16 @@ TEST_CASE("zelph/run: :quiet returns a contradiction it cannot record")
 
 TEST_CASE("zelph/run: :quiet returns a contradiction once however often the run meets it")
 {
-    // A contradiction lacking a record is encountered anew on each pass:
-    // check mode's classic pass encounters it following the seeded pass,
-    // and classic evaluation once per iteration of its fixpoint, which the
-    // chain below keeps going (x15 of the investigation). The quiet run
-    // returns it just once. The rule's single condition does not reside
-    // within a condition set, hence it is never recorded; the entry still
-    // names the fact it matched.
+    // A contradiction without a record is rediscovered on every pass:
+    // check mode's classic pass detects it after the seeded pass, and
+    // classic evaluation once per iteration of its fixpoint, which the
+    // chain below sustains (x15 of the investigation). The quiet run
+    // returns it only once. Records are disabled, ensuring no pass finds
+    // the contradiction as previously recorded; the entry still names
+    // the fact that the rule's single condition matched.
     const auto met_once = [](auto& collector, auto& interactive)
     {
+        interactive.process(".contradiction-records off");
         interactive.process(kShowRun);
         process_lines(interactive, R"(
 (X ~ man) => !
@@ -432,12 +433,13 @@ k ~ a
         SUBCASE("classic evaluation, a pass per iteration") { interactive.process(".semi-naive off"); met_once(collector, interactive); } });
 }
 
-// The entry of a quiet run names the facts a single condition matched, by the
-// look-up the record uses. Built through fact(), the refuted fact a marking
-// names was refused as known to be wrong, causing the quiet run to fail with
-// that error, whereas a loud run reports the contradiction: a rule having one
-// condition is never recorded, and only a quiet run gathers the fact that its
-// condition matched.
+// The entry of a quiet run names the facts a single condition matched,
+// through the look-up the record employs. Constructed via fact(), the
+// refuted fact a marking names was refused as being known to be incorrect,
+// resulting in the quiet run failing with that error, while a loud run instead
+// reported the contradiction: a rule with one condition was not recorded at
+// that time, and only a quiet run had collected the fact its condition
+// matched. A loud run now performs the same look-up to record it as well.
 TEST_CASE("zelph/run: :quiet names the marking of a refuted fact that a single condition matched")
 {
     run_both_modes([](auto& collector, auto& interactive)
@@ -461,17 +463,24 @@ TEST_CASE("zelph/run: :quiet names the marking of a refuted fact that a single c
         collector.clear();
         CHECK_NOTHROW(interactive.process(R"js(%(show-run "q" (zelph/run :quiet)))js"));
         CHECK(any_output_contains(collector, "q contradictions=1 naf-final=0"));
-        CHECK(any_output_contains(collector, "q record=none conclusion=" + conclusion + " conditions=(t p b) ~ refuted bindings=X=t"));
+        CHECK(any_output_contains(collector, "q record=new conclusion=" + conclusion + " conditions=(t p b) ~ refuted bindings=X=t"));
+
+        collector.clear();
+        CHECK_NOTHROW(interactive.run(true, false, false));
+        CHECK_FALSE(has_contradiction(collector));
+        CHECK(any_event_contains(collector, "1 already recorded in this network"));
         CHECK_THROWS_WITH(interactive.process("t p b"), doctest::Contains("this fact is known to be wrong")); });
 }
 
 TEST_CASE("zelph/run: :quiet says why the engine refused to build a consequence")
 {
-    // A consequence the engine declines to build -- specifically, the
+    // A consequence the engine chooses not to build -- specifically, the
     // extension of a set constant -- is reported as a contradiction, and a
-    // loud run details the cause on a "refused:" line. In contrast, the
-    // quiet run lacks a fact to name as the conclusion, leaving the entry
-    // with none and instead bearing the reason.
+    // loud run details the cause on a "refused:" line. In contrast, the quiet
+    // run holds no fact to name as the conclusion, resulting in the entry
+    // being assigned none and instead bearing the reason. It is recorded just
+    // like any other contradiction, over the fact the rule's single
+    // condition matched.
     run_both_modes([](auto& collector, auto& interactive)
                    {
         interactive.process(".auto-run");
@@ -484,7 +493,7 @@ q p r
         collector.clear();
         interactive.process(R"js(%(show-run "q" (zelph/run :quiet)))js");
         CHECK(any_output_contains(collector, "q contradictions=1 naf-final=0"));
-        CHECK(any_output_contains(collector, "q record=none conclusion=none conditions=q p r bindings=X=q,Y=r refused=a set constant cannot be extended"));
+        CHECK(any_output_contains(collector, "q record=new conclusion=none conditions=q p r bindings=X=q,Y=r refused=a set constant cannot be extended"));
         CHECK_FALSE(any_event_contains(collector, "└─ refused")); });
 }
 

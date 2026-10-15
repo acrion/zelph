@@ -15,7 +15,7 @@ cases in scope must pass. Nothing of APE enters zelph's repository: the corpus i
 build tree when the tests are configured, checked against a SHA-256 hash and read only in its first
 five columns. APE itself runs during development to judge sentences the corpus lacks, but it is never
 a build or test dependency. The tests are ordinary doctest cases in `src/test/test_ace.cpp`, part of
-zelph's existing suite (`zelph_tests`, 2014 test cases at the time of writing), and they run under the
+zelph's existing suite (`zelph_tests`, 2016 test cases at the time of writing), and they run under the
 same `ctest` gate as everything else, the Jacobian performance guard included.
 
 The tests need nothing from zelph that is not there today. They read the graph through clusters,
@@ -1001,7 +1001,8 @@ rule the front end builds, a one-element condition set: `(*{(X ~ man)} ~ conjunc
 ([What ace/zelph-of Prints](semantics.md#what-acezelph-of-prints),
 [DEC-ONE-CONDITION-PRINT](decisions.md#dec-one-condition-print),
 [DEC-RECORD-SINGLE](decisions.md#dec-record-single)). That is the form RT-3 enters natively and, on
-a graph that lacks the rule, the only form that builds the recorded rule.
+a graph that lacks the rule, the form that builds exactly the rule the front end builds; written
+without the condition set, the line is the same rule, and its contradictions are recorded alike.
 
 ### G-1 and G-2: The Same Graph
 
@@ -1258,7 +1259,7 @@ The block contract itself is specified on [The ace Block](block.md#what-a-block-
 | `ace keyword: answers follow sentence order, sorted within one question` | two yes/no questions answer in order (M1); wh-answers sorted (M3) | M1 |
 | `ace keyword: an asserting block prints nothing` | no confirmation, no banner, no deduction line, no `⇐` line under a native rule (DEC-QUIET, DEC-ECHO), at every milestone with the default options; the derivation echo of `(ace/option :echo true)` (M9) prints ACE sentences only | M1 |
 | `ace keyword: no zelph line reaches the output of a block` | with auto-run on, native rules whose contradictions no record covers (`.contradiction-records off`; a rule whose conditions are all negations) fire inside the block's run: the output holds `ace` messages and answers only; the host's auto-run after the handler is skipped and prints nothing | M1 |
-| `ace keyword: a contradiction derived by the block is reported once and the block kept` | a native denial with two conditions (recorded) and one with one condition (unrecorded; met twice per run in check mode) under `.lang ace`, then "John is a man. John is a woman.": one `[ace/contradiction-derived]` per contradiction, the facts kept; the same block through `ace/execute-drs!` in a fresh session returns the two entries with `:record` `:new` and `:none` (DEC-QUIET); a later block "Is John a woman?", whose inference meets both again, reports nothing (the recorded one comes back `:existing`, and both keys are in `(ace/state :reported)`) | M1 |
+| `ace keyword: a contradiction derived by the block is reported once and the block kept` | a native denial with two conditions (recorded) and one whose only condition is a path condition (unrecorded, since it matches no fact; met twice per run in check mode) under `.lang ace`, then "John is a man. John is a woman.": one `[ace/contradiction-derived]` per contradiction, the facts kept; the same block through `ace/execute-drs!` in a fresh session returns the two entries with `:record` `:new` and `:none` (DEC-QUIET); a later block "Is John a woman?", whose inference meets both again, reports nothing (the recorded one comes back `:existing`, and both keys are in `(ace/state :reported)`) | M1 |
 | `ace keyword: a refutation the block asserts is not reported as a derived contradiction` | auto-run on: "Sue does not sleep." raises and prints nothing, `(ace/contradictions)` is empty, and "Does Sue sleep?" gives `No. It is false that Sue sleeps.`; the same for the block "No woman sleeps. Sue is a woman. Sue does not sleep.", whose run derives the marking the block asserted (a conclusion that nests a refuted fact neither aborts the run nor re-asserts it). The comment says why: a refuted fact is a subject of `(F ~ refuted)` like a contradiction record, but only a set constant is a record, and the block's reports come from its quiet run's contradictions, among which the user's own refutation is not (DEC-QUIET, DEC-REFUTED) | M4 |
 | `ace keyword: a question runs inference even with auto-run off` | native rule `(X ~ man) => (X ~ human)` under `.lang ace`, auto-run off; "John is a man. Is John a human?" gives `Yes.` (DEC-RUN) | M1 |
 | `ace keyword: an asserting block infers only under auto-run` | auto-run off: after "John is a man.", native `X ~ human` gives no answer | M1 |
@@ -1341,7 +1342,7 @@ These tests are data-driven from the construct table of [Constructs and Refusals
 | `ace plurals: witnesses of generative heads count as distinct for at most` | auto-run on: "Every man owns a red car. Every man owns a blue car. John is a man. John owns at most 1 car." gives one `[ace/contradiction-derived]`, the block kept: the two witnesses the engine made carry no mark and count as two cars. The comment says why: a mark in a generative head would change the guard against duplicate witnesses, so witnesses are read closed-world, which the user page documents with this example (DEC-PLURALS) | M7 |
 | `ace modality: a referent inside a modal box is unclaimed and carries no individual mark` | "A customer can enter a card.": `Customer-<h> ~ customer` and `Customer-<h> ace:individual nil` exist (`:exact` probes), the native query `X ace:individual nil` under `.lang zelph` answers the customer alone, "Is there a customer?" gives `Yes.` and "Is there a card?" gives `It is not provable …`; after a later block "There is a card." the query also answers a card node, which is not the card inside the `ace:can` fact (the box's referent has a key that includes the box). The comment says why: the sentence does not say that there is a card, so its card is written only as a mention inside the opaque fact and is no claimed individual | M8 |
 | `ace re-entry: a nested conditional re-enters as the same rules in each of its forms` | the switch "If John waits then every man sleeps.", the generator over a then-box referent "Every man owns a dog that every cat hates." and the flattened "Every man sees every dog." (DEC-NESTED-IMP): each block entered twice adds no node and no rule; p1 against p2 with G-1 and G-2 (generator heads included); what each derives is pinned by the mapping tests | M4 |
-| `ace re-entry: a one-condition rule re-enters as the same rule` | "Every man is mortal." builds a one-element condition set (DEC-RECORD-SINGLE); its printed form typed natively under `.lang ace` adds no rule; with `John ~ man` and a native refutation `¬(John is mortal)` the contradiction is recorded, so a second run reports it as already recorded (a plain single condition would report it again) | M4 |
+| `ace re-entry: a one-condition rule re-enters as the same rule` | "Every man is mortal." builds a one-element condition set (DEC-RECORD-SINGLE); its printed form typed natively under `.lang ace` adds no rule; with `John ~ man` and a native refutation `¬(John is mortal)` the contradiction is recorded, so a second run reports it as already recorded | M4 |
 | `ace re-entry: a rule over a that-clause conditional prints the written-out negation` | a hand-written plan whose rule's condition holds a that-clause conditional with a `(:naf A)` inside (the sentence itself is refused by `:sub/conditional-with-referents-in-body`, so the plan is the shape a lifted refusal would produce), rendered by `ace/zelph-of`: `((A) ~ negation)` inside the held rule, never `¬(A)`; the line parses natively. The comment: zelph's parser refuses `¬`, `≈` and paths inside a held rule and recommends this spelling | M8 |
 | `ace drs path: a text and its printed and re-read DRS build the same graph` | p3 | M1 (smoke shapes); M2 (all) |
 | `ace interop: a native fact answers an ACE question` | native `John ~ man` under `.lang ace`; "Is John a man?" gives `Yes. John is a man.` | M1 |
@@ -1466,7 +1467,7 @@ math-language test of the errors area, the generated-docs test, the policy docum
 property tests, the large-rule warning and the three slow work tests), and a reserve of 23 for the
 slow cases of the arithmetic part (its math corpus test case, its layer-C cases that import
 `ace-math`, and four module tests of `stdlib/evaluation.zph`): 77 slow cases against about 180 fast
-ones. With the counts at the time of writing the allowance is 338.5 + 0.25 · 180 = 383.5
+ones. With the counts at the time of writing the allowance is 339 + 0.25 · 180 = 384
 ([The Install Tier](#the-install-tier)).
 
 ### Words and Wikidata
@@ -2060,8 +2061,8 @@ new fast cases keep the breadth iff (F + f) / (N + f + s) ≥ 0.8, that is
 
 F and N are read from `zelph_tests --list-test-cases`, with and without `--test-suite-exclude=slow`, at
 the start of M0 and again at the start of every later milestone, and never carried over: every change
-that adds tests moves them. At the time of writing they are N = 2014 and F = 1882, which would allow
-s ≤ 338.5 + 0.25·f; engine work done before M0 adds further cases. The front end's plan of
+that adds tests moves them. At the time of writing they are N = 2016 and F = 1884, which would allow
+s ≤ 339 + 0.25·f; engine work done before M0 adds further cases. The front end's plan of
 77 slow cases against about 180 fast ones (an estimate) stays far inside the allowance. The
 packaged-tier timing (B5) is taken at M0 on an idle machine; a figure taken under load is no baseline.
 

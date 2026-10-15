@@ -6156,10 +6156,14 @@ TEST_CASE("derived rules: a construction that fact() refuses is reported and lea
     // run exit with an error, which the program caught. A construction's
     // refusal is now reported just like a firing's, including its reason,
     // and the run proceeds (next case).
+    //
+    // Records are off: the second refusal below becomes visible solely due
+    // to being reported again, and a recorded one is announced just once.
     zelph::io::OutputCollector  collector;
     zelph::console::Interactive interactive(collector.sink());
     process_lines(interactive, R"(
 .auto-run
+.contradiction-records off
 (G go H) => ((X G Y) => (c q H t))
 t go c
 )");
