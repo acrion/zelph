@@ -33,6 +33,11 @@
 # is &1 for every X, including &0 -- the empty-product convention shared
 # with common-arithmetic.
 
+# Each name below represents a node within the language zelph,
+# regardless of the .lang setting used by the importer; upon
+# completion of the import, the importer's language is restored.
+.lang zelph
+
 .import symbolic-core
 
 # ---------------------------------------------------------------------------

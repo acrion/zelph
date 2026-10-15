@@ -166,6 +166,43 @@ TEST_CASE("profiler: every fs_cache miss is answered by one genuine hit or one w
         CHECK(removed_misses == removed_walks); });
 }
 
+TEST_CASE("profiler: .prof counts the rule-pattern marks a claim revokes")
+{
+    // The Jacobian guard pins this counter precisely, ensuring it registers
+    // a revocation exactly once and nothing beyond: a ground rule marks its
+    // two patterns, the claim of one revokes one mark, and a subsequent
+    // claim of the same statement finds no mark remaining for revocation.
+    // Auto-run is disabled to prevent any firing from claiming the
+    // consequence in between.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        const auto unmarked = [&collector, &interactive]() -> uint64_t
+        {
+            collector.clear();
+            interactive.process(".prof");
+            std::string prof;
+            for (const auto& event : collector.events())
+                prof += event.text + "\n";
+            const size_t at = prof.find("rule_patterns: unmarked=");
+            REQUIRE(at != std::string::npos);
+            return std::stoull(prof.substr(at + std::string("rule_patterns: unmarked=").size()));
+        };
+
+        interactive.process(".auto-run");
+        interactive.process(".log -1");
+        interactive.process("(a p b) => (c q d)");
+        CHECK(unmarked() == 0);
+
+        interactive.process("a p b");
+        CHECK(unmarked() == 1);
+
+        interactive.process("a p b");
+        CHECK(unmarked() == 1);
+
+        interactive.process(".prof reset");
+        CHECK(unmarked() == 0); });
+}
+
 // ---------------------------------------------------------------------------
 // The number of matches processed in the run summary ("N matches processed")
 // is not a profiler counter: `.run` reports this figure with logging off. It

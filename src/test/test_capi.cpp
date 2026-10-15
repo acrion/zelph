@@ -291,6 +291,460 @@ TEST_CASE("capi: a fact reads back as its subject, its predicate and its objects
     CHECK(zelph_fact_parts(engine, 0, nullptr, nullptr, nullptr, &count) == ZELPH_INVALID_ARGUMENT);
 }
 
+TEST_CASE("capi: a fact asserted through the C API claims a rule's pattern")
+{
+    // zelph_fact called graph->fact and performed no other action, thus
+    // asserting the ground condition of a loaded rule left it the rule's
+    // pattern: the fact was absent for zelph_exists, and the rule never
+    // fired. The C API builds no pattern of its own (zelph_rule marks
+    // nothing), so the rule comes from a file, authored in the way a
+    // session would produce it.
+    const auto file = fs::temp_directory_path() / "zelph_capi_claim.bin";
+    {
+        zelph::io::OutputCollector  collector;
+        zelph::console::Interactive interactive(collector.sink());
+        interactive.process("(a p b) => (c q d)");
+        interactive.process("(e p f) => !");
+        interactive.process(".save \"" + file.string() + "\"");
+    }
+
+    SUBCASE("the asserted fact itself")
+    {
+        Engine engine;
+        REQUIRE(zelph_load(engine, file.string().c_str()) == ZELPH_OK);
+
+        const zelph_node b    = engine.node("b");
+        zelph_node       fact = 0;
+        REQUIRE(zelph_fact(engine, engine.node("a"), engine.node("p"), &b, 1, &fact) == ZELPH_OK);
+
+        int32_t exists = 0;
+        REQUIRE(zelph_exists(engine, engine.node("a"), engine.node("p"), &b, 1, &exists) == ZELPH_OK);
+        CHECK(exists == 1);
+
+        REQUIRE(zelph_run(engine) == ZELPH_OK);
+        const zelph_node d = engine.node("d");
+        REQUIRE(zelph_exists(engine, engine.node("c"), engine.node("q"), &d, 1, &exists) == ZELPH_OK);
+        CHECK(exists == 1);
+    }
+
+    SUBCASE("a pattern nested in it")
+    {
+        // A caller may access the pattern without asserting it: it
+        // reads the rule. zelph_sources employing `=>` and `!` answers
+        // the conditions of the contradiction rule, and the
+        // read surface hands out such a node without claiming it.
+        Engine engine;
+        REQUIRE(zelph_load(engine, file.string().c_str()) == ZELPH_OK);
+
+        zelph_node pattern = 0;
+        size_t     count   = 1;
+        REQUIRE(zelph_sources(engine, engine.node("=>"), engine.node("!"), &pattern, &count) == ZELPH_OK);
+        REQUIRE(count == 1);
+
+        const zelph_node f      = engine.node("f");
+        int32_t          exists = -1;
+        REQUIRE(zelph_exists(engine, engine.node("e"), engine.node("p"), &f, 1, &exists) == ZELPH_OK);
+        REQUIRE(exists == 0);
+
+        zelph_node fact = 0;
+        REQUIRE(zelph_fact(engine, engine.node("x"), engine.node("says"), &pattern, 1, &fact) == ZELPH_OK);
+
+        REQUIRE(zelph_exists(engine, engine.node("e"), engine.node("p"), &f, 1, &exists) == ZELPH_OK);
+        CHECK(exists == 1);
+    }
+
+    fs::remove(file);
+}
+
+// zelph_exists responds in the same manner as zelph/exists and as a ground
+// rule condition does: the engine's bookkeeping is not there for it. The marking of a
+// contradiction record and the mark of a rule's pattern, both of which arrive
+// with a loaded network, resulted in an answer of 1. zelph_sources enumerates
+// these, enabling a caller to access their nodes.
+TEST_CASE("capi: zelph_exists finds no bookkeeping, as a ground rule condition does not")
+{
+    const auto file = fs::temp_directory_path() / "zelph_capi_exists_bookkeeping.bin";
+    {
+        zelph::io::OutputCollector  collector;
+        zelph::console::Interactive interactive(collector.sink());
+        zelph::test::process_lines(interactive, "x p y\nx q y\n(A p B, A q B) => !\n(a p b) => (c q d)\n");
+        interactive.process(".save \"" + file.string() + "\"");
+    }
+
+    Engine engine;
+    REQUIRE(zelph_load(engine, file.string().c_str()) == ZELPH_OK);
+    const zelph_node isa     = engine.node("~");
+    zelph_node       refuted = 0;
+    zelph_node       mark    = 0;
+    REQUIRE(zelph_resolve(engine, "refuted", "zelph", &refuted) == ZELPH_OK);
+    REQUIRE(zelph_resolve(engine, "rule pattern", "zelph", &mark) == ZELPH_OK);
+
+    zelph_node record = 0;
+    size_t     count  = 1;
+    REQUIRE(zelph_sources(engine, isa, refuted, &record, &count) == ZELPH_OK);
+    REQUIRE(count == 1);
+    int32_t exists = -1;
+    REQUIRE(zelph_exists(engine, record, isa, &refuted, 1, &exists) == ZELPH_OK);
+    CHECK(exists == 0);
+
+    zelph_node patterns[4] = {};
+    count                  = 4;
+    REQUIRE(zelph_sources(engine, isa, mark, patterns, &count) == ZELPH_OK);
+    REQUIRE(count == 2);
+    for (size_t i = 0; i < count; ++i)
+    {
+        exists = -1;
+        REQUIRE(zelph_exists(engine, patterns[i], isa, &mark, 1, &exists) == ZELPH_OK);
+        CHECK(exists == 0);
+    }
+
+    // The control: a fact that someone
+    // claimed.
+    const zelph_node y = engine.node("y");
+    REQUIRE(zelph_exists(engine, engine.node("x"), engine.node("p"), &y, 1, &exists) == ZELPH_OK);
+    CHECK(exists == 1);
+
+    fs::remove(file);
+}
+
+// A marking (F ~ refuted) of a ground fact is a refutation, which comes with
+// its own call, just as zelph/fact within a Janet block refuses the marking
+// and names zelph/refute: written through zelph_fact, the marking took a
+// claimed fact from every query without comment. A marking whose fact holds
+// a variable is a pattern, and this is the mechanism by which a caller
+// requests refutations.
+TEST_CASE("capi: zelph_fact refuses a ground refutation marking and names zelph_refute")
+{
+    Engine           engine;
+    const zelph_node a       = engine.node("a");
+    const zelph_node p       = engine.node("p");
+    const zelph_node b       = engine.node("b");
+    const zelph_node isa     = engine.node("~");
+    zelph_node       refuted = 0;
+    REQUIRE(zelph_resolve(engine, "refuted", "zelph", &refuted) == ZELPH_OK);
+
+    zelph_node fact = 0;
+    REQUIRE(zelph_fact(engine, a, p, &b, 1, &fact) == ZELPH_OK);
+
+    zelph_node marking = 0;
+    CHECK(zelph_fact(engine, fact, isa, &refuted, 1, &marking) == ZELPH_RUNTIME_ERROR);
+    CHECK(marking == 0);
+    CHECK(std::string(zelph_last_error()).find("zelph_refute") != std::string::npos);
+
+    int32_t exists = -1;
+    REQUIRE(zelph_exists(engine, a, p, &b, 1, &exists) == ZELPH_OK);
+    CHECK(exists == 1);
+
+    zelph_node x = 0;
+    REQUIRE(zelph_variable(engine, "X", &x) == ZELPH_OK);
+    zelph_node pattern = 0;
+    REQUIRE(zelph_fact(engine, x, p, &b, 1, &pattern) == ZELPH_OK);
+    CHECK(zelph_fact(engine, pattern, isa, &refuted, 1, &marking) == ZELPH_OK);
+}
+
+// When the marking is rejected, a C caller has no way left to express that a
+// fact does not hold. zelph_refute says it as `¬(F)` does on a standalone
+// line and zelph/refute does in Janet: refused for a fact the graph claims,
+// accepted for one that nobody claimed -- a new one, a rule's ground pattern,
+// or one previously refuted -- which then answers nothing and refuses an
+// assertion.
+TEST_CASE("capi: zelph_refute says that a fact does not hold, and refuses it for a claimed one")
+{
+    const auto file = fs::temp_directory_path() / "zelph_capi_refute.bin";
+    {
+        zelph::io::OutputCollector  collector;
+        zelph::console::Interactive interactive(collector.sink());
+        interactive.process("(a p b) => (c q d)");
+        interactive.process(".save \"" + file.string() + "\"");
+    }
+
+    Engine engine;
+    REQUIRE(zelph_load(engine, file.string().c_str()) == ZELPH_OK);
+    const zelph_node a = engine.node("a");
+    const zelph_node p = engine.node("p");
+    const zelph_node e = engine.node("e");
+    const zelph_node b = engine.node("b");
+    const zelph_node f = engine.node("f");
+
+    zelph_node fact   = 0;
+    int32_t    exists = -1;
+
+    SUBCASE("a fact the graph claims")
+    {
+        REQUIRE(zelph_fact(engine, e, p, &f, 1, &fact) == ZELPH_OK);
+        CHECK(zelph_refute(engine, e, p, &f, 1, &fact) == ZELPH_RUNTIME_ERROR);
+        CHECK(std::string(zelph_last_error()).find("known to be true") != std::string::npos);
+        REQUIRE(zelph_exists(engine, e, p, &f, 1, &exists) == ZELPH_OK);
+        CHECK(exists == 1);
+    }
+
+    SUBCASE("a new fact, refuted twice")
+    {
+        REQUIRE(zelph_refute(engine, e, p, &f, 1, &fact) == ZELPH_OK);
+        CHECK(fact != 0);
+        CHECK(zelph_refute(engine, e, p, &f, 1, &fact) == ZELPH_OK);
+        REQUIRE(zelph_exists(engine, e, p, &f, 1, &exists) == ZELPH_OK);
+        CHECK(exists == 0);
+        CHECK(zelph_fact(engine, e, p, &f, 1, &fact) == ZELPH_RUNTIME_ERROR);
+        CHECK(std::string(zelph_last_error()).find("known to be wrong") != std::string::npos);
+    }
+
+    SUBCASE("a rule's ground pattern")
+    {
+        REQUIRE(zelph_refute(engine, a, p, &b, 1, &fact) == ZELPH_OK);
+        CHECK(zelph_fact(engine, a, p, &b, 1, &fact) == ZELPH_RUNTIME_ERROR);
+        REQUIRE(zelph_run(engine) == ZELPH_OK);
+        const zelph_node d = engine.node("d");
+        REQUIRE(zelph_exists(engine, engine.node("c"), engine.node("q"), &d, 1, &exists) == ZELPH_OK);
+        CHECK(exists == 0);
+    }
+
+    fs::remove(file);
+}
+
+// zelph_refute of a marking wrote the marking at probability 0, and the marking
+// still refuted its fact: a claimed `a p b` left every query, via the call that
+// says it is not refuted. Refused, as `¬((a p b) ~ refuted)` is
+// (test_contradiction_records.cpp).
+TEST_CASE("capi: zelph_refute refuses a refutation marking and leaves its fact claimed")
+{
+    Engine           engine;
+    const zelph_node a   = engine.node("a");
+    const zelph_node p   = engine.node("p");
+    const zelph_node b   = engine.node("b");
+    const zelph_node isa = engine.node("~");
+
+    zelph_node fact = 0;
+    REQUIRE(zelph_fact(engine, a, p, &b, 1, &fact) == ZELPH_OK);
+    zelph_node refuted = 0;
+    REQUIRE(zelph_resolve(engine, "refuted", "zelph", &refuted) == ZELPH_OK);
+
+    zelph_node marking = 0;
+    CHECK(zelph_refute(engine, fact, isa, &refuted, 1, &marking) == ZELPH_RUNTIME_ERROR);
+    CHECK(std::string(zelph_last_error()).find("cannot itself be refuted") != std::string::npos);
+
+    int32_t exists = -1;
+    REQUIRE(zelph_exists(engine, a, p, &b, 1, &exists) == ZELPH_OK);
+    CHECK(exists == 1);
+    CHECK(zelph_fact(engine, a, p, &b, 1, &fact) == ZELPH_OK);
+}
+
+// During an embedder's dry run, a refutation that zelph_refute makes inside a
+// cluster is taken back by zelph_cluster_drop, removing both the index entry
+// and the 0 from the fact's edge, enabling the rule's ground pattern to be
+// asserted subsequently and the rule to fire.
+TEST_CASE("capi: a refutation zelph_refute makes inside a cluster is taken back by its drop")
+{
+    const auto file = fs::temp_directory_path() / "zelph_capi_refute_cluster.bin";
+    {
+        zelph::io::OutputCollector  collector;
+        zelph::console::Interactive interactive(collector.sink());
+        interactive.process("(a p b) => (c q d)");
+        interactive.process(".save \"" + file.string() + "\"");
+    }
+
+    Engine engine;
+    REQUIRE(zelph_load(engine, file.string().c_str()) == ZELPH_OK);
+    fs::remove(file);
+    const zelph_node a = engine.node("a");
+    const zelph_node p = engine.node("p");
+    const zelph_node b = engine.node("b");
+
+    REQUIRE(zelph_cluster(engine, "dry") == ZELPH_OK);
+    zelph_node fact = 0;
+    REQUIRE(zelph_refute(engine, a, p, &b, 1, &fact) == ZELPH_OK);
+    REQUIRE(zelph_fact(engine, a, p, &b, 1, &fact) == ZELPH_RUNTIME_ERROR);
+    REQUIRE(zelph_cluster(engine, nullptr) == ZELPH_OK);
+    REQUIRE(zelph_cluster_drop(engine, "dry", nullptr) == ZELPH_OK);
+
+    CHECK(zelph_fact(engine, a, p, &b, 1, &fact) == ZELPH_OK);
+    REQUIRE(zelph_run(engine) == ZELPH_OK);
+    const zelph_node d      = engine.node("d");
+    int32_t          exists = -1;
+    REQUIRE(zelph_exists(engine, engine.node("c"), engine.node("q"), &d, 1, &exists) == ZELPH_OK);
+    CHECK(exists == 1);
+}
+
+// A statement holding a rule's marking pattern claims it, and the claim
+// refuted the fact that the marking marks. Requested via zelph_sources, the
+// marking functions as a node just like any other, hence the refusal
+// originates within the claim itself: the fact that the graph claims keeps
+// answering.
+TEST_CASE("capi: a fact holding a rule's marking pattern of a claimed fact is refused")
+{
+    const auto file = fs::temp_directory_path() / "zelph_capi_marking_pattern.bin";
+    {
+        zelph::io::OutputCollector  collector;
+        zelph::console::Interactive interactive(collector.sink());
+        interactive.process("a p b");
+        interactive.process("((a p b) ~ refuted) => !");
+        interactive.process(".save \"" + file.string() + "\"");
+    }
+
+    Engine engine;
+    REQUIRE(zelph_load(engine, file.string().c_str()) == ZELPH_OK);
+    fs::remove(file);
+
+    zelph_node marking = 0;
+    size_t     count   = 1;
+    REQUIRE(zelph_sources(engine, engine.node("=>"), engine.node("!"), &marking, &count) == ZELPH_OK);
+    REQUIRE(count == 1);
+
+    zelph_node fact = 0;
+    CHECK(zelph_fact(engine, engine.node("x"), engine.node("says"), &marking, 1, &fact) == ZELPH_RUNTIME_ERROR);
+    CHECK(std::string(zelph_last_error()).find("known to be true") != std::string::npos);
+
+    const zelph_node b      = engine.node("b");
+    int32_t          exists = -1;
+    REQUIRE(zelph_exists(engine, engine.node("a"), engine.node("p"), &b, 1, &exists) == ZELPH_OK);
+    CHECK(exists == 1);
+
+    // And the refused statement is not written: it used to be, before the
+    // claim reached the marking, and it stayed.
+    REQUIRE(zelph_exists(engine, engine.node("x"), engine.node("says"), &marking, 1, &exists) == ZELPH_OK);
+    CHECK(exists == 0);
+}
+
+// A statement containing a refuted fact claims it, and claiming a fact known
+// to be wrong is refused, as asserting it is. Handed in by node -- the fact
+// that zelph_refute returns -- it was accepted: the claim took the mention's
+// mark, and the fact was both claimed and refuted simultaneously.
+TEST_CASE("capi: a fact holding a refuted fact by node is refused")
+{
+    Engine engine;
+
+    const zelph_node nil     = engine.node("nil");
+    zelph_node       refuted = 0;
+    REQUIRE(zelph_refute(engine, engine.node("mary"), engine.node("waits"), &nil, 1, &refuted) == ZELPH_OK);
+
+    zelph_node fact = 0;
+    CHECK(zelph_fact(engine, engine.node("x"), engine.node("says"), &refuted, 1, &fact) == ZELPH_RUNTIME_ERROR);
+    CHECK(std::string(zelph_last_error()).find("known to be wrong") != std::string::npos);
+
+    int32_t exists = -1;
+    REQUIRE(zelph_exists(engine, engine.node("x"), engine.node("says"), &refuted, 1, &exists) == ZELPH_OK);
+    CHECK(exists == 0);
+    REQUIRE(zelph_exists(engine, engine.node("mary"), engine.node("waits"), &nil, 1, &exists) == ZELPH_OK);
+    CHECK(exists == 0);
+}
+
+// The C ABI offered no way to write a statement without asserting it: a
+// program translating "John believes that Mary waits." could only claim
+// `mary waits nil` via zelph_fact. zelph_mention writes the mention; a
+// later zelph_fact of the same statement constitutes the claim that turns
+// it into data, and a mention of what is asserted leaves it asserted.
+TEST_CASE("capi: zelph_mention writes a statement without claiming it")
+{
+    Engine engine;
+
+    const zelph_node nil       = engine.node("nil");
+    zelph_node       mentioned = 0;
+    REQUIRE(zelph_mention(engine, engine.node("mary"), engine.node("waits"), &nil, 1, &mentioned) == ZELPH_OK);
+    CHECK(mentioned != 0);
+
+    int32_t exists = -1;
+    REQUIRE(zelph_exists(engine, engine.node("mary"), engine.node("waits"), &nil, 1, &exists) == ZELPH_OK);
+    CHECK(exists == 0);
+
+    zelph_node claimed = 0;
+    REQUIRE(zelph_fact(engine, engine.node("mary"), engine.node("waits"), &nil, 1, &claimed) == ZELPH_OK);
+    CHECK(claimed == mentioned);
+    REQUIRE(zelph_exists(engine, engine.node("mary"), engine.node("waits"), &nil, 1, &exists) == ZELPH_OK);
+    CHECK(exists == 1);
+
+    zelph_node again = 0;
+    REQUIRE(zelph_mention(engine, engine.node("mary"), engine.node("waits"), &nil, 1, &again) == ZELPH_OK);
+    CHECK(again == mentioned);
+    REQUIRE(zelph_exists(engine, engine.node("mary"), engine.node("waits"), &nil, 1, &exists) == ZELPH_OK);
+    CHECK(exists == 1);
+
+    SUBCASE("the arguments are checked as zelph_fact checks them")
+    {
+        zelph_node out = 0;
+        CHECK(zelph_mention(engine, engine.node("mary"), engine.node("waits"), &nil, 0, &out) == ZELPH_INVALID_ARGUMENT);
+        CHECK(zelph_mention(engine, 0, engine.node("waits"), &nil, 1, &out) == ZELPH_INVALID_ARGUMENT);
+    }
+}
+
+// A rule authored by zelph_mention is a mention like any other statement it
+// produces, but since nothing held the `=>` the call returned, the rule was
+// in force and fired during the next run. zelph_fact of that same rule
+// constitutes the claim that puts it in force, just as the claim of any
+// other mention does.
+TEST_CASE("capi: a rule written with zelph_mention is not in force until zelph_fact claims it")
+{
+    Engine           engine;
+    const zelph_node a      = engine.node("a");
+    const zelph_node p      = engine.node("p");
+    const zelph_node b      = engine.node("b");
+    const zelph_node c      = engine.node("c");
+    const zelph_node q      = engine.node("q");
+    const zelph_node d      = engine.node("d");
+    const zelph_node causes = engine.node("=>");
+
+    zelph_node condition = 0;
+    REQUIRE(zelph_mention(engine, a, p, &b, 1, &condition) == ZELPH_OK);
+    zelph_node consequence = 0;
+    REQUIRE(zelph_mention(engine, c, q, &d, 1, &consequence) == ZELPH_OK);
+    zelph_node mentioned = 0;
+    REQUIRE(zelph_mention(engine, condition, causes, &consequence, 1, &mentioned) == ZELPH_OK);
+
+    zelph_node fact = 0;
+    REQUIRE(zelph_fact(engine, a, p, &b, 1, &fact) == ZELPH_OK);
+    REQUIRE(zelph_run(engine) == ZELPH_OK);
+    int32_t exists = -1;
+    REQUIRE(zelph_exists(engine, c, q, &d, 1, &exists) == ZELPH_OK);
+    CHECK(exists == 0);
+
+    zelph_node claimed = 0;
+    REQUIRE(zelph_fact(engine, condition, causes, &consequence, 1, &claimed) == ZELPH_OK);
+    CHECK(claimed == mentioned);
+    REQUIRE(zelph_run(engine) == ZELPH_OK);
+    REQUIRE(zelph_exists(engine, c, q, &d, 1, &exists) == ZELPH_OK);
+    CHECK(exists == 1);
+}
+
+// zelph_fact refuses the ground marking `(F ~ refuted)`, a refutation, while
+// zelph_rule takes nodes that were built before it, so a rule over the
+// refutation of F gets its condition from zelph_mention, which writes the
+// marking down without claiming it, just as zelph/mention does in Janet. The
+// rule is in force and fires once zelph_refute claims the refutation, similar
+// to how the typed "((john waits nil) ~ refuted) => (mary sleeps nil)" does.
+TEST_CASE("capi: a rule's ground refutation condition is written with zelph_mention")
+{
+    Engine           engine;
+    const zelph_node john    = engine.node("john");
+    const zelph_node waits   = engine.node("waits");
+    const zelph_node mary    = engine.node("mary");
+    const zelph_node sleeps  = engine.node("sleeps");
+    const zelph_node nil     = engine.node("nil");
+    const zelph_node isa     = engine.node("~");
+    zelph_node       refuted = 0;
+    REQUIRE(zelph_resolve(engine, "refuted", "zelph", &refuted) == ZELPH_OK);
+
+    zelph_node waiting = 0;
+    REQUIRE(zelph_mention(engine, john, waits, &nil, 1, &waiting) == ZELPH_OK);
+    zelph_node marking = 0;
+    REQUIRE(zelph_mention(engine, waiting, isa, &refuted, 1, &marking) == ZELPH_OK);
+    zelph_node sleeping = 0;
+    REQUIRE(zelph_mention(engine, mary, sleeps, &nil, 1, &sleeping) == ZELPH_OK);
+    zelph_node condition_set = 0;
+    REQUIRE(zelph_rule(engine, &marking, 1, &sleeping, 1, &condition_set) == ZELPH_OK);
+
+    REQUIRE(zelph_run(engine) == ZELPH_OK);
+    int32_t exists = -1;
+    REQUIRE(zelph_exists(engine, mary, sleeps, &nil, 1, &exists) == ZELPH_OK);
+    CHECK(exists == 0);
+    REQUIRE(zelph_exists(engine, waiting, isa, &refuted, 1, &exists) == ZELPH_OK);
+    CHECK(exists == 0);
+
+    zelph_node fact = 0;
+    REQUIRE(zelph_refute(engine, john, waits, &nil, 1, &fact) == ZELPH_OK);
+    REQUIRE(zelph_run(engine) == ZELPH_OK);
+    REQUIRE(zelph_exists(engine, mary, sleeps, &nil, 1, &exists) == ZELPH_OK);
+    CHECK(exists == 1);
+}
+
 TEST_CASE("capi: a cons list reads back as the elements it was built from")
 {
     Engine engine;
@@ -1003,6 +1457,10 @@ TEST_CASE("capi: failures come back as a status and a message, never as an excep
 
     zelph_node fact = 0;
     CHECK(zelph_fact(engine, engine.node("s"), engine.node("p"), nullptr, 0, &fact) == ZELPH_INVALID_ARGUMENT);
+    CHECK(zelph_refute(engine, engine.node("s"), engine.node("p"), nullptr, 0, &fact) == ZELPH_INVALID_ARGUMENT);
+    const zelph_node o = engine.node("o");
+    CHECK(zelph_refute(engine, engine.node("s"), engine.node("p"), &o, 0, &fact) == ZELPH_INVALID_ARGUMENT);
+    CHECK(zelph_refute(engine, 0, engine.node("p"), &o, 1, &fact) == ZELPH_INVALID_ARGUMENT);
 
     size_t count = 0;
     CHECK(zelph_nn_snapshot(engine, 17, nullptr, &count) == ZELPH_INVALID_ARGUMENT);
@@ -1158,6 +1616,28 @@ TEST_CASE("capi: a fact written from another thread is refused, and nothing is w
     int32_t exists = 1;
     REQUIRE(zelph_exists(engine, a, p, &b, 1, &exists) == ZELPH_OK);
     CHECK(exists == 0);
+}
+
+// zelph_mention writes the graph in the same manner as zelph_fact, thus
+// adhering to the thread rule: a mention originating from a different
+// thread is refused and writes nothing.
+TEST_CASE("capi: a mention written from another thread is refused, and nothing is written")
+{
+    Engine engine;
+
+    const zelph_node a = engine.node("a");
+    const zelph_node p = engine.node("p");
+    const zelph_node b = engine.node("b");
+    REQUIRE(zelph_cluster(engine, "probe") == ZELPH_OK);
+
+    zelph_node      fact    = 0;
+    const OffThread refused = off_thread([&]
+                                         { return zelph_mention(engine, a, p, &b, 1, &fact); });
+
+    CHECK(refused.status == ZELPH_RUNTIME_ERROR);
+    CHECK(refused.message.find("zelph_mention: main thread only") != std::string::npos);
+    CHECK(fact == 0);
+    CHECK(cluster_size(engine, "probe") == 0);
 }
 
 TEST_CASE("capi: a rule built from another thread is refused, and nothing is written")
@@ -1403,6 +1883,7 @@ TEST_CASE("capi: every call that writes the graph or changes the engine is refus
         const zelph_node elements[2] = {a, b};
         zelph_node       node        = 0;
         refused("zelph_fact", zelph_fact(engine, a, p, &b, 1, &node));
+        refused("zelph_refute", zelph_refute(engine, a, q, &b, 1, &node));
         refused("zelph_list", zelph_list(engine, elements, 2, &node));
         refused("zelph_set", zelph_set(engine, elements, 2, &node));
         refused("zelph_collection", zelph_collection(engine, elements, 2, &node));
@@ -1511,6 +1992,307 @@ TEST_CASE("capi: a rule derives what forward chaining makes of it")
     REQUIRE(zelph_exists(engine, socrates, is_a, &mortal, 1, &exists) == ZELPH_OK);
     CHECK(exists == 1);
     REQUIRE(zelph_exists(engine, plato, is_a, &mortal, 1, &exists) == ZELPH_OK);
+    CHECK(exists == 1);
+}
+
+TEST_CASE("capi: a rule with several consequences is one rule, so they share a fresh variable")
+{
+    // zelph_rule associated every consequence with the condition set by a
+    // causation fact unique to it, forming a rule for each: they fired
+    // independently, and a fresh variable named by two consequences received
+    // a witness in each instance, even though the header claims a single
+    // rule that deduces every consequence.
+    Engine engine;
+
+    const zelph_node p = engine.node("p");
+    const zelph_node q = engine.node("q");
+    const zelph_node r = engine.node("r");
+
+    zelph_node x = 0, y = 0, n = 0;
+    REQUIRE(zelph_variable(engine, "X", &x) == ZELPH_OK);
+    REQUIRE(zelph_variable(engine, "Y", &y) == ZELPH_OK);
+    REQUIRE(zelph_variable(engine, "N", &n) == ZELPH_OK);
+
+    zelph_node condition = 0;
+    zelph_node heads[2]  = {0, 0};
+    REQUIRE(zelph_fact(engine, x, p, &y, 1, &condition) == ZELPH_OK);
+    REQUIRE(zelph_fact(engine, x, q, &n, 1, &heads[0]) == ZELPH_OK);
+    REQUIRE(zelph_fact(engine, n, r, &y, 1, &heads[1]) == ZELPH_OK);
+
+    SUBCASE("the consequences meet in one witness")
+    {
+        zelph_node rule = 0;
+        REQUIRE(zelph_rule(engine, &condition, 1, heads, 2, &rule) == ZELPH_OK);
+
+        const zelph_node b    = engine.node("b");
+        zelph_node       fact = 0;
+        REQUIRE(zelph_fact(engine, engine.node("a"), p, &b, 1, &fact) == ZELPH_OK);
+        REQUIRE(zelph_run(engine) == ZELPH_OK);
+
+        zelph_node witness = 0;
+        size_t     count   = 1;
+        REQUIRE(zelph_targets(engine, engine.node("a"), q, &witness, &count) == ZELPH_OK);
+        REQUIRE(count == 1);
+
+        int32_t exists = 0;
+        REQUIRE(zelph_exists(engine, witness, r, &b, 1, &exists) == ZELPH_OK);
+        CHECK(exists == 1);
+    }
+
+    SUBCASE("a consequence that is no node leaves no rule behind")
+    {
+        // The consequences are read before any writing takes place,
+        // meaning the refusal of the second one finds no condition set
+        // and no first causation fact to leave behind.
+        REQUIRE(zelph_cluster(engine, "probe") == ZELPH_OK);
+        const zelph_node bad[2] = {heads[0], 0};
+        zelph_node       rule   = 0;
+        CHECK(zelph_rule(engine, &condition, 1, bad, 2, &rule) == ZELPH_INVALID_ARGUMENT);
+
+        int64_t size = -1;
+        REQUIRE(zelph_cluster_count(engine, "probe", &size) == ZELPH_OK);
+        CHECK(size == 0);
+    }
+}
+
+TEST_CASE("capi: a rule whose consequence has a predicate no condition binds is refused, and nothing is written")
+{
+    // zelph_rule writes the rule that a typed line or a Janet builder writes,
+    // and those refuse a consequence whose predicate is not bound by any
+    // condition: for `X W nil` the rule derived nothing, and for `W W nil` a
+    // firing gave W a new node, which stood as a relation type no one named
+    // and printed as "->". zelph_rule wrote both rules without verification.
+    Engine engine;
+
+    const zelph_node waits = engine.node("waits");
+    const zelph_node nil   = engine.node("nil");
+
+    zelph_node x = 0, w = 0;
+    REQUIRE(zelph_variable(engine, "X", &x) == ZELPH_OK);
+    REQUIRE(zelph_variable(engine, "W", &w) == ZELPH_OK);
+
+    zelph_node condition   = 0;
+    zelph_node consequence = 0;
+    REQUIRE(zelph_fact(engine, x, waits, &nil, 1, &condition) == ZELPH_OK);
+    SUBCASE("the predicate alone") { REQUIRE(zelph_fact(engine, x, w, &nil, 1, &consequence) == ZELPH_OK); }
+    SUBCASE("the predicate and the subject") { REQUIRE(zelph_fact(engine, w, w, &nil, 1, &consequence) == ZELPH_OK); }
+
+    REQUIRE(zelph_cluster(engine, "probe") == ZELPH_OK);
+    zelph_node rule = 0;
+    CHECK(zelph_rule(engine, &condition, 1, &consequence, 1, &rule) == ZELPH_RUNTIME_ERROR);
+    const std::string message = zelph_last_error();
+    CHECK(message.find("zelph_rule: The predicate of") != std::string::npos);
+    CHECK(message.find("is the variable W, which no condition binds") != std::string::npos);
+
+    int64_t size = -1;
+    REQUIRE(zelph_cluster_count(engine, "probe", &size) == ZELPH_OK);
+    CHECK(size == 0);
+
+    // Nothing fires: the run writes nothing beside the fact.
+    zelph_node fact = 0;
+    REQUIRE(zelph_fact(engine, engine.node("ann"), waits, &nil, 1, &fact) == ZELPH_OK);
+    REQUIRE(zelph_cluster_count(engine, "probe", &size) == ZELPH_OK);
+    const int64_t written = size;
+    REQUIRE(zelph_run(engine) == ZELPH_OK);
+    REQUIRE(zelph_cluster_count(engine, "probe", &size) == ZELPH_OK);
+    CHECK(size == written);
+}
+
+TEST_CASE("capi: a rule whose consequence predicate a condition binds is written and fires")
+{
+    // The refusal concerns a predicate that remains unbound by any condition:
+    // whenever a condition names it, it becomes bound upon every firing.
+    Engine engine;
+
+    const zelph_node waits = engine.node("waits");
+    const zelph_node nil   = engine.node("nil");
+    const zelph_node ok    = engine.node("ok");
+
+    zelph_node x = 0, w = 0;
+    REQUIRE(zelph_variable(engine, "X", &x) == ZELPH_OK);
+    REQUIRE(zelph_variable(engine, "W", &w) == ZELPH_OK);
+
+    zelph_node condition   = 0;
+    zelph_node consequence = 0;
+    REQUIRE(zelph_fact(engine, x, w, &nil, 1, &condition) == ZELPH_OK);
+    REQUIRE(zelph_fact(engine, x, w, &ok, 1, &consequence) == ZELPH_OK);
+
+    zelph_node rule = 0;
+    REQUIRE(zelph_rule(engine, &condition, 1, &consequence, 1, &rule) == ZELPH_OK);
+
+    const zelph_node ann  = engine.node("ann");
+    zelph_node       fact = 0;
+    REQUIRE(zelph_fact(engine, ann, waits, &nil, 1, &fact) == ZELPH_OK);
+    REQUIRE(zelph_run(engine) == ZELPH_OK);
+
+    int32_t exists = 0;
+    REQUIRE(zelph_exists(engine, ann, waits, &ok, 1, &exists) == ZELPH_OK);
+    CHECK(exists == 1);
+}
+
+// zelph_fact writes the `=>` fact that zelph_rule generates, with no
+// verification performed at that location: expressed in this form,
+// `(X waits nil) => (W W nil)` derived `-> -> nil` from `ann waits nil`. The
+// call is unable to reject it, since an inner rule of a generator shares the
+// same shape (next case), and the C ABI runs no code whose termination might
+// be awaited; thus, the next run checks it, and any rejection becomes the
+// run's error. Once the rule vanishes, the following run derives nothing.
+TEST_CASE("capi: a `=>` written with zelph_fact whose consequence predicate no condition binds is refused by the next run")
+{
+    Engine engine;
+
+    const zelph_node waits  = engine.node("waits");
+    const zelph_node nil    = engine.node("nil");
+    const zelph_node causes = engine.node("=>");
+
+    zelph_node x = 0, w = 0;
+    REQUIRE(zelph_variable(engine, "X", &x) == ZELPH_OK);
+    REQUIRE(zelph_variable(engine, "W", &w) == ZELPH_OK);
+
+    zelph_node condition = 0, consequence = 0, rule = 0;
+    REQUIRE(zelph_fact(engine, x, waits, &nil, 1, &condition) == ZELPH_OK);
+    REQUIRE(zelph_fact(engine, w, w, &nil, 1, &consequence) == ZELPH_OK);
+    REQUIRE(zelph_fact(engine, condition, causes, &consequence, 1, &rule) == ZELPH_OK);
+
+    zelph_node fact = 0;
+    REQUIRE(zelph_fact(engine, engine.node("ann"), waits, &nil, 1, &fact) == ZELPH_OK);
+
+    CHECK(zelph_run(engine) == ZELPH_RUNTIME_ERROR);
+    CHECK(std::string(zelph_last_error()).find("zelph_fact: The predicate of \"W W nil\" in the rule's consequence is the variable W") != std::string::npos);
+
+    int32_t exists = 1;
+    REQUIRE(zelph_exists(engine, condition, causes, &consequence, 1, &exists) == ZELPH_OK);
+    CHECK(exists == 0);
+
+    REQUIRE(zelph_cluster(engine, "probe") == ZELPH_OK);
+    REQUIRE(zelph_run(engine) == ZELPH_OK);
+    int64_t size = -1;
+    REQUIRE(zelph_cluster_count(engine, "probe", &size) == ZELPH_OK);
+    CHECK(size == 0);
+}
+
+// Before the subsequent run, a zelph_save stored the rule in the file
+// unchecked, and a load retrieved it as a rule the graph already holds, which
+// no later run checks. The save checks first, just as a run does: the refusal
+// constitutes its error, the file remains unwritten, and the rule disappears,
+// allowing the next save to succeed.
+TEST_CASE("capi: a `=>` written with zelph_fact whose consequence predicate no condition binds is refused by the next save")
+{
+    Engine engine;
+
+    const zelph_node waits  = engine.node("waits");
+    const zelph_node nil    = engine.node("nil");
+    const zelph_node causes = engine.node("=>");
+
+    zelph_node x = 0, w = 0;
+    REQUIRE(zelph_variable(engine, "X", &x) == ZELPH_OK);
+    REQUIRE(zelph_variable(engine, "W", &w) == ZELPH_OK);
+
+    zelph_node condition = 0, consequence = 0, rule = 0;
+    REQUIRE(zelph_fact(engine, x, waits, &nil, 1, &condition) == ZELPH_OK);
+    REQUIRE(zelph_fact(engine, w, w, &nil, 1, &consequence) == ZELPH_OK);
+    REQUIRE(zelph_fact(engine, condition, causes, &consequence, 1, &rule) == ZELPH_OK);
+
+    const std::string path = (std::filesystem::temp_directory_path() / "zelph_test_capi_fact_rule_save.bin").string();
+    std::filesystem::remove(path);
+
+    CHECK(zelph_save(engine, path.c_str()) == ZELPH_RUNTIME_ERROR);
+    CHECK(std::string(zelph_last_error()).find("zelph_fact: The predicate of \"W W nil\" in the rule's consequence is the variable W") != std::string::npos);
+    CHECK_FALSE(std::filesystem::exists(path));
+
+    int32_t exists = 1;
+    REQUIRE(zelph_exists(engine, condition, causes, &consequence, 1, &exists) == ZELPH_OK);
+    CHECK(exists == 0);
+
+    CHECK(zelph_save(engine, path.c_str()) == ZELPH_OK);
+    CHECK(std::filesystem::exists(path));
+    std::filesystem::remove(path);
+}
+
+// A rule authored by zelph_mention is out of force until zelph_fact claims it.
+// Without verification, that claim put a rule in force whose consequence
+// predicate no condition binds, and the next run fired it. The next run checks
+// the claim just as it checks a rule zelph_fact generates, yet the rule
+// predated the call: the rejection retracts the claim, and the rule stays a
+// mention. A further run derives nothing, and writing it again as a mention
+// creates nothing.
+TEST_CASE("capi: a mentioned `=>` that zelph_fact claims into force is checked by the next run, and the refusal takes back the claim alone")
+{
+    Engine engine;
+
+    const zelph_node waits  = engine.node("waits");
+    const zelph_node nil    = engine.node("nil");
+    const zelph_node causes = engine.node("=>");
+
+    zelph_node x = 0, w = 0;
+    REQUIRE(zelph_variable(engine, "X", &x) == ZELPH_OK);
+    REQUIRE(zelph_variable(engine, "W", &w) == ZELPH_OK);
+
+    zelph_node condition = 0, consequence = 0, mentioned = 0;
+    REQUIRE(zelph_mention(engine, x, waits, &nil, 1, &condition) == ZELPH_OK);
+    REQUIRE(zelph_mention(engine, w, w, &nil, 1, &consequence) == ZELPH_OK);
+    REQUIRE(zelph_mention(engine, condition, causes, &consequence, 1, &mentioned) == ZELPH_OK);
+
+    zelph_node fact = 0;
+    REQUIRE(zelph_fact(engine, engine.node("ann"), waits, &nil, 1, &fact) == ZELPH_OK);
+
+    SUBCASE("with a run between the mention and the claim")
+    {
+        REQUIRE(zelph_run(engine) == ZELPH_OK);
+    }
+    SUBCASE("claimed before the next run") {}
+
+    zelph_node claimed = 0;
+    REQUIRE(zelph_fact(engine, condition, causes, &consequence, 1, &claimed) == ZELPH_OK);
+    REQUIRE(claimed == mentioned);
+
+    CHECK(zelph_run(engine) == ZELPH_RUNTIME_ERROR);
+    CHECK(std::string(zelph_last_error()).find("zelph_fact: The predicate of \"W W nil\" in the rule's consequence is the variable W") != std::string::npos);
+
+    REQUIRE(zelph_cluster(engine, "probe") == ZELPH_OK);
+    CHECK(zelph_run(engine) == ZELPH_OK);
+    zelph_node again = 0;
+    REQUIRE(zelph_mention(engine, condition, causes, &consequence, 1, &again) == ZELPH_OK);
+    CHECK(again == mentioned);
+    int64_t size = -1;
+    REQUIRE(zelph_cluster_count(engine, "probe", &size) == ZELPH_OK);
+    CHECK(size == 0);
+}
+
+// The inner rule of a generator takes its predicate from the generator's
+// binding. Constructed through zelph_fact calls, it maintains the shape
+// refused above until the generator holds it, which occurs by the time of
+// the run.
+TEST_CASE("capi: a rule generator built from zelph_fact calls passes the run and fires")
+{
+    Engine engine;
+
+    const zelph_node causes  = engine.node("=>");
+    const zelph_node inverse = engine.node("inverse");
+    const zelph_node child   = engine.node("child");
+
+    zelph_node r = 0, s = 0, a = 0, b = 0;
+    REQUIRE(zelph_variable(engine, "R", &r) == ZELPH_OK);
+    REQUIRE(zelph_variable(engine, "S", &s) == ZELPH_OK);
+    REQUIRE(zelph_variable(engine, "A", &a) == ZELPH_OK);
+    REQUIRE(zelph_variable(engine, "B", &b) == ZELPH_OK);
+
+    zelph_node inner_condition = 0, inner_consequence = 0, inner = 0, condition = 0, generator = 0;
+    REQUIRE(zelph_fact(engine, a, r, &b, 1, &inner_condition) == ZELPH_OK);
+    REQUIRE(zelph_fact(engine, b, s, &a, 1, &inner_consequence) == ZELPH_OK);
+    REQUIRE(zelph_fact(engine, inner_condition, causes, &inner_consequence, 1, &inner) == ZELPH_OK);
+    REQUIRE(zelph_fact(engine, r, inverse, &s, 1, &condition) == ZELPH_OK);
+    REQUIRE(zelph_fact(engine, condition, causes, &inner, 1, &generator) == ZELPH_OK);
+
+    zelph_node fact = 0;
+    REQUIRE(zelph_fact(engine, engine.node("parent"), inverse, &child, 1, &fact) == ZELPH_OK);
+    const zelph_node bob = engine.node("bob");
+    REQUIRE(zelph_fact(engine, engine.node("ann"), engine.node("parent"), &bob, 1, &fact) == ZELPH_OK);
+    REQUIRE(zelph_run(engine) == ZELPH_OK);
+
+    const zelph_node ann    = engine.node("ann");
+    int32_t          exists = 0;
+    REQUIRE(zelph_exists(engine, bob, child, &ann, 1, &exists) == ZELPH_OK);
     CHECK(exists == 1);
 }
 
@@ -1649,6 +2431,42 @@ TEST_CASE("capi: a query reports its bindings as nodes")
     CHECK(found == std::vector<std::string>{"aristotle", "plato", "socrates"});
 }
 
+// `a p b c` and `a p c` both state `a p c`, and the query reported the
+// binding Who = c once for each of them: two rows that a caller could not
+// distinguish. A query answers each binding only once (see
+// test_reasoning.cpp, "a binding that a narrower and a wider fact both state
+// is answered once").
+TEST_CASE("capi: a query reports a binding two facts state once")
+{
+    Engine engine;
+
+    const zelph_node a         = engine.node("a");
+    const zelph_node p         = engine.node("p");
+    const zelph_node objects[] = {engine.node("b"), engine.node("c")};
+    zelph_node       fact      = 0;
+    REQUIRE(zelph_fact(engine, a, p, objects, 2, &fact) == ZELPH_OK);
+    REQUIRE(zelph_fact(engine, a, p, &objects[1], 1, &fact) == ZELPH_OK);
+
+    zelph_node who = 0;
+    REQUIRE(zelph_variable(engine, "Who", &who) == ZELPH_OK);
+    zelph_node pattern = 0;
+    REQUIRE(zelph_fact(engine, a, p, &who, 1, &pattern) == ZELPH_OK);
+
+    size_t pairs = 0;
+    size_t rows  = 0;
+    CHECK(zelph_query(engine, pattern, nullptr, &pairs, nullptr, &rows) == ZELPH_BUFFER_TOO_SMALL);
+    CHECK(rows == 2);
+
+    std::vector<zelph_node> flat(pairs * 2, 0);
+    std::vector<size_t>     sizes(rows, 0);
+    REQUIRE(zelph_query(engine, pattern, flat.data(), &pairs, sizes.data(), &rows) == ZELPH_OK);
+    std::vector<std::string> found;
+    for (size_t pair = 0; pair < pairs; ++pair)
+        found.push_back(name_of(engine, flat[pair * 2 + 1]));
+    std::sort(found.begin(), found.end());
+    CHECK(found == std::vector<std::string>{"b", "c"});
+}
+
 TEST_CASE("capi: a cluster turns a graph that otherwise only grows into a workspace")
 {
     Engine engine;
@@ -1690,6 +2508,56 @@ TEST_CASE("capi: a cluster turns a graph that otherwise only grows into a worksp
     CHECK(exists == 0);
     REQUIRE(zelph_exists(engine, engine.node("permanent"), is_a, &thing, 1, &exists) == ZELPH_OK);
     CHECK(exists == 1);
+}
+
+// A caller that poses a query inside a cluster it subsequently drops leaves
+// nothing behind, as long as the drop takes back what the query wrote. The
+// pattern was the first fact of `b` as a predicate and established it as a
+// relation type, and the drop took the pattern while `b ~ ->` remained
+// unchanged.
+TEST_CASE("capi: a question asked in a cluster that is then dropped takes back the relation-type declaration it wrote")
+{
+    Engine engine;
+
+    const zelph_node is_a  = engine.node("~");
+    const zelph_node arrow = engine.node("->");
+    const zelph_node b     = engine.node("b");
+    zelph_node       fact  = 0;
+    REQUIRE(zelph_fact(engine, engine.node("a"), engine.node("likes"), &b, 1, &fact) == ZELPH_OK);
+
+    int32_t declared = 1;
+    REQUIRE(zelph_exists(engine, b, is_a, &arrow, 1, &declared) == ZELPH_OK);
+    REQUIRE(declared == 0);
+
+    REQUIRE(zelph_cluster(engine, "question") == ZELPH_OK);
+    zelph_node x = 0;
+    zelph_node y = 0;
+    REQUIRE(zelph_variable(engine, "X", &x) == ZELPH_OK);
+    REQUIRE(zelph_variable(engine, "Y", &y) == ZELPH_OK);
+    zelph_node pattern = 0;
+    REQUIRE(zelph_fact(engine, x, b, &y, 1, &pattern) == ZELPH_OK);
+
+    size_t pairs = 0;
+    size_t rows  = 0;
+    CHECK(zelph_query(engine, pattern, nullptr, &pairs, nullptr, &rows) == ZELPH_OK);
+    CHECK(rows == 0);
+
+    REQUIRE(zelph_cluster(engine, nullptr) == ZELPH_OK);
+    int64_t removed = 0;
+    REQUIRE(zelph_cluster_drop(engine, "question", &removed) == ZELPH_OK);
+    // The drop takes X, Y, the pattern, and the declaration of the
+    // predicate it relies on.
+    CHECK(removed == 4);
+
+    REQUIRE(zelph_exists(engine, b, is_a, &arrow, 1, &declared) == ZELPH_OK);
+    CHECK(declared == 0);
+
+    // The subsequent initial fact of `b` as a predicate declares it
+    // as usual.
+    const zelph_node d = engine.node("d");
+    REQUIRE(zelph_fact(engine, engine.node("c"), b, &d, 1, &fact) == ZELPH_OK);
+    REQUIRE(zelph_exists(engine, b, is_a, &arrow, 1, &declared) == ZELPH_OK);
+    CHECK(declared == 1);
 }
 
 TEST_CASE("capi: a cluster name beginning with \"__\" is refused")
@@ -2090,6 +2958,88 @@ TEST_CASE("capi: existence is the question the engine answers, not the exact has
     int32_t          absent = -1;
     REQUIRE(zelph_exists(engine, a, p, &d, 1, &absent) == ZELPH_OK);
     CHECK(absent == 0);
+}
+
+// zelph_exists answers the question zelph/exists answers, and both answer
+// what a ground rule condition matches. A condition reads a statement within
+// it using the subset reading -- `(a p b c) bad k` states `(a p c) bad k` --
+// yet the two existence checks widened only the top level, and an unclaimed
+// exact node, a statement simply written down, concealed the claimed wider
+// fact even at that level.
+TEST_CASE("capi: zelph_exists reads a statement among its arguments as a ground rule condition does")
+{
+    Engine engine;
+
+    const zelph_node a   = engine.node("a");
+    const zelph_node p   = engine.node("p");
+    const zelph_node b   = engine.node("b");
+    const zelph_node c   = engine.node("c");
+    const zelph_node bad = engine.node("bad");
+    const zelph_node k   = engine.node("k");
+
+    const zelph_node objects[2] = {b, c};
+    zelph_node       wide       = 0;
+    zelph_node       stated     = 0;
+    REQUIRE(zelph_fact(engine, a, p, objects, 2, &wide) == ZELPH_OK);
+    REQUIRE(zelph_fact(engine, wide, bad, &k, 1, &stated) == ZELPH_OK);
+
+    // The narrower statements, written down without claiming them.
+    zelph_node narrow_b = 0;
+    zelph_node narrow_c = 0;
+    REQUIRE(zelph_mention(engine, a, p, &b, 1, &narrow_b) == ZELPH_OK);
+    REQUIRE(zelph_mention(engine, a, p, &c, 1, &narrow_c) == ZELPH_OK);
+
+    // The control: a rule with the nested condition fires.
+    const zelph_node x     = engine.node("x");
+    const zelph_node y     = engine.node("y");
+    const zelph_node fired = engine.node("fired");
+    zelph_node       cond  = 0;
+    zelph_node       cons  = 0;
+    zelph_node       rule  = 0;
+    REQUIRE(zelph_mention(engine, narrow_c, bad, &k, 1, &cond) == ZELPH_OK);
+    REQUIRE(zelph_mention(engine, x, fired, &y, 1, &cons) == ZELPH_OK);
+    REQUIRE(zelph_rule(engine, &cond, 1, &cons, 1, &rule) == ZELPH_OK);
+    REQUIRE(zelph_run(engine) == ZELPH_OK);
+
+    int32_t exists = -1;
+    REQUIRE(zelph_exists(engine, x, fired, &y, 1, &exists) == ZELPH_OK);
+    CHECK(exists == 1);
+
+    SUBCASE("a statement as the subject")
+    {
+        exists = -1;
+        REQUIRE(zelph_exists(engine, narrow_c, bad, &k, 1, &exists) == ZELPH_OK);
+        CHECK(exists == 1);
+    }
+
+    SUBCASE("the narrower statement itself, written down beside the claimed wider one")
+    {
+        exists = -1;
+        REQUIRE(zelph_exists(engine, a, p, &b, 1, &exists) == ZELPH_OK);
+        CHECK(exists == 1);
+    }
+
+    SUBCASE("a statement no fact states")
+    {
+        const zelph_node d      = engine.node("d");
+        zelph_node       narrow = 0;
+        REQUIRE(zelph_mention(engine, a, p, &d, 1, &narrow) == ZELPH_OK);
+        exists = -1;
+        REQUIRE(zelph_exists(engine, narrow, bad, &k, 1, &exists) == ZELPH_OK);
+        CHECK(exists == 0);
+    }
+
+    SUBCASE("a question that holds a variable")
+    {
+        // The identical question from C: no fact holding a variable is
+        // claimed, and the matcher read the question as a pattern that
+        // `a p b c` fits.
+        zelph_node variable = 0;
+        REQUIRE(zelph_variable(engine, "V", &variable) == ZELPH_OK);
+        exists = -1;
+        REQUIRE(zelph_exists(engine, a, p, &variable, 1, &exists) == ZELPH_OK);
+        CHECK(exists == 0);
+    }
 }
 
 // The one case in this file that builds its fixture with the REPL, and the

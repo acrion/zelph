@@ -162,6 +162,7 @@ namespace zelph::network
         void                 set_lang(const std::string& lang);
         std::string          get_lang() const { return _lang; }
         std::string          lang() const { return _lang; }
+        std::string          published_lang() const;
         Node                 node(const std::string& name, std::string lang = "");
         bool                 exists(uint64_t nd) const;
         adjacency_set        get_sources(Node relationType, Node target, bool exclude_vars = false) const;
@@ -187,6 +188,14 @@ namespace zelph::network
         static Node          bucket_term_id(Node bucket);
         Answer               check_fact(Node subject, Node predicate, const adjacency_set& objects) const;
 
+        // The predicates of a statement a rule writes, as a firing reads
+        // them: filter(fact, IsA, RelationTypeCategory), which excludes the
+        // subject, and otherwise the subject, when the statement is the one
+        // whose subject is its own predicate. Since both roles share one node
+        // there, the filter found no predicate, and
+        // "(X waits nil) => (sleeps sleeps X)" never fired.
+        adjacency_set relation_types_of(Node fact) const;
+
         // Throws whatever node() throws when encountering a name that no
         // node can carry -- the empty one -- ensuring that a caller relying
         // solely on lookup reports it alike.
@@ -204,6 +213,15 @@ namespace zelph::network
         void          watch_removals(std::shared_ptr<const ankerl::unordered_dense::set<Node>> nodes) const;
         bool          touched_by_removal(Node n) const;
         std::uint64_t graph_epoch() const;
+
+        // A counter that only ever increases within the process: each engine
+        // constructed advances it, as does each load that advances
+        // graph_epoch and each end_bulk_import. A cache of node ids or
+        // labels maintained externally to the engine remains valid as long
+        // as the counter remains unchanged. graph_epoch is not this counter:
+        // an import contributes only by adding to the graph, and consumers
+        // of graph_epoch interpret its advancement as a replacement.
+        static std::uint64_t content_epoch();
 
         // A shortest walk from `start` to `target` via `predicate`, as the
         // facts traversed during the journey, proceeding around the facts
@@ -234,7 +252,7 @@ namespace zelph::network
         Node fact(Node subject, Node predicate, const adjacency_set& objects, long double probability = 1);
         Node fact_import_trusted_single_object(Node subject, Node predicate, Node object) const;
         Node list(const std::vector<Node>& elements);
-        Node list(const std::vector<std::string>& elements);
+        Node list(const std::vector<std::string>& elements, const std::string& lang);
         // `{...}`: identified by its members (extensionality), so two
         // occurrences are ONE node and it cannot be extended.
         Node set(const std::unordered_set<Node>& elements);
@@ -295,7 +313,56 @@ namespace zelph::network
         // extensionality requires knowledge of the members, the set() function
         // transforms such a literal into a collection.
         bool kind_unknowable(const std::unordered_set<Node>& members) const;
+        // Whether the subject `member` of a membership within a set constant
+        // functions as a pattern over the set instead of being one of its
+        // actual elements: a variable, or a statement that holds one, which no
+        // set constant includes as a member (kind_unknowable). A rule or a
+        // question quantifies over the members via `X in {a b}` and `(X p z)
+        // in {(x p z) c}`.
+        bool is_pattern_member(const Node member) const { return is_var(member) || (is_hash(member) && var_in_closure(member)); }
         bool is_set_constant(Node node) const;
+        // The ground members that belong to the set constant `node` and
+        // hash back to it. False, with `out` remaining unchanged, for any
+        // node that is not a set constant.
+        bool set_constant_members(Node node, adjacency_set& out) const;
+        // Whether `node` constitutes a SET PATTERN, and its members if it
+        // does: a set whose members hold a variable, representing a
+        // different set under each binding. A pattern matches it to a set
+        // constant through its members (unification.cpp, unify_nodes). It
+        // is a collection of a rule's text whose text holds a variable,
+        // regardless of which literal wrote it; a collection that set()
+        // built outside the template scope because a member held one or was
+        // one (its id class, Network::is_value_set_pattern); or a set
+        // constant that contains such a template,
+        // `{@{Y} a}`. A conjunction set is none, as its members are
+        // conditions. `out` receives every member of a collection, the
+        // variables among them, and the ground members of a set constant.
+        // False, with `out` untouched, for any node that is not of this kind.
+        bool set_pattern_members(Node node, adjacency_set& out) const;
+        bool is_set_pattern(Node node) const;
+        // The variables within a set pattern that set() builds outside the
+        // template scope: those its members hold outside every rule a member
+        // mentions, as a rule's variables are isolated to that rule. A
+        // statement that has such a set as its subject, predicate, or object
+        // holds these variables (Zelph::fact), making it a pattern and never
+        // data -- what a query that has typed one leaves behind in the graph.
+        // Null for any other node, including a conjunction set, and for a set
+        // pattern whose variables all reside within rules,
+        // `{((A r B) => (c q d))}`: such a literal stays a container.
+        std::shared_ptr<const std::unordered_set<Node>> set_pattern_variables(Node node) const;
+        // False exclusively when this session can hold no set pattern: none
+        // was recorded as a value, no collection of a rule's text was
+        // written, and the variable store is active -- with it off, the rules
+        // from a loaded file are read by the walk, and theirs were never
+        // seen. Three atomic loads, for the condition planner
+        // (Reasoning::optimize_order).
+        bool may_hold_set_patterns() const;
+        // Whether a fact involving multiple objects may be in the graph. A
+        // statement contained within a condition is likewise stated by such
+        // a fact, where `(a p b c)` states `(a p b)`, thus, while this holds,
+        // grounding and anchoring do not take a statement to be matched
+        // exclusively by its own node (unification.cpp). One atomic load.
+        bool may_hold_wider_statements() const;
         // Whether `n`, encountered within a rule's text, is a collection that
         // the rule's own statement wrote -- a Skolem function symbol, which
         // gets substituted by its term during firing -- as opposed to a value
@@ -460,7 +527,11 @@ namespace zelph::network
         // does, and a rule whose variables appear within one of its own
         // collections also holds them. A value -- a collection not owned by
         // the rule -- is never entered: what other rules wrote into it is not
-        // a variable in the text that holds it. When asked about a collection
+        // a variable in the text that holds it. The sole exception is a set
+        // pattern constructed by set() outside the template scope, whose
+        // variables outside rules are held in either reading
+        // (set_pattern_variables): it qualifies as a pattern, not data. When
+        // asked about a collection
         // directly, the response is no: a collection is not a fact, and
         // `{@{Y}}` is a set constant enclosing one collection
         // (kind_unknowable), while that set constant answers yes.
@@ -624,6 +695,19 @@ namespace zelph::network
         double edge_weight(Node from, Node to, double fallback = 1.0) const;
         void   set_edge_weight(Node from, Node to, double weight) const;
 
+        // --- Node annotations ---
+        // Strings, associated with a key, that a front end attaches to a node,
+        // external to the graph (see network.hpp); .save writes them, a
+        // removal erases them, a merge unites them. annotate throws when
+        // encountering a non-existent node and returns false if the key
+        // already contains the specified value; unannotate eliminates a
+        // single value, or all values of the key when `value` is null, and
+        // returns the count of removed values.
+        using node_annotations = Network::node_annotations;
+        bool             annotate(Node node, const std::string& key, const std::string& value) const;
+        node_annotations annotations(Node node) const;
+        std::size_t      unannotate(Node node, const std::string& key, const std::string* value = nullptr) const;
+
         // --- Number display (registered digit alphabet) ---
         // A script may register the digit alphabet of its number
         // representation, in ascending order of value. node_to_string then
@@ -762,8 +846,8 @@ namespace zelph::network
         /// whenever the node took part in a fact -- the callers report it.
         /// `deferred_names` makes it affordable in BULK; see the definition.
         size_t        remove_node(Node node, adjacency_set* deferred_names = nullptr) const;
-        void          collect_doomed(Node node, adjacency_set& out, const adjacency_set* keep = nullptr) const;
-        void          remove_doomed(const adjacency_set& doomed, adjacency_set* deferred_names = nullptr) const;
+        void          collect_doomed(Node node, adjacency_set& out, const adjacency_set* keep = nullptr, const adjacency_set* added = nullptr) const;
+        void          remove_doomed(const adjacency_set& doomed, adjacency_set* deferred_names = nullptr, bool derived = false, bool restored = false) const;
         void          remove_names_of(const adjacency_set& dead) const;
         uint64_t      name_map_scans() const;
         adjacency_set get_rules() const;
@@ -779,6 +863,10 @@ namespace zelph::network
         /// predicate or one of its objects? For a rule that is the
         /// difference between stating it and stating something ABOUT it.
         bool is_mentioned(Node node) const;
+
+        /// Whether the `=>` fact `node` constitutes a rule in force: of rule
+        /// form and mentioned by nothing, the test get_rules applies.
+        bool is_rule_in_force(Node node) const { return has_rule_form(node) && !is_mentioned(node); }
 
         // --- Rule patterns that are not data -------------------------------
         //
@@ -868,8 +956,62 @@ namespace zelph::network
         /// created, and thereby asserted, just as previously. Only nodes
         /// within `created` are marked; a node that was present beforehand
         /// keeps its status. `statement` equals 0 when a query yields no
-        /// node.
-        void mark_query_operands(Node statement, const std::vector<Node>& created) const;
+        /// node. `refuted` holds the facts that the query's own ground
+        /// markings refute: those of them that the query created are written
+        /// as mentions, just as a refutation writes the fact it creates.
+        void mark_query_operands(Node statement, const std::vector<Node>& created, const std::vector<Node>& refuted = {}) const;
+
+        /// Delete the elements a query created that hold one of its
+        /// variables -- its statement, the facts, the sets and collections
+        /// from its patterns, the markings of its operands -- after the
+        /// query has been answered. Anything it created without a variable
+        /// stays: a query asserts what it constructs outside its operators.
+        /// `created` refers to what the query's scratch recorded, while
+        /// `declared` denotes the relation-type declarations it recorded as
+        /// provisional (cluster_declarations), which are also discarded
+        /// unless something that persists still relies on them.
+        size_t drop_query_text(const std::vector<Node>& created, const std::vector<std::pair<Node, Node>>& declared = {}) const;
+
+        /// A mention: a statement written down without being claimed. For
+        /// anything `created` by the writer, each ground fact node reachable
+        /// from `root` gets the rule-pattern mark; whenever a rule is
+        /// encountered along the path, it is rule text with its own parts
+        /// marked (mark_rule_patterns), and a collection is a value whose
+        /// memberships constitute its data. A rule at `root` that the writer
+        /// created receives the mark directly, thus it is not in force until
+        /// a claim revokes the mark. Whatever existed before keeps its status.
+        void mark_mention(Node root, const std::vector<Node>& created) const;
+
+        /// Build the fact (subject predicate objects...) as a mention
+        /// (zelph/mention, zelph_mention): an already present fact keeps its
+        /// status, a new one gets marked, and a refutation marking expressed
+        /// in this way refutes nothing.
+        Node mention(Node subject, Node predicate, const adjacency_set& objects);
+
+        /// The claim that the fact (subject predicate objects...) does not
+        /// hold (zelph/refute, zelph_refute): the fact at probability 0 and
+        /// its claimed marking. What the refutation claims is the marking, not
+        /// the fact itself: a fact that existed keeps its status, apart from
+        /// the refusals of Zelph::fact, and a new one is written as a mention,
+        /// ensuring it no longer reads as asserted once the refutation is
+        /// withdrawn.
+        Node refute(Node subject, Node predicate, const adjacency_set& objects);
+
+        /// The fact (subject predicate objects...) that a command builds to
+        /// resolve a printed pattern (.explain, .node, the prune commands),
+        /// within a scratch cluster that it discards before retrieving the
+        /// answer. It is written for that question exclusively, so it may be
+        /// the mark of a rule's pattern, which fact() refuses from any other
+        /// writer.
+        Node resolution_fact(Node subject, Node predicate, const adjacency_set& objects);
+
+        /// Whether the marked node `node` functions as a mention instead of
+        /// a rule's text: the upward walk across the facts that hold it, and
+        /// across those above that are marked or hold a variable, encounters
+        /// neither a rule (`=>`), nor a rule text membership, nor a
+        /// condition operator, and the node itself is not a fact of a
+        /// condition operator. The label of .explain and .node.
+        bool is_mention(Node node) const;
 
         /// The rule in force that specifies the same content as `rule`, up to
         /// a renaming of its variables (rule_identity.hpp), or 0. With
@@ -902,14 +1044,48 @@ namespace zelph::network
         /// the cluster recorded.
         void restore_rule_patterns(const std::vector<Node>& patterns) const;
 
+        /// Take back, from the journaling of the cluster
+        /// (Network::note_refutation), the impact that a dropped cluster's
+        /// refutations had on facts that were already present before it:
+        /// the refuted index and the weight of each fact's edge to its
+        /// predicate.
+        void restore_refutations(const std::vector<std::pair<Node, Network::RefutationPrior>>& priors) const;
+
         /// Was this fact node built as a rule pattern and never claimed?
         /// One hash probe, and a single empty() test in the graphs -- the
         /// overwhelming majority -- whose rules all carry variables.
         bool is_rule_pattern(Node node) const;
 
+        /// The nodes marked at present, extracted under the index lock, as
+        /// refuted_facts_snapshot copies its own.
+        std::vector<Node> rule_patterns_snapshot() const;
+
         /// Revoke the mark: the statement has been asserted or derived.
         /// Returns whether there was one.
         bool unmark_rule_pattern(Node node) const;
+
+        /// Take back the claim that revoked the mark of `node`, a mention: the
+        /// mark reappears, and no cluster records the revocation anymore,
+        /// since a drop has nothing left to restore
+        /// (Reasoning::settle_fact_rules).
+        void restore_mention(Node node) const;
+
+        /// Throw if a claim of `pattern`, a rule's pattern, is refused: a
+        /// declaration `P ~ opaque` that cannot be made, or the marking
+        /// `(F) ~ refuted` of a fact that the graph claims.
+        /// unmark_rule_pattern asks this before the mark goes.
+        void refuse_claim_of_pattern(Node pattern) const;
+
+        /// Throw before the fact (subject predicate objects...) is recorded,
+        /// if claim_marked_parts were to refuse the claim of one of its parts,
+        /// so that the refused statement leaves nothing behind.
+        void refuse_claim_of_marked_parts(Node subject, Node predicate, const adjacency_set& objects) const;
+
+        /// The number of marks that unmark_rule_pattern has revoked since
+        /// the latest reset, counted exclusively when logging is active
+        /// (`.prof`).
+        uint64_t rule_patterns_unmarked() const;
+        void     reset_rule_patterns_unmarked() const;
 
         /// What a claim does with a node nested in the statement
         /// (claim_nested): `Pass` neither claims nor enters it, `Claim`
@@ -935,6 +1111,16 @@ namespace zelph::network
         /// allocation.
         void claim_nested(Node statement, const ClaimReach& reach) const;
 
+        /// The claim of a fact asserted via an API -- `zelph/fact` within a
+        /// user's Janet block, `zelph_fact` in the C API -- applies to the
+        /// facts nested in it; the mark belonging to the fact itself is under
+        /// the caller's control for revocation (unmark_rule_pattern). It enters
+        /// only a part that remains a rule's pattern, and the parts are at
+        /// hand, so a fact whose parts carry no mark (every fact from a bulk
+        /// import) costs one probe per part that constitutes a fact, and its
+        /// structure is not read.
+        void claim_marked_parts(Node fact, Node subject, Node predicate, const adjacency_set& objects) const;
+
         /// The nodes that claim_nested has taken up and the adjacency
         /// entries it has read in this process. Unaffected by hardware,
         /// enabling a test to bound what a claim costs per statement.
@@ -953,6 +1139,44 @@ namespace zelph::network
         /// load in every graph that refutes nothing.
         bool is_refuted_fact(Node node) const;
 
+        // Whether the fact (subject predicate objects) constitutes the
+        // engine's internal bookkeeping regarding a rule or a contradiction,
+        // rather than serving as a declarative statement: it is a rule pattern
+        // mark, a contradiction record marking, or a record's membership when
+        // nothing else names the record (is_bare_record). Unification skips
+        // such a fact, just as it skips a rule pattern, and likewise,
+        // zelph/exists and the closure of a path condition omit it.
+        bool is_bookkeeping(Node subject, Node predicate, const adjacency_set& objects) const;
+
+        // The identical reading applied to a fact provided via its node, for a
+        // command that specifies a single fact rather than matching a pattern:
+        // the ground form of the prune commands, which must retain what the
+        // variable form skips.
+        bool is_bookkeeping(Node fact) const;
+
+        // Whether the set constitutes a contradiction record that nothing but
+        // the record names: a refuted set constant whose sole statements are
+        // its marking `~ refuted` and its own memberships. A statement that
+        // holds a variable, the pattern of a rule, or the pattern of a query,
+        // does not contribute to the count. Any set named by a different
+        // statement is simultaneously that statement's set, and its
+        // memberships are considered data.
+        bool is_bare_record(Node set) const;
+
+        // Whether the fact is part of a rule's text: the tag `~ conjunction`
+        // of a condition set, or a membership of rule text
+        // (holds_rule_text). Queries and conditions access it, because a rule
+        // over rules reads the conditions of a rule via it; it is not a
+        // claim, and the prune commands leave it, just as they leave a rule's
+        // patterns.
+        bool is_rule_text_fact(Node subject, Node predicate, const adjacency_set& objects) const;
+        bool is_rule_text_fact(Node fact) const;
+
+        // Whether the prune command is matching the pattern, during which the
+        // scan bypasses a rule's own text as well (is_rule_text_fact).
+        bool prune_scan() const;
+        void set_prune_scan(bool on) const;
+
         /// Record the claim that this fact does not hold. The caller has
         /// already created it with a probability below 0.5; this adds the
         /// marking fact that survives a save and the index that makes the
@@ -967,6 +1191,50 @@ namespace zelph::network
         /// Put a node into the refuted index without writing the marking fact,
         /// for a caller that has just seen or written one.
         void note_refuted(Node node) const;
+
+        /// The consequences of a claimed refutation of `fact` are its entry
+        /// in the refuted index and, for a fact node lacking a variable, the
+        /// assignment of probability 0 on the edge to its predicate. These
+        /// consequences persist precisely as long as a claimed marking `fact ~
+        /// refuted` remains present, which is why this is called when a
+        /// marking turns into a claimed one, not when it is written as part of
+        /// a rule's structure.
+        void apply_refutation(Node fact) const;
+
+        /// The subject F of a marking `F ~ refuted`, or 0 in the case of any
+        /// other node.
+        Node refuted_marking_subject(Node marking) const;
+
+        /// When a pattern scope remains open on this thread, a marking written
+        /// functions as a pattern and refutes nothing: a command that resolves
+        /// a printed pattern opens it, just as a query under construction
+        /// does, applying the markings it claims once its statement completes.
+        /// Scopes nest. A scope given `deferred` collects the markings written
+        /// within it, for a caller that applies those it finds claimed
+        /// afterwards: a firing whose consequence mentions a rule, which only
+        /// determines which of its parts correspond to the mentioned rule once
+        /// the consequence is built.
+        void enter_pattern_scope(std::vector<Node>* deferred = nullptr) const;
+        void leave_pattern_scope() const;
+        /// Whether the pattern scope holds this marking back, passing it to
+        /// the collection of the innermost scope when that scope possesses
+        /// one.
+        bool defer_marking(Node marking) const;
+        class PatternScope
+        {
+        public:
+            explicit PatternScope(const Zelph& z, std::vector<Node>* deferred = nullptr)
+                : _z(z)
+            {
+                _z.enter_pattern_scope(deferred);
+            }
+            ~PatternScope() { _z.leave_pattern_scope(); }
+            PatternScope(const PatternScope&)            = delete;
+            PatternScope& operator=(const PatternScope&) = delete;
+
+        private:
+            const Zelph& _z;
+        };
 
         /// Does the graph hold ANY refuted fact? One atomic load, so a caller
         /// on a bulk path can decide whether the question is worth asking at
@@ -983,12 +1251,99 @@ namespace zelph::network
         /// Drop these nodes from the index, because they are being removed.
         /// A contradiction record is content-addressed, so a stale entry would
         /// survive the removal of the very facts it is about and silence the
-        /// report when they come back.
-        void forget_refuted(const adjacency_set& gone) const;
+        /// report when they come back. A removed marking also takes its
+        /// subject out of the index, and the 0 on that subject's edge along
+        /// with it, unless the caller is a cluster drop that `restored` the
+        /// state from its journal. Call while the edges of `gone` still exist.
+        void forget_refuted(const adjacency_set& gone, bool restored = false) const;
+
+        /// Drop these nodes from the rule-pattern set, as they are being
+        /// removed: a fact that is entered or derived again has the same
+        /// identifier and does not constitute a pattern.
+        void forget_rule_patterns(const adjacency_set& gone) const;
 
         /// Rebuild that index from the graph, for the same reason
         /// rebuild_rule_pattern_index exists.
         void rebuild_refuted_index() const;
+
+        /// Invalidate the predicate index associated with `fact`'s
+        /// predicate: the fact either joined or left the statements a
+        /// closure skips.
+        void invalidate_predicate_index_of(Node fact) const;
+
+        // --- Opaque predicates -----------------------------------------------
+        //
+        // A statement claims itself and every fact nested in it, provided
+        // they are not inside an opaque argument position: anything a writer
+        // newly creates within the subject or an object of an opaque fact is
+        // a mention, carrying the rule-pattern mark. `=>` serves as the
+        // built-in opaque predicate; the fact `P ~ opaque`, when claimed,
+        // establishes P as such. Similar to `refuted`, `opaque` is a NAMED
+        // node in the language zelph, not a core one.
+
+        /// The name of the node that `P ~ opaque` declares a predicate with.
+        static const char* opaque_name();
+
+        /// Whether `name` in `lang` refers to a node within the engine's
+        /// internal vocabulary, and whether that node functions as a
+        /// predicate. Zelph::node creates such a node outside any cluster and
+        /// declares a predicate a relation type at once.
+        enum class Vocabulary
+        {
+            none,
+            node,
+            predicate
+        };
+        static Vocabulary engine_vocabulary(const std::string& name, const std::string& lang);
+
+        /// Whether `predicate` is declared opaque: there is a claimed
+        /// `predicate ~ opaque` fact. A single atomic load within each graph
+        /// that declares none, and a check on a limited set in all other
+        /// cases.
+        bool is_opaque_predicate(Node predicate) const;
+        bool has_opaque_predicates() const;
+
+        /// The predicate P, which the fact `P ~ opaque` declares, or 0
+        /// for any other node.
+        Node opaque_declaration_subject(Node fact) const;
+
+        /// A single fact of `predicate` that holds a statement in an
+        /// argument position, or 0. Facts for which `ignore` answers true do
+        /// not count.
+        Node fact_holding_statement(Node predicate, const std::function<bool(Node)>& ignore = nullptr) const;
+
+        /// Refuse to alter the opacity of `predicate` as long as any of its
+        /// facts holds a statement: what that fact claimed in that position
+        /// cannot be told apart afterwards, thus a late declaration would
+        /// silently modify prior claims. `removing` selects the wording.
+        void refuse_opacity_change(Node predicate, bool removing, const std::function<bool(Node)>& ignore = nullptr) const;
+
+        /// The removal of what `doomed` answers true for takes a declaration
+        /// away: refused akin to refuse_opacity_change as long as a fact of
+        /// the predicate that stays holds a statement. Called before any
+        /// removal.
+        void refuse_opacity_removal(const std::function<bool(Node)>& doomed) const;
+
+        /// Refuse the name merge from `from` into `into` when a predicate,
+        /// which currently is not opaque, would become opaque after the
+        /// operation, provided that one of its facts holds a statement. The
+        /// message remains the same as that of refuse_opacity_change; it is
+        /// triggered before any modification resulting from the merge.
+        void refuse_opaque_merge(Node from, Node into) const;
+
+        /// Reject assigning the name of the engine's vocabulary in
+        /// language zelph (engine_vocabulary) to any node other than the
+        /// one that carries it, and refuse to take such a name from its
+        /// node, just as a core node's spelling is refused. Triggered
+        /// before any modification.
+        /// The `node` designated as 0 represents a node that the caller
+        /// intends to create, which takes no name of the vocabulary.
+        void refuse_vocabulary_rename(Node node, const std::string& name, const std::string& lang) const;
+
+        /// Record that `predicate` was declared, and read the declarations
+        /// back from the graph following a load.
+        void note_opaque(Node predicate) const;
+        void rebuild_opaque_index() const;
 
         // A node IS the hash of what it is built from, so merging one node
         // away invalidates the identity of everything built on it: the fact
@@ -1017,12 +1372,105 @@ namespace zelph::network
         /// Every hash-identified node that `node` takes part in, transitively,
         /// with its recipe -- ordered so that a node comes after everything it
         /// is built from. Call BEFORE the merge, while the hashes still hold.
-        std::vector<std::pair<Node, HashRecipe>> collect_hash_dependents(Node node) const;
+        /// `also`, if not 0, acts as a second node whose dependents are
+        /// gathered by the same traversal: the survivor of a merge whose own
+        /// identifier changes (merge_shape).
+        std::vector<std::pair<Node, HashRecipe>> collect_hash_dependents(Node node, Node also = 0) const;
 
-        /// Re-create those nodes under the id their new components give them,
-        /// folding each into an equal node that already exists. Call AFTER the
-        /// merge, with what the call above returned.
-        void rehash_dependents(const std::vector<std::pair<Node, HashRecipe>>& recipes, Node from, Node into) const;
+        /// The recipe of `node` when it is identified by a hash, read while
+        /// its identifier remains valid; false for all other nodes.
+        bool hash_recipe(Node node, HashRecipe& out) const;
+
+        /// The outcome of merging `from` into `into`, determined before the
+        /// merge while the ids remain valid. An atom is a name without
+        /// adornment, a statement or a set constant a term whose content
+        /// identifies it. Two atoms undergo merging. An atom and a term
+        /// merge into the term, which keeps its identifier
+        /// (resolve_name_conflict_locked governs this merge direction): the
+        /// atom's facts are rebuilt over the term. Two statements sharing
+        /// the same subject and predicate merge into a single statement that
+        /// holds the combined objects, `a p b` and `a p c` becoming
+        /// `a p b c`; its identifier is returned, as the line it prints must
+        /// re-enter as the identical node. All other term pairs are refused
+        /// with the reason, as are a term paired with a core node, a term
+        /// containing a variable from a rule, a node that is part of the
+        /// other, and an atom holding members that a set constant lacks.
+        /// Returns 0 if the surviving entity preserves the id of `into`.
+        /// `holder` denotes the node that holds `name` in `lang`, used for
+        /// the message.
+        Node merge_shape(Node from, Node into, Node holder, const std::string& name, const std::string& lang) const;
+
+        /// A single node that the merge re-creates: `old_id` goes into
+        /// `new_id`, which the step creates or which is already present (a
+        /// fold). The states are those of the two nodes immediately before
+        /// the step.
+        struct MergeStep
+        {
+            Node               old_id  = 0;
+            Node               new_id  = 0;
+            bool               created = false;
+            Network::FoldState old_state;
+            Network::FoldState new_state;
+        };
+
+        /// The outcome of merging `from` into `into`, determined by
+        /// examining the recipes before any modifications: the steps in
+        /// dependency order, where each node that vanishes goes (`moved`,
+        /// including `from`), and the nodes that remain claimed after a
+        /// fold.
+        struct MergePlan
+        {
+            Node                           from = 0;
+            Node                           into = 0;
+            Network::FoldState             from_state;
+            Network::FoldState             into_state;
+            std::vector<MergeStep>         steps;
+            std::unordered_map<Node, Node> moved;
+            std::vector<Node>              claimed;
+            /// The connections between statements that nobody claimed and
+            /// their respective predicates, which take the probability 0 of the
+            /// refuted statement they fold into (refuse_conflicting_merge), are
+            /// written by set_name before the merge.
+            std::vector<std::pair<Node, Node>> refuted_with;
+            /// An atom merged into a statement or a set constant: its facts
+            /// are rebuilt over the term, and each one that is claimed
+            /// claims what it nests, just as the line of the rebuilt fact
+            /// would (rehash_dependents).
+            bool defines = false;
+        };
+        /// `survivor`, if different from 0, is the identifier that `into`
+        /// moves to (merge_shape), planned as the first step.
+        MergePlan plan_merge(Node from, Node into, const std::vector<std::pair<Node, HashRecipe>>& recipes, Node survivor = 0) const;
+
+        /// The procedure for a name merge follows identical paths for both
+        /// set_name overloads. plan_name_merge refuses any merge that is
+        /// impossible and plans the repair; it executes before any change
+        /// and without name locks, as it accesses recipes via the fact
+        /// readers. carry_out_name_merge_locked merges the two nodes with
+        /// both name locks held; the names are left to the caller.
+        /// finish_name_merge rebuilds what was built upon the vanished node,
+        /// operating without locks.
+        MergePlan plan_name_merge(Node from, Node into, Node holder, const std::string& name, const std::string& lang) const;
+        void      carry_out_name_merge_locked(const MergePlan& plan) const;
+        void      finish_name_merge(const MergePlan& plan) const;
+
+        /// Refuse the merge when it would join two connections with
+        /// conflicting probabilities, an action that Network::merge is
+        /// incapable of performing: the situation where a fact known to be
+        /// wrong ends up being the same statement as one that is not.
+        /// `holder` denotes the node currently holding `name` in `lang`.
+        /// Executed before any modification.
+        /// A statement nobody claimed, which folds into a refuted
+        /// statement, constitutes no conflict: it takes the refutation,
+        /// and its connection to its predicate is transferred to
+        /// `plan.refuted_with`.
+        void refuse_conflicting_merge(MergePlan& plan, Node holder, const std::string& name, const std::string& lang) const;
+
+        /// Re-create the nodes using the identifiers assigned by their new
+        /// components, folding each into a pre-existing node that is equal.
+        /// Call AFTER the merge, using the plan established before the
+        /// operation.
+        void rehash_dependents(const MergePlan& plan) const;
 
         /// Which node keeps a contested name and which one disappears into
         /// it. Assumes both name locks are HELD; reads only, so set_name can
@@ -1061,9 +1509,59 @@ namespace zelph::network
         std::vector<std::pair<std::string, size_t>> list_clusters() const;
         /// The nodes a cluster has recorded, i.e. which of them are NEW.
         std::vector<Node> cluster_nodes(const std::string& name) const;
-        size_t            drop_cluster(const std::string& name) const;
-        size_t            drop_scratch_cluster(const std::string& name) const;
-        bool              merge_cluster(const std::string& from, const std::string& to) const;
+        /// The relation-type declarations that a cluster recorded as
+        /// provisional, each featuring its predicate
+        /// (Network::note_declaration). Read it before a merge, which hands
+        /// them on.
+        std::vector<std::pair<Node, Node>> cluster_declarations(const std::string& name) const;
+        /// Removes the nodes the cluster created and reapplies the marks to
+        /// the patterns it claimed. Returns the count of nodes that were
+        /// removed. Each drop goes through it; refer to the definition for the
+        /// path that keeps the fact stores armed.
+        size_t drop_cluster(const std::string& name) const;
+        /// The same action as drop_cluster, under the name by which the
+        /// engine's own scratch clusters were dropped.
+        size_t drop_scratch_cluster(const std::string& name) const;
+        bool   merge_cluster(const std::string& from, const std::string& to) const;
+        /// Bookkeeping only: the nodes leave each cluster that recorded them
+        /// and are recorded in `name` alone, or in none if `name` is empty.
+        void move_into_cluster(const std::string& name, const std::vector<Node>& nodes) const;
+        // The scratch cluster associated with a firing is maintained
+        // separately from the named clusters (Network::open_firing_journal).
+        // open_firing_journal triggers its activation under `name` and returns
+        // false if a cluster with that name is already active;
+        // keep_firing_journal merges it into the cluster that was active
+        // before it opened, mirroring the behaviour of merge_cluster, and
+        // close_firing_journal turns it into the named cluster `name`,
+        // preparing it for drop_scratch_cluster.
+        bool              open_firing_journal(const char* name) const;
+        void              keep_firing_journal(const char* name) const;
+        void              close_firing_journal() const;
+        std::vector<Node> firing_journal_nodes() const;
+        void              move_into_firing_journal(const std::vector<Node>& nodes) const;
+        // While one is alive, nothing that is created is recorded in a
+        // cluster: whatever the engine re-creates as part of its own
+        // bookkeeping of a node that existed before belongs to no cluster
+        // (restore_rule_patterns, rehash_dependents). Released upon every
+        // exit, including a throw, ensuring a failure cannot leave the
+        // session's cluster recording nothing.
+        class ClusterRecordingPause
+        {
+        public:
+            explicit ClusterRecordingPause(const Zelph& z)
+                : _z(z)
+            {
+                _z.pause_cluster_recording();
+            }
+            ~ClusterRecordingPause() { _z.resume_cluster_recording(); }
+            ClusterRecordingPause(const ClusterRecordingPause&)            = delete;
+            ClusterRecordingPause& operator=(const ClusterRecordingPause&) = delete;
+
+        private:
+            const Zelph& _z;
+        };
+        void pause_cluster_recording() const;
+        void resume_cluster_recording() const;
         // The engine employs clusters whose names begin with a leading "__":
         // the scratch where a rule is constructed (__rule), a construction's
         // (__construction), and those used by .explain (__explain) and
@@ -1073,7 +1571,7 @@ namespace zelph::network
         // entry points that allow a user to designate a cluster for activation
         // or merging explicitly reject such names: .cluster, .cluster-merge,
         // zelph/cluster, and zelph_cluster.
-        static bool        is_scratch_cluster_name(const std::string& name) { return name.starts_with("__"); }
+        static bool        is_scratch_cluster_name(const std::string& name) { return Network::is_scratch_cluster_name(name); }
         static std::string scratch_cluster_name_refusal(const std::string& name)
         {
             return "the cluster name '" + name + "' begins with \"__\", which is reserved for the engine's own scratch clusters";
@@ -1131,6 +1629,29 @@ namespace zelph::network
         // the information it retains about the old graph across commands.
         std::function<void()> _on_graph_replaced;
 
+        // Triggered by each route that removes nodes, with the nodes it is
+        // about to remove, while their edges remain intact. `derived`: these
+        // are the nodes of a dropped cluster that a run derived into (see
+        // Network::cluster_derived). Reasoning sets it to keep its record of
+        // what was added since the previous run true to the graph.
+        std::function<void(const adjacency_set& removed, bool derived)> _on_removal;
+
+        // Triggered upon the conclusion of a cluster's bookkeeping: either
+        // through a drop (`into` is null) or via a merge (`into` names the
+        // destination, empty in the case of the default cluster). Reasoning
+        // sets it to give back, or retain, what a run consumed while the
+        // cluster remained active.
+        std::function<void(const std::string& name, const std::string* into)> _on_cluster_closed;
+
+        // `observer` is called by every name merge once all that was
+        // constructed upon the node that vanished is now positioned under
+        // its fresh identifier, with `moved`: every node that disappeared
+        // and the node currently holding it. Reasoning sets it to carry its
+        // negation records over to the new ids.
+        void observe_merges(std::function<void(const std::unordered_map<Node, Node>& moved)> observer) const;
+
+        void announce_removal(const adjacency_set& removed, bool derived = false) const;
+
         // Drop the memoized relation-type set, so the next predicate test
         // rebuilds it from the graph. Protected rather than private: every
         // path that removes facts has to call it when one of them was a
@@ -1138,10 +1659,56 @@ namespace zelph::network
         void invalidate_relation_type_set() const;
 
     private:
+        static void advance_content_epoch();
+
+        // For a closure to walk around, the facts of `predicate` that serve
+        // as bookkeeping (is_bookkeeping) are: the marks and the record
+        // markings for `~`, the memberships of bare records for `in`. Null for
+        // every other predicate, and whenever there is nothing to walk
+        // around.
+        std::shared_ptr<const adjacency_set> bookkeeping_facts(Node predicate) const;
+
+        // Called by fact() for the statement it has just created: announces
+        // the memberships of every refuted set constant that the statement
+        // names, which then become data alongside it (is_bare_record).
+        void announce_named_records(Node statement, Node subject, Node predicate, const adjacency_set& objects) const;
+
+        // The body of fact(). `writer` is `implicit_declaration` for a single
+        // invocation exclusively: the relation-type declaration `P ~ ->` that fact()
+        // generates autonomously upon the first fact of a predicate. It acts as
+        // `pattern_mark` for the marks of rules' patterns that the engine writes on
+        // its own, which no other entity may write, and as `resolution` for a fact
+        // that a command builds to resolve a printed pattern and subsequently
+        // discards (resolution_fact). Any declaration entered by a user, derived by
+        // a rule, or produced by a program proceeds via the public overload.
+        enum class Writer
+        {
+            statement,
+            implicit_declaration,
+            pattern_mark,
+            resolution
+        };
+        Node fact(Node subject, Node predicate, const adjacency_set& objects, long double probability, Writer writer);
+
         // After a load: once it has progressed the epoch past
         // `epoch_before`, rebuilds the indexes read from the graph, forgets
         // the display registrations, and calls _on_graph_replaced.
         void adopt_loaded_graph(std::uint64_t epoch_before) const;
+
+        // The general path of drop_cluster, when a cluster is referenced by
+        // something outside it: the upward cascade of remove_node across
+        // every node of the cluster at once.
+        size_t drop_cluster_cascading(const std::string& name) const;
+
+        // Before a `name` drop: a provisional declaration that it recorded
+        // (Network::note_declaration) exits its record and persists while a
+        // fact beyond the record uses the predicate or something external to
+        // the record refers to the declaration.
+        void keep_shared_declarations(const std::string& name) const;
+
+        // The `gone` entries leave the record of set patterns
+        // (_set_patterns); both removal paths call it.
+        void forget_set_patterns(const adjacency_set& gone) const;
 
         // Drop the scheme tables, the digit alphabet, and the
         // verbose self-fact predicates, all of which identify nodes

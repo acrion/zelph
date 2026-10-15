@@ -28,6 +28,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include "fact_structure.hpp"
 #include "zelph_impl.hpp"
 
+#include <algorithm>
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
@@ -84,10 +85,9 @@ namespace
 
     bool var_in_closure_walk(const Zelph* n, Node nd, std::unordered_set<Node>& visited, Zelph::VariableReading reading);
 
-    // The text contained within a rule's own collection or a set constant,
-    // read by the walk below: a variable member, a fact or set constant the
-    // walk finds one in, or a rule's own collection containing such a
-    // member.
+    // The text contained within a rule's own collection, read by the walk
+    // below: a variable member, a fact or set constant the walk finds one in,
+    // or a rule's own collection containing such a member.
     bool members_text_walk(const Zelph* n, const Node c, std::unordered_set<Node>& visited, const Zelph::VariableReading reading)
     {
         return some_member(n, c, [&](const Node m)
@@ -95,6 +95,24 @@ namespace
                                if (Zelph::is_var(m)) return true;
                                if (Zelph::is_hash(m)) return var_in_closure_walk(n, m, visited, reading);
                                return n->is_rule_template(m) && visited.insert(m).second && members_text_walk(n, m, visited, reading); });
+    }
+
+    // The text a set constant holds, as Zelph::set records it: a member that
+    // is a rule's own collection containing a variable within its text,
+    // `{@{Y}}`. No other member contains one, because a literal over a
+    // variable, or over a term that holds one, constitutes a set pattern
+    // (kind_unknowable). The membership of a variable, or of a term holding
+    // one, is what a condition like `X in {b c}` writes: a pattern over the
+    // set, not an element within it. Read as the set's text, it made the set
+    // a rule template whenever the flag store was disarmed -- following a
+    // load, a removal, or a name merge -- and each membership within the set
+    // was then rejected as a candidate: `A in {b c}` answered nothing, and
+    // `(X in {b c}) => (X q r)` fired on nothing.
+    bool set_constant_text_walk(const Zelph* n, const Node c, std::unordered_set<Node>& visited, const Zelph::VariableReading reading)
+    {
+        return some_member(n, c, [&](const Node m)
+                           { return !Zelph::is_var(m) && !Zelph::is_hash(m) && n->is_rule_template(m) && visited.insert(m).second
+                                 && members_text_walk(n, m, visited, reading); });
     }
 
     // Whether the rule text beneath `n` holds a membership whose object
@@ -151,8 +169,9 @@ namespace
     // imports / removals matches historical semantics precisely, except for
     // the conditions of a `=>` fact and the members of a rule's own
     // collection and of a set constant, which it reads as
-    // Zelph::var_in_closure says, by `reading`. Depth remains fixed at 1
-    // (for logging purposes only).
+    // Zelph::var_in_closure says, by `reading`, and for the variables of a
+    // set pattern that a value holds (Zelph::set_pattern_variables). Depth
+    // remains fixed at 1 (for logging purposes only).
     bool var_in_closure_walk(const Zelph* n, const Node nd, std::unordered_set<Node>& visited, const Zelph::VariableReading reading)
     {
         if (nd == 0) return false;
@@ -162,7 +181,7 @@ namespace
 
         const bool text    = reading == Zelph::VariableReading::Text;
         const auto structs = get_fact_structures(n, nd, 1);
-        if (structs->empty()) return text && members_text_walk(n, nd, visited, reading); // a set constant
+        if (structs->empty()) return text && set_constant_text_walk(n, nd, visited, reading); // a set constant
 
         // A rule's own collection is entered as Zelph::fact enters it: not
         // as the object of a membership, which is its content (`enter`
@@ -170,6 +189,11 @@ namespace
         const auto component = [&](const Node c, const bool enter)
         {
             if (var_in_closure_walk(n, c, visited, reading)) return true;
+
+            // A set pattern that a value holds, in either reading, as
+            // Zelph::fact enters it.
+            if (enter && c != 0 && !Zelph::is_hash(c) && n->set_pattern_variables(c)) return true;
+
             return text && enter && c != 0 && !Zelph::is_hash(c) && !Zelph::is_var(c) && n->is_rule_template(c)
                 && visited.insert(c).second && members_text_walk(n, c, visited, reading);
         };
@@ -310,12 +334,21 @@ void Zelph::invalidate_fact_structures_cache() const noexcept
 // stale_budget degrades to the full clear -- the anchoring budget
 // philosophy: never unsound, never worse than the old semantics.
 //
-// The predicate-index coupling of the wholesale variant is kept: a built
-// index for this predicate is stale after any new fact. That call is one
-// atomic exchange when (as in the math workloads) no index exists.
+// The predicate index becomes invalid solely for THIS predicate, and only if
+// the fact may serve as one of its entries: during extraction, the variable
+// subject and every variable object are bypassed. Clearing every predicate's
+// index on every write rebuilt the P279 index after any unrelated fact, after
+// every query (since its patterns are facts) and after every dropped cluster,
+// while also disabling the sidecar for the session. A declaration also
+// invalidates the index associated with the predicate it declares (refer to
+// the details below). The call costs two atomic loads when, as in
+// mathematical workloads, no index has been constructed and no file has been
+// loaded.
 void Zelph::invalidate_fact_structures_for(const Node subject, const Node predicate, const adjacency_set& objects, const Node relation) const
 {
-    _pImpl->invalidate_predicate_index();
+    if (!is_var(subject) && std::any_of(objects.begin(), objects.end(), [](const Node o)
+                                        { return !is_var(o); }))
+        _pImpl->invalidate_predicate_index(predicate);
 
     const auto full_clear = [this]
     {
@@ -328,6 +361,19 @@ void Zelph::invalidate_fact_structures_for(const Node subject, const Node predic
     // (3) relation-type declarations change predicate detection globally
     if (predicate == core.IsA && objects.count(core.RelationTypeCategory) != 0)
     {
+        // Predicate detection serves as the foundation upon which the
+        // fact-structure cache relies. The predicate index remains
+        // independent of it: extract_predicate_pairs accesses adjacency
+        // exclusively, without any additional input. The declaration
+        // constitutes a fact of `~`, whose index was processed earlier, and a
+        // relation node among the candidates associated with the predicate it
+        // declares, thereby causing that index to be invalidated as well; no
+        // other predicate's index undergoes modification. Removing every index
+        // here meant that following a .load, the first fact of any new
+        // predicate would trigger the next class question to reconstruct the
+        // P279 index, and it would disable the sidecars for the duration of
+        // the session.
+        if (!is_var(subject)) _pImpl->invalidate_predicate_index(subject);
         invalidate_relation_type_set();
         full_clear();
         return;

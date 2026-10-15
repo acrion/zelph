@@ -34,8 +34,11 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 struct JanetAbstractType;
 struct JanetBuffer;
 
-// This condition replicates defined(JANET_NANBOX_64), see _deps/janet-src/src/include/janet.h
-#if !(defined(_M_ARM64) || defined(_M_ARM) || defined(__aarch64__)) && (defined(__x86_64__) || defined(_WIN64) || defined(__riscv) || defined(__EMSCRIPTEN__))
+// This condition mirrors the state in which janet.h defines Janet as a union: on every target
+// where it employs NaN-boxing, which is JANET_NANBOX_64 on 64-bit platforms listed in janet.h
+// (including aarch64 since Janet 1.42.0) and JANET_NANBOX_32 when using Emscripten. Refer to
+// _deps/janet-src/src/include/janet.h.
+#if defined(__x86_64__) || defined(_WIN64) || defined(__riscv) || defined(__aarch64__) || defined(_M_ARM64) || defined(__EMSCRIPTEN__)
 union Janet;
 #else
 struct Janet;
@@ -149,6 +152,24 @@ namespace zelph
         // suppressing it removes that fallback as well.
         using EchoPredicate = std::function<bool()>;
         void set_echo_predicate(EchoPredicate predicate);
+
+        // What `zelph/auto-run?` answers: whether the host performs
+        // inference following the processing of the input line, a behaviour
+        // that gets disabled upon module import. Configured by Interactive; if
+        // not set, there is no host that runs, and the binding answers
+        // false.
+        using AutoRunPredicate = std::function<bool()>;
+        void set_auto_run_predicate(AutoRunPredicate predicate);
+
+        // Before a binding that removes graph content (zelph/prune-fact)
+        // proceeds to remove anything, it asks this, which throws while the
+        // session holds a partial load; in such a case, the commands that
+        // remove content are blocked as well. The bindings that tell what
+        // such a removal takes or leaves (`zelph/holders`,
+        // `zelph/dependents`) also ask it. Set through Interactive; unset,
+        // nothing is refused.
+        using FullGraphGuard = std::function<void(const std::string& name)>;
+        void set_full_graph_guard(FullGraphGuard guard);
 
         void toggle_janet_logging();
 

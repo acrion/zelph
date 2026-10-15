@@ -117,6 +117,46 @@ TEST_CASE("slice: keeps the named predicate and drops the rest")
     fs::remove(file);
 }
 
+// A fact in which the subject equals its predicate, `p p q`, qualifies as
+// a fact of p just like any other. The slice told a fact of p from a fact
+// about p, such as the declaration `p ~ ->`, through a subject that differs
+// from p, thereby omitting `p p q`: alongside `m p n`, it retained a
+// single fact, and following the load `S p O`, only `m p n` was returned.
+// A statement that holds the fact changed nothing. The structure
+// corresponds to the one that self-predicate tests address in queries and
+// rules.
+TEST_CASE("slice: a fact whose subject is its predicate travels with the predicate")
+{
+    const auto file  = slice_path("self_predicate");
+    const auto slice = [&](const std::string& lines, const std::vector<std::string>& expected = {"m p n", "p p q"})
+    {
+        {
+            zelph::io::OutputCollector  collector;
+            zelph::console::Interactive interactive(collector.sink());
+            process_lines(interactive, lines);
+            interactive.process(".save-predicates \"" + file.string() + "\" p");
+            CHECK(any_event_contains(collector, "Saved 2 fact(s)"));
+        }
+
+        zelph::io::OutputCollector  collector;
+        zelph::console::Interactive interactive(collector.sink());
+        interactive.process(".load \"" + file.string() + "\"");
+        collector.clear();
+        interactive.process("S p O");
+        std::vector<std::string> found = collect_answers(collector);
+        std::sort(found.begin(), found.end());
+        CHECK(found == expected);
+        fs::remove(file);
+    };
+
+    SUBCASE("on its own") { slice("p p q\nm p n\n"); }
+    SUBCASE("held by a statement") { slice("p p q\nm p n\nx says (p p q)\n"); }
+    // The identifier corresponds to one hash over all objects, thus the
+    // precise test retrieves the complete set of objects via the edges;
+    // `S p O` yields a response for each individual object.
+    SUBCASE("with two objects") { slice("p p q r\nm p n\n", {"m p n", "p p q", "p p r"}); }
+}
+
 TEST_CASE("slice: names of retained nodes survive in every language")
 {
     const auto file = slice_path("names");
@@ -141,6 +181,49 @@ TEST_CASE("slice: names of retained nodes survive in every language")
     collector.clear();
     interactive.process(".lang wikidata");
     CHECK_THROWS(interactive.process(".node Q11"));
+
+    fs::remove(file);
+}
+
+TEST_CASE("slice: a slice keeps only the annotations of the nodes it keeps")
+{
+    // The annotations attached to a node travel with it, and a slice drops
+    // nodes: a file that kept the annotation of a node it no longer
+    // contains would hand it to whatever a subsequent session generates
+    // using that identifier. The nodes a slice preserves maintain their
+    // annotations, under the ids they originally held.
+    const auto file = slice_path("annotations");
+
+    zelph::network::Node kept_node    = 0;
+    zelph::network::Node dropped_node = 0;
+    zelph::network::Node kept_fact    = 0;
+    zelph::network::Node dropped_fact = 0;
+    {
+        zelph::io::OutputCollector  collector;
+        zelph::console::Interactive interactive(collector.sink());
+        build_source(interactive);
+        auto* const graph = interactive.graph();
+        kept_node         = graph->get_node("Q10", "wikidata");
+        dropped_node      = graph->get_node("Q11", "wikidata");
+        kept_fact         = graph->fact(kept_node, graph->get_node("P279", "wikidata"), {graph->get_node("Q20", "wikidata")});
+        dropped_fact      = graph->fact(kept_node, graph->get_node("P31", "wikidata"), {graph->get_node("Q20", "wikidata")});
+        REQUIRE(graph->annotate(kept_node, "source", "a kept node"));
+        REQUIRE(graph->annotate(dropped_node, "source", "a dropped node"));
+        REQUIRE(graph->annotate(kept_fact, "source", "a kept fact"));
+        REQUIRE(graph->annotate(dropped_fact, "source", "a dropped fact"));
+        interactive.process(".save-predicates \"" + file.string() + "\" P279");
+    }
+
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+    interactive.process(".load \"" + file.string() + "\"");
+    auto* const graph = interactive.graph();
+
+    using annotations = zelph::network::Zelph::node_annotations;
+    CHECK(graph->annotations(kept_node) == annotations{{"source", {"a kept node"}}});
+    CHECK(graph->annotations(kept_fact) == annotations{{"source", {"a kept fact"}}});
+    CHECK(graph->annotations(dropped_node).empty());
+    CHECK(graph->annotations(dropped_fact).empty());
 
     fs::remove(file);
 }

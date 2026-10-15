@@ -26,7 +26,8 @@ hf download acrion/zelph wikidata-20260309-all-pruned-small-P279.bin --repo-type
 
 ```
 zelph> .load wikidata-20260309-all-pruned-small-P279.bin
-Auto-run has been disabled due to loading a large dataset.
+Auto-run has been disabled, as every .load disables it: inference after each
+input line can be slow on a loaded network. Use .auto-run to enable it again.
 Loading network from generic file wikidata-20260309-all-pruned-small-P279.bin...
 Loading: left chunks=3, right chunks=3, nameOfNode chunks=2, nodeOfName chunks=2
 ...

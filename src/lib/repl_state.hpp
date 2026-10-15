@@ -25,6 +25,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #pragma once
 
+#include <cstddef>
 #include <map>
 #include <memory>
 #include <string>
@@ -214,6 +215,23 @@ namespace zelph::console
     inline bool announces_withheld(const ReplState& state)
     {
         return state.deduction_mode != DeductionMode::Quiet || !state.prompt_available;
+    }
+
+    // The error names a keyword block through the keyword and the first line
+    // of its content, appending " …" if additional lines are present. The
+    // line that dispatches a block is blank, and a block dispatched by the
+    // end of input has no such line at all, resulting in both being reported
+    // as `Error in line ""`.
+    inline std::string keyword_block_label(const std::string& keyword, const std::string& text)
+    {
+        const std::size_t end   = text.find('\n');
+        std::string       first = text.substr(0, end);
+        first.erase(first.find_last_not_of(" \t\r") + 1);
+
+        std::string label = keyword;
+        if (!first.empty()) label += " " + first;
+        if (end != std::string::npos && text.find_first_not_of(" \t\r\n", end) != std::string::npos) label += " …";
+        return label;
     }
 
     // Helper RAII struct to temporarily suspend auto-run

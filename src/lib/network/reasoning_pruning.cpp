@@ -28,15 +28,40 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include "fact_structure.hpp"
 #include "zelph_impl.hpp"
 
+#include <algorithm>
 #include <atomic>
 #include <exception>
 #include <mutex>
+#include <optional>
 #include <thread>
 #include <vector>
 
 #if !defined(__EMSCRIPTEN__) && !defined(_WIN32)
     #include <sys/resource.h>
 #endif
+
+namespace
+{
+    // During the scan of a prune, a rule's own text remains untouched
+    // (see is_engine_bookkeeping in unification.cpp) as long as the match
+    // persists, and not beyond, even if the matching results in a throw.
+    class PruneScan
+    {
+    public:
+        explicit PruneScan(const zelph::network::Zelph& z)
+            : _z(z)
+        {
+            _z.set_prune_scan(true);
+        }
+        ~PruneScan() { _z.set_prune_scan(false); }
+
+        PruneScan(const PruneScan&)            = delete;
+        PruneScan& operator=(const PruneScan&) = delete;
+
+    private:
+        const zelph::network::Zelph& _z;
+    };
+}
 
 // Prune mode: what does the matched condition denote?
 //
@@ -73,11 +98,12 @@ void zelph::network::Reasoning::collect_prune_targets(const Node condition, cons
     const Node    subject_pattern  = parse_fact(condition, objects, parent);
     const Node    relation_pattern = parse_relation(condition);
 
-    // A condition that contains a rule whose conditions form a set
-    // matches facts that are not its instance (holds_condition_set): the
-    // facts are those which the condition matches given the bindings.
+    // A condition that contains a set matched by its members
+    // (holds_member_matched_set) matches facts that are not its instance:
+    // the facts are those that the condition matches when considering the
+    // provided bindings.
     const auto known = _prune_by_members.try_emplace(condition, false);
-    if (known.second) known.first->second = holds_condition_set(this, condition);
+    if (known.second) known.first->second = holds_member_matched_set(this, condition);
     if (known.first->second)
     {
         Unification u(this, condition, parent, std::make_shared<Variables>(bindings), std::make_shared<Variables>(), nullptr, 1, nullptr);
@@ -210,6 +236,69 @@ bool Reasoning::is_core_declaration(const Node fact) const
     return !get_core_name(parse_fact(fact, objects, 0)).empty();
 }
 
+namespace
+{
+    // The line that both forms of a prune print regarding the core
+    // declarations they keep.
+    std::string kept_core_note(const size_t count)
+    {
+        return "Kept " + std::to_string(count) + " relation-type declaration(s) of core predicates; they are part of the engine, not data.";
+    }
+
+    // What a neighbour `holder` of `n` is to a withdrawal of n's claim: no
+    // fact that holds n, or rule text, a mention, or a tag, all of which stay
+    // (`none`); n's relation-type declaration, finalized following the walk
+    // (`declaration`); a membership within a collection of rule text, from
+    // which the walk proceeds to the `containers` (`collection`); or a
+    // statement that nests n (`statement`). withdraw_claims acts on the
+    // answer and Reasoning::holders lists by it, ensuring both read the
+    // classes in a single location. `parts` returns Reasoning::rule_parts
+    // and is invoked exclusively for a set constant, enabling holders to
+    // calculate it as needed.
+    enum class HolderRole
+    {
+        none,
+        declaration,
+        collection,
+        statement
+    };
+
+    template <class Parts>
+    HolderRole holder_role(const Reasoning& r, const Node n, const Node holder, const Parts& parts, std::vector<Node>& containers)
+    {
+        containers.clear();
+        if (r.parse_relation(holder) == 0) return HolderRole::none; // not a fact
+
+        const auto           structures = get_fact_structures(&r, holder, 3); // held, see Zelph::get_fact_subjects
+        const FactStructure* held       = nullptr;
+        for (const FactStructure& fs : *structures)
+        {
+            if (fs.subject == n || fs.predicate == n || fs.objects.count(n) != 0)
+            {
+                held = &fs;
+                break;
+            }
+        }
+        if (held == nullptr) return HolderRole::none; // one of n's own parts
+
+        if (held->predicate == r.core.Causes) return HolderRole::none;
+        if (held->predicate != n && r.is_opaque_predicate(held->predicate)) return HolderRole::none; // the statement stays a mention there
+        if (held->predicate == r.core.IsA
+            && (held->objects.count(r.core.Negation) != 0 || held->objects.count(r.core.Conjunction) != 0))
+            return HolderRole::none;
+        if (held->predicate == r.core.IsA && held->subject == n && held->objects.count(r.core.RelationTypeCategory) != 0)
+            return HolderRole::declaration;
+        if (held->predicate == r.core.PartOf)
+        {
+            for (const Node container : held->objects)
+                if (r.holds_rule_text(container) || (r.is_set_constant(container) && parts().count(container) != 0))
+                    containers.push_back(container);
+            if (!containers.empty()) return HolderRole::collection;
+        }
+        return HolderRole::statement;
+    }
+}
+
 // A statement may simultaneously function as a claim and a component of a
 // rule -- serving as its condition, its consequence, or appearing nested
 // within either: thanks to hash-consing, "a p b" asserted and
@@ -259,8 +348,9 @@ void Reasoning::withdraw_claims(const std::vector<Node>& facts, const adjacency_
     for (const Node fact : facts)
         seen.insert(fact);
 
-    const auto rule_text_collection = [&](const Node container)
-    { return holds_rule_text(container) || (parts.count(container) != 0 && is_set_constant(container)); };
+    const auto parts_of = [&]() -> const adjacency_set&
+    { return parts; };
+    std::vector<Node> containers;
 
     const auto read_as_predicate = [&](const Node statement)
     {
@@ -290,42 +380,24 @@ void Reasoning::withdraw_claims(const std::vector<Node>& facts, const adjacency_
         for (const Node holder : neighbours)
         {
             if (holder == n || seen.count(holder) != 0 || doomed.count(holder) != 0) continue;
-            if (parse_relation(holder) == 0) continue; // not a fact
 
-            const auto           structures = get_fact_structures(this, holder, 3); // held, see Zelph::get_fact_subjects
-            const FactStructure* held       = nullptr;
-            for (const FactStructure& fs : *structures)
-            {
-                if (fs.subject == n || fs.predicate == n || fs.objects.count(n) != 0)
-                {
-                    held = &fs;
-                    break;
-                }
-            }
-            if (held == nullptr) continue; // one of n's own parts
-
-            if (held->predicate == core.Causes) continue;
-            if (held->predicate == core.IsA
-                && (held->objects.count(core.Negation) != 0 || held->objects.count(core.Conjunction) != 0))
-                continue;
-            if (held->predicate == core.IsA && held->subject == n && held->objects.count(core.RelationTypeCategory) != 0)
+            const HolderRole role = holder_role(*this, n, holder, parts_of, containers);
+            if (role == HolderRole::none) continue;
+            if (role == HolderRole::declaration)
             {
                 seen.insert(holder);
                 declarations.emplace_back(holder, n);
                 continue;
             }
-            if (held->predicate == core.PartOf)
+            if (role == HolderRole::collection)
             {
-                bool rule_text = false;
-                for (const Node container : held->objects)
+                for (const Node container : containers)
                 {
-                    if (!rule_text_collection(container)) continue;
-                    rule_text = true;
                     if (seen.count(container) != 0) continue;
                     seen.insert(container);
                     pending.push_back(container);
                 }
-                if (rule_text) continue;
+                continue;
             }
             if (parts.count(holder) != 0)
             {
@@ -358,12 +430,225 @@ void Reasoning::withdraw_claims(const std::vector<Node>& facts, const adjacency_
     // The marking represents what persists after a removal, and dropping
     // a cluster undoes no prior removal. Stored within the active
     // cluster, the marking went with .cluster-drop, and the next .save
-    // and .load read the statement back as asserted. Suspension of
-    // recording occurs as in Zelph::rehash_dependents.
-    const std::string active = active_cluster_name();
-    if (!active.empty()) deactivate_cluster();
+    // and .load read the statement back as asserted. restore_rule_patterns
+    // records it in no cluster.
     restore_rule_patterns(withdrawn);
-    if (!active.empty()) set_active_cluster(active);
+
+    // A refutation marking that has been withdrawn reverts to being a
+    // rule's pattern, and such a pattern does not refute anything: its
+    // fact leaves the refuted index, which a .load retrieves from the
+    // claimed markings alone (forget_refuted reads the marking's edges,
+    // which remain intact).
+    adjacency_set unclaimed;
+    for (const Node n : withdrawn)
+        unclaimed.insert(n);
+    forget_refuted(unclaimed);
+}
+
+// Eliminating a fact that is not embedded within a rule results in the
+// deletion of the statements that contain it, and via remove_node's cascade,
+// any container that had the fact as a member is also erased, together with
+// any statement that names that container. When a rule refers to that
+// container, the rule itself is likewise deleted: beside the rule
+// `(X likes k) => (X ok yes)`, pruning `a p b` with `(a p b) in k` took `k`,
+// the rule, and `j likes k`, but the same pruning left `k` and the rule intact
+// when a different rule adopted `a p b` as its pattern, since withdraw_claims
+// keeps the parts of each rule. In both scenarios, the cascade now stops at a
+// rule part whose identity is independent of its edges: an atom, or a
+// collection under a counter or a template id. A fact or a set constant is
+// defined by its content, so if it loses a component, it ceases to be the
+// statement or the set that a rule was written against, and keeping it would
+// result in a node whose identifier no longer aligns with its edges. It goes
+// along with the rule that holds it, as previously.
+adjacency_set Reasoning::kept_by_removal(const adjacency_set& parts) const
+{
+    adjacency_set keep;
+    for (const Node part : parts)
+        if (!Zelph::Impl::is_hash(part)) keep.insert(part);
+    return keep;
+}
+
+size_t Reasoning::remove_fact_and_holders(const Node fact, const adjacency_set& parts) const
+{
+    const adjacency_set keep = kept_by_removal(parts);
+    disable_fact_stores(); // as the operation remove_node performs
+    adjacency_set doomed;
+    collect_doomed(fact, doomed, &keep);
+    adjacency_set named;
+    remove_doomed(doomed, &named);
+    remove_names_of(named);
+    return doomed.size();
+}
+
+// The ground form of .prune-facts and zelph/prune-fact, a single
+// implementation serving both. `fact` names the statement precisely, hence
+// the act of pruning `a p b` does not extend to `a p b c`.
+Reasoning::PrunedFact Reasoning::prune_fact(const Node fact)
+{
+    if (!check_fact(fact).is_known() || !is_asserted_fact(fact) || is_bookkeeping(fact) || is_rule_text_fact(fact)) return {};
+
+    // The variable form keeps the relation-type declaration associated
+    // with a core predicate (prune_facts), and this form removed it:
+    // following `.prune-facts ~ ~ ->`, no fact of `~` could be read
+    // anymore, and `bob ~ man` answered `??`. It is kept here as
+    // well, with the same line.
+    if (is_core_declaration(fact))
+    {
+        out_stream() << kept_core_note(1) << std::endl;
+        return {};
+    }
+
+    // The claim goes, and whatever holds the statement goes along
+    // with it; a statement that is also included within a rule --
+    // whether as its condition, its consequence, or embedded within
+    // one of those -- continues to serve as the rule's pattern (see
+    // Reasoning::withdraw_claims).
+    note_user_removal();
+    const adjacency_set parts = rule_parts();
+    if (parts.count(fact) != 0)
+    {
+        withdraw_claims({fact}, parts);
+        return {FactPrune::unclaimed, 1};
+    }
+
+    // The count encompasses the statements that were carried
+    // along when the fact was removed, just as the count of
+    // the variable form does.
+    return {FactPrune::removed, remove_fact_and_holders(fact, parts)};
+}
+
+// The statements that have `fact` as their subject, predicate, or object,
+// read as withdraw_claims reads them (holder_role): what prune_fact takes
+// along in its first step, or withdraws, since a holder belonging to a rule
+// loses its claim and remains. Excluded are rule text, mentions, and tags,
+// the engine's bookkeeping, any pattern involving a variable, and the fact's
+// own refutation marking; a refuted holder is listed where the prune takes
+// it along with its refutation. Only direct holders: a statement that nests
+// a holder goes with the holder. The rule parts are inspected only for a
+// membership or for a refuted holder, so otherwise the cost corresponds to
+// the degree of the fact.
+std::vector<Node> Reasoning::holders(const Node fact) const
+{
+    // prune_fact retains the core predicate's declaration and takes nothing
+    // alongside it, thus nothing that holds the declaration is included in
+    // the list.
+    if (is_core_declaration(fact)) return {};
+
+    std::optional<adjacency_set> parts;
+    const auto                   parts_of = [&]() -> const adjacency_set&
+    {
+        if (!parts) parts = rule_parts();
+        return *parts;
+    };
+
+    adjacency_set     listed;
+    adjacency_set     seen{fact};
+    std::vector<Node> pending{fact};
+    std::vector<Node> containers;
+
+    // The containers that the walk passes a membership through to, as
+    // collect_doomed dooms them when the membership is removed: every set
+    // constant, and any other container -- an atom or a collection -- that
+    // is not a component of a rule or a mention (kept_by_removal) and not
+    // part of the engine vocabulary. The prune takes such a container along
+    // with the membership, and the statements that name the container
+    // together with it, and listing the membership left those out:
+    // `j likes k` went with `(a p b) in k` unannounced. The remaining
+    // memberships of a container that is passed through accompany it, and
+    // are themselves passed over in turn.
+    adjacency_set passed;
+    const auto    pass_through = [&](const adjacency_set& objects)
+    {
+        bool all = true;
+        for (const Node c : objects)
+        {
+            const bool taken = is_set_constant(c) || passed.count(c) != 0
+                            || (!Zelph::is_var(c) && get_core_name(c).empty() && (Zelph::Impl::is_hash(c) || parts_of().count(c) == 0));
+            if (!taken)
+            {
+                all = false;
+                continue;
+            }
+            passed.insert(c);
+            if (seen.count(c) != 0) continue;
+            seen.insert(c);
+            pending.push_back(c);
+        }
+        return all;
+    };
+
+    // A membership that is asked about itself is passed through as one
+    // encountered during the walk: the prune takes the container along,
+    // since a set constant is composed of its members and another
+    // container loses one, and the statements that hold the container
+    // alongside. Nothing nests the membership, and the answer was the empty
+    // tuple.
+    if (predicate_of(fact) == core.PartOf)
+    {
+        adjacency_set objects;
+        parse_fact(fact, objects);
+        pass_through(objects);
+    }
+
+    while (!pending.empty())
+    {
+        const Node n = pending.back();
+        pending.pop_back();
+
+        adjacency_set neighbours = get_right(n);
+        for (const Node m : get_left(n))
+            neighbours.insert(m);
+
+        for (const Node holder : neighbours)
+        {
+            if (holder == n || seen.count(holder) != 0) continue;
+
+            const HolderRole role = holder_role(*this, n, holder, parts_of, containers);
+            if (role == HolderRole::collection)
+            {
+                for (const Node container : containers)
+                {
+                    if (seen.count(container) != 0) continue;
+                    seen.insert(container);
+                    pending.push_back(container);
+                }
+                continue;
+            }
+            if (role != HolderRole::statement) continue;
+
+            seen.insert(holder);
+            if (is_bookkeeping(holder) || refuted_marking_subject(holder) == fact) continue;
+
+            // A membership within a set constant that constitutes data is
+            // passed through as well, and the statements that hold the set
+            // are listed: the prune takes the set along with the membership,
+            // and them along with the set. Listed, the membership named
+            // nothing a program could judge, and the set, which is not a
+            // fact, could not be asked about in turn. The same applies to a
+            // membership of `n` in a different container that the prune
+            // takes (pass_through), whereas a membership in one that stays
+            // -- a rule or a mention names it -- is all that goes, and is
+            // listed.
+            if (predicate_of(holder) == core.PartOf)
+            {
+                adjacency_set objects;
+                const Node    member = parse_fact(holder, objects);
+                const bool    in_set = std::any_of(objects.begin(), objects.end(), [&](const Node c)
+                                                   { return is_set_constant(c) || passed.count(c) != 0; });
+                // A membership that is also present within a container that
+                // stays is listed, beside what names the containers that
+                // depart: this is what the one that stays loses. Passed over,
+                // `(a p b) in k1 k2` was excluded from listing even though
+                // the prune removed it from `k2`, which a rule names.
+                if ((member == n || in_set) && pass_through(objects)) continue;
+            }
+            if (is_asserted_fact(holder) || (is_refuted_fact(holder) && parts_of().count(holder) == 0)) listed.insert(holder);
+        }
+    }
+
+    std::vector<Node> out(listed.begin(), listed.end());
+    std::sort(out.begin(), out.end());
+    return out;
 }
 
 // Each rule's conditions and consequences, the members of their condition
@@ -415,6 +700,47 @@ adjacency_set Reasoning::rule_parts() const
             add(o);
         if (is_condition_set(subject)) sets.push_back(subject);
     }
+    // The arguments of an opaque predicate's facts, likewise: a statement
+    // standing there is written down by that fact, thus a prune of its claim
+    // leaves it as the mention it is.
+    if (has_opaque_predicates())
+    {
+        const Node opaque = get_node(opaque_name(), "zelph");
+        for (const Node declaration : opaque != 0 ? get_right(opaque) : adjacency_set{})
+        {
+            const Node predicate = opaque_declaration_subject(declaration);
+            if (predicate == 0 || !is_opaque_predicate(predicate)) continue;
+            for (const Node rel : get_left(predicate))
+            {
+                if (rel == predicate || predicate_of(rel) != predicate) continue;
+                adjacency_set objects;
+                const Node    subject = parse_fact(rel, objects);
+                if (subject == 0 || subject == predicate) continue;
+                add(subject);
+                for (const Node o : objects)
+                    add(o);
+            }
+        }
+    }
+    // A statement that `zelph/mention` writes down using a standard
+    // predicate is processed identically: the mention holds what it nests
+    // just as a rule holds its pattern, meaning that pruning a claim the
+    // mention holds retains both the claimed statement and the mention
+    // itself. The prune removed the claimed statement and took the mention
+    // along, which `zelph/holders` had not included in its list, since it
+    // leaves a mention out. A refuted statement is marked similarly, yet
+    // its refutation constitutes a claim, and the statement goes when a
+    // statement it nests goes.
+    //
+    // Only a mention counts (Zelph::is_mention), not the content a query left
+    // behind: a query retains what it authored under a condition operator as
+    // its pattern (zelph/query-text), incorporating the operator's own fact,
+    // and that leftover holds nothing in place. Once counted, it made a prune
+    // of the claimed `a p b` after the query `S q O, ¬(a p b)` withdraw the
+    // claim rather than remove the fact. The fact of an operator remains
+    // excluded regardless of who authored it.
+    for (const Node mention : rule_patterns_snapshot())
+        if (parts.count(mention) == 0 && !is_refuted_fact(mention) && !is_condition_tag(mention) && is_mention(mention)) add(mention);
     while (!sets.empty())
     {
         const Node set = sets.back();
@@ -471,9 +797,11 @@ void Reasoning::prune_facts(Node pattern, size_t& removed_count)
     _nodes_to_prune.clear();
     _prune_by_members.clear();
 
-    apply_rule(0, pattern);
-
-    _pool->wait();
+    {
+        const PruneScan scan(*this);
+        apply_rule(0, pattern);
+        _pool->wait();
+    }
 
     removed_count = _facts_to_prune.size();
 
@@ -485,6 +813,22 @@ void Reasoning::prune_facts(Node pattern, size_t& removed_count)
 
     if (removed_count > 0)
     {
+        try
+        {
+            refuse_opacity_removal([this](const Node nd)
+                                   { return _facts_to_prune.count(nd) != 0; });
+        }
+        catch (...)
+        {
+            _prune_mode = false;
+            throw;
+        }
+
+        // A user removal gives the record of additions up before
+        // eliminating anything, meaning the removal hook performs no action
+        // during a bulk prune.
+        note_user_removal();
+
         const adjacency_set parts = rule_parts();
 
         // The facts that are matched and belong to a rule are handled first,
@@ -500,9 +844,20 @@ void Reasoning::prune_facts(Node pattern, size_t& removed_count)
         withdraw_claims(rule_parts_hit, parts);
 
         std::lock_guard<std::mutex> lock(_mtx_network);
-        bool                        declaration_removed = false;
-        size_t                      kept_core           = 0;
+        size_t                      kept_core = 0;
 
+        // A fact that is matched and absent from any rule goes with
+        // whatever holds it, precisely as in the ground form, which
+        // eliminates it via remove_fact_and_holders: the identical cascade, gathered
+        // across every matched fact before any deletion. When removed alone,
+        // it left each statement that held it without a part, and a
+        // statement lacking its object is interpreted as a self-fact of its
+        // subject: after `.prune-facts a p O`, beside `x says (a p b)`,
+        // `S says O` responded with `:says x`, and a .save operation wrote
+        // this out; a contradiction record concerning the fact stayed
+        // without it. The count encompasses what went with the facts.
+        adjacency_set       doomed;
+        const adjacency_set keep = kept_by_removal(parts);
         for (Node fact : _facts_to_prune)
         {
             if (is_core_declaration(fact))
@@ -510,22 +865,17 @@ void Reasoning::prune_facts(Node pattern, size_t& removed_count)
                 ++kept_core;
                 continue;
             }
-            if (parts.count(fact) != 0) continue;
-
-            // Same question remove_node asks: a predicate that has lost its
-            // relation-type declaration must stop being read as one. This path
-            // removes facts directly, so it has to ask for itself.
-            if (!declaration_removed && is_relation_type_declaration(fact)) declaration_removed = true;
-            _pImpl->remove(fact);
+            if (parts.count(fact) == 0) collect_doomed(fact, doomed, &keep);
+        }
+        if (!doomed.empty())
+        {
+            adjacency_set named;
+            remove_doomed(doomed, &named);
+            remove_names_of(named);
         }
 
-        removed_count -= kept_core;
-        if (kept_core > 0)
-            out_stream() << "Kept " << kept_core
-                         << " relation-type declaration(s) of core predicates; they are part of the engine, not data."
-                         << std::endl;
-
-        if (declaration_removed) invalidate_relation_type_set();
+        removed_count = rule_parts_hit.size() + doomed.size();
+        if (kept_core > 0) out_stream() << kept_core_note(kept_core) << std::endl;
     }
 
     _prune_mode = false;
@@ -549,29 +899,130 @@ void Reasoning::prune_nodes(Node pattern, const Node target_var, size_t& removed
     _nodes_to_prune.clear();
     _prune_by_members.clear();
 
-    apply_rule(0, pattern);
-
-    _pool->wait();
+    {
+        const PruneScan scan(*this);
+        apply_rule(0, pattern);
+        _pool->wait();
+    }
 
     removed_facts = _facts_to_prune.size();
     removed_nodes = 0;
 
     std::lock_guard<std::mutex> lock(_mtx_network);
 
-    bool   declaration_removed = false;
-    size_t kept_core_facts     = 0;
-    for (Node fact : _facts_to_prune)
+    size_t kept_core_facts = 0;
+
+    // Just as in prune_facts.
+    try
     {
-        if (is_core_declaration(fact))
+        refuse_opacity_removal([this](const Node nd)
+                               { return _facts_to_prune.count(nd) != 0; });
+    }
+    catch (...)
+    {
+        _prune_mode       = false;
+        _prune_nodes_mode = false;
+        _prune_target_var = 0;
+        throw;
+    }
+    if (!_facts_to_prune.empty() || !_nodes_to_prune.empty()) note_user_removal();
+
+    // The removal hook, like every other removal, applies to the rules among
+    // the matched facts: their negation records are removed alongside them.
+    // Identified through walking the rules instead of the facts, and only
+    // while records exist.
+    bool records = false;
+    {
+        std::lock_guard<std::mutex> lock_records(_mtx_negation_records);
+        records = !_negation_records.empty() || !_reported_in_cluster.empty();
+    }
+    if (records && !_facts_to_prune.empty())
+    {
+        adjacency_set rules;
+        for (const Node rule : _pImpl->get_left(core.Causes))
+            if (_facts_to_prune.count(rule) != 0) rules.insert(rule);
+        announce_removal(rules);
+    }
+
+    // Erasing a node's names costs a SCAN of the reverse name map, so a bulk
+    // removal collects its victims and pays for one scan at the end -- see
+    // Zelph::remove_node. Doing it per node is what made this run at one node
+    // per second on the full Wikidata network.
+    adjacency_set named_dead;
+
+    // A matched fact goes with whatever holds it, as remove_node's cascade
+    // takes it. Removed independently before the victims, it left each
+    // statement containing it without a part, and the victim's cascade could
+    // no longer reach that statement: beside `x says (a p b)`,
+    // `.prune-nodes A p b` resulted in `x says` lacking its object, read as
+    // the self-fact `:says x`, whereas `.prune-nodes X (X p b)` took the
+    // statement along with `a`.
+    //
+    // A fact that nothing holds is still removed independently: this is the
+    // bulk path by which the published Wikidata networks are cut, and no
+    // facts within them are held. The fact's own edges decide it. Its
+    // outgoing edges are its subject and its predicate, and a statement that
+    // holds it as subject or object introduces one such edge; with the
+    // predicate absent from its incoming edges, the subject is not the
+    // predicate, thus two outgoing edges leave no room for a holder. A fact
+    // that employs it as predicate requires it to be declared a relation
+    // type, and that declaration holds it as subject. A membership and a `~`
+    // fact still take the cascade: the collection losing a member goes with
+    // it, and a relation-type declaration or a conjunction tag changes how
+    // other facts are read. Read within a single scope, this approach is
+    // more efficient than the declaration test it supersedes, which involved
+    // parse_relation copying the adjacency of the fact and of its predicate.
+    const auto        rel_types = relation_type_set();
+    std::vector<Node> held;
+    removed_facts = 0;
+    for (const Node fact : _facts_to_prune)
+    {
+        Node predicate = 0;
+        bool leaf      = false;
+        {
+            const Network::ReadScope   scope    = read_scope();
+            const adjacency_set* const outgoing = scope.try_right(fact);
+            if (outgoing == nullptr) continue;
+            predicate = parse_relation_scoped(scope, *rel_types, fact, outgoing);
+            leaf      = predicate != 0 && predicate != core.IsA && predicate != core.PartOf
+                     && outgoing->size() <= 2 && scope.left(fact).count(predicate) == 0;
+        }
+        if (leaf)
+        {
+            _pImpl->remove(fact);
+            ++removed_facts;
+        }
+        else if (predicate == core.IsA && is_core_declaration(fact))
         {
             ++kept_core_facts;
-            continue;
         }
-        if (!declaration_removed && is_relation_type_declaration(fact)) declaration_removed = true;
-        _pImpl->remove(fact);
+        else
+        {
+            held.push_back(fact);
+        }
     }
-    removed_facts -= kept_core_facts;
-    if (declaration_removed) invalidate_relation_type_set();
+
+    // A fact that something may hold goes with remove_node's cascade,
+    // collected once the facts that nothing holds are gone: their deletion
+    // did not carry anything else along, thus the union equals what the
+    // cascade gathers from the unmutated graph (see Zelph::collect_doomed).
+    // The count includes what went along, and any victim that went along is
+    // counted as a node.
+    if (!held.empty())
+    {
+        disable_fact_stores();
+        adjacency_set doomed;
+        for (const Node fact : held)
+            collect_doomed(fact, doomed);
+        remove_doomed(doomed, &named_dead);
+        for (const Node dead : doomed)
+        {
+            if (_nodes_to_prune.count(dead) != 0 && _facts_to_prune.count(dead) == 0)
+                ++removed_nodes;
+            else
+                ++removed_facts;
+        }
+    }
 
     size_t kept_core_nodes = 0;
 
@@ -584,12 +1035,6 @@ void Reasoning::prune_nodes(Node pattern, const Node target_var, size_t& removed
         out_stream() << "Pruning " << _nodes_to_prune.size() << " node(s) and "
                      << removed_facts << " matched fact(s)..." << std::endl;
     }
-
-    // Erasing a node's names costs a SCAN of the reverse name map, so a bulk
-    // removal collects its victims and pays for one scan at the end -- see
-    // Zelph::remove_node. Doing it per node is what made this run at one node
-    // per second on the full Wikidata network.
-    adjacency_set named_dead;
 
     // The engine's own vocabulary is not data. A pattern as ordinary as
     // "A ~ ->" binds A to every declared relation type, the core predicates
@@ -956,6 +1401,8 @@ void Reasoning::purge_unused_predicates(size_t& removed_facts, size_t& removed_p
 
             if (is_zombie)
             {
+                note_user_removal(); // as in prune_facts
+                announce_removal({fact});
                 _pImpl->remove(fact);
                 local_removed++;
             }

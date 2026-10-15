@@ -75,7 +75,8 @@ namespace
     // for something that denotes nothing.
     constexpr const char* kLastNodeGone =
         "No argument given, and the node printed last no longer exists -- a cluster drop or a "
-        "removal took it. Name the node.";
+        "removal took it, or it was the pattern of a query, which goes once the query is answered. "
+        "Name the node.";
 }
 
 namespace zelph::console
@@ -114,7 +115,7 @@ namespace zelph::console
         // one place that used to show it is gone. ".explain" says it too.
         if (_n->is_rule_pattern(nd))
         {
-            _n->out_stream() << "  Rule pattern (not asserted): yes" << std::endl;
+            _n->out_stream() << (_n->is_mention(nd) ? "  Mentioned (not asserted): yes" : "  Rule pattern (not asserted): yes") << std::endl;
         }
 
         bool        has_wikidata = false;

@@ -44,7 +44,8 @@ using namespace zelph::network;
 // The walk itself is not implemented here. Zelph::transitive_targets and
 // transitive_sources ARE the closure engine that `zelph/closure` exposes and
 // that sparql.zph's p+/p* already call -- an indexed closure over the
-// predicate, built once and cached next to the .bin, not a walk per query.
+// predicate, built once and cached next to the .bin until a fact involving
+// that predicate is modified, not a walk per query.
 //
 // `negated` is the condition's `¬` tag, which the caller has to read for us:
 // the dispatch in Reasoning::evaluate returns here before the leaf branch that
@@ -109,10 +110,11 @@ void Reasoning::evaluate_closure(const Node condition, const RulePos& rule, Reas
         // Both ends open would enumerate the whole closure of the graph.
         // SPARQL refuses the same case, and for the same reason.
         if (should_log(depth)) log(depth, "closure", "a path condition needs at least one bound end");
-        out("Error: a path condition needs at least one bound end -- \""
-                + format(step) + "\" with both ends free would enumerate every path in the graph. "
-                                 "Bind one side with a preceding condition.",
-            true);
+        if (!_quiet)
+            out("Error: a path condition needs at least one bound end -- \""
+                    + format(step) + "\" with both ends free would enumerate every path in the graph. "
+                                     "Bind one side with a preceding condition.",
+                true);
         return;
     }
 

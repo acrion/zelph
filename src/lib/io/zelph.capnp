@@ -43,6 +43,18 @@ struct ZelphImpl {
   # save of a network in which a whole-file load found such tags: they keep
   # their older meaning.
   negationConditions @12 :Bool;
+  # The number of AnnotationChunk messages that come after the
+  # nodeOfName chunks. 0 in every file produced by an older engine:
+  # that engine reads the four sections and halts, thus loading a newer
+  # file without its annotations.
+  annotationChunkCount @13 :UInt32;
+  # True in every file an engine writes when the network held no ground
+  # fact involving more than one object
+  # (Zelph::may_hold_wider_statements). An older engine leaves it false,
+  # and so does a save of a network that could contain such a fact: the
+  # load subsequently interprets a statement inside a condition as one
+  # that a fact with multiple objects might state.
+  singleObjectFacts @14 :Bool;
 }
 
 struct NamePair {
@@ -65,4 +77,17 @@ struct NodeNameChunk {
   lang @0 : Text;
   chunkIndex @1 : UInt32;
   pairs @2 : List(NodeNamePair);
+}
+
+# One key of a single node, along with its values arranged in the
+# order they were added.
+struct AnnotationEntry {
+  node @0 : UInt64;
+  key @1 : Text;
+  values @2 : List(Text);
+}
+
+struct AnnotationChunk {
+  chunkIndex @0 : UInt32;
+  entries @1 : List(AnnotationEntry);
 }

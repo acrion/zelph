@@ -771,8 +771,11 @@ void Wikidata::process_constraints(const std::string& line, std::string id_str, 
         // Get supported constraints map
         auto constraints_map = get_supported_constraints();
 
-        // Parse each constraint statement using the fixed string
-        static const std::string constraint_start_tag("{\"mainsnak\":{\"snaktype\":\"value\",\"property\":\"P2302\",\"datavalue\":");
+        // For each constraint statement, perform a parse using the fixed
+        // string. The string ends with the property: the entity
+        // data from Wikidata's API writes the hash of a main snak
+        // positioned between the property and the value.
+        static const std::string constraint_start_tag("{\"mainsnak\":{\"snaktype\":\"value\",\"property\":\"P2302\"");
         size_t                   pos = 0;
         while ((pos = line.find(constraint_start_tag, pos)) != std::string::npos)
         {
@@ -938,168 +941,145 @@ void Wikidata::process_import(const std::string& line,
 #endif
     }
 
-    size_t                   property0;
-    static const std::string property_tag(R"(":[{"mainsnak":{"snaktype":"value","property":")");
+    // Each main snak names its corresponding property, meaning a claim is
+    // interpreted in situ, regardless of what comes before it within the
+    // claims array of that property: a statement lacking a value
+    // (somevalue, novalue) or one whose value is no item. A qualifier or
+    // reference snak does not include a "mainsnak" key, and since claims
+    // follow the labels, the search starts at id1.
+    static const std::string mainsnak_tag(R"("mainsnak":{"snaktype":"value","property":")");
+    // The Wikidata API's entity data records the hash of a main snak
+    // between its property and its value; the dumps exclude it.
+    static const std::string hash_tag(R"(","hash":")");
     static const std::string numeric_id_tag(R"(","datavalue":{"value":{"entity-type":"item","numeric-id":)");
-    static const std::string object_tag(R"("id":")");
-    // Prefix shared by all claims in a property array
-    static const std::string mainsnak_value_prefix(R"("mainsnak":{"snaktype":"value","property":")");
+    static const std::string object_tag(R"(,"id":")");
 
 #ifdef SINGLE_THREADED_IMPORT
     std::unique_lock lock(_pImpl->_mtx_network, std::defer_lock);
 #endif
 
-    while ((property0 = line.find(property_tag, id1 + 1)) != std::string::npos)
+    size_t search_pos = id1 + 1;
+    while ((search_pos = line.find(mainsnak_tag, search_pos)) != std::string::npos)
     {
 #if ZELPH_WIKIDATA_IMPORT_DIAGNOSTICS
         const auto scan_begin = SteadyClock::now();
 #endif
-        size_t      property1    = line.find('\"', property0 + property_tag.size());
-        std::string property_str = line.substr(property0 + property_tag.size(), property1 - property0 - property_tag.size());
+        const size_t property0 = search_pos + mainsnak_tag.size();
+        size_t       value0    = line.find('\"', property0);
+        if (value0 == std::string::npos) break;
+        std::string property_str = line.substr(property0, value0 - property0);
 
         if (property_str.empty() || property_str[0] != 'P')
         {
             throw std::runtime_error("Invalid property '" + property_str + "' in " + line);
         }
 
-        // Pattern to match each claim's mainsnak item value for this property.
-        // This matches: "mainsnak":{"snaktype":"value","property":"Pxxx","datavalue":{"value":{"entity-type":"item","numeric-id":
-        // It does not match qualifier or reference snaks (they lack the "mainsnak":{} wrapper).
-        std::string claim_value_tag = mainsnak_value_prefix + property_str + numeric_id_tag;
+        if (line.compare(value0, hash_tag.size(), hash_tag) == 0)
+        {
+            value0 = line.find('\"', value0 + hash_tag.size());
+            if (value0 == std::string::npos) break;
+        }
+        search_pos = value0;
+        if (line.compare(value0, numeric_id_tag.size(), numeric_id_tag) != 0) continue;
 
-        // Boundary: start of the next property's array (next property_tag occurrence)
-        size_t next_property0 = line.find(property_tag, property0 + property_tag.size());
-        size_t boundary       = (next_property0 != std::string::npos) ? next_property0 : line.size();
+        size_t digits = value0 + numeric_id_tag.size();
+        while (digits < line.size() && line[digits] >= '0' && line[digits] <= '9')
+            ++digits;
+        if (digits == value0 + numeric_id_tag.size() || line.compare(digits, object_tag.size(), object_tag) != 0)
+        {
+            search_pos = digits;
+            continue;
+        }
 
-        size_t search_pos = property0;
+        const size_t object0 = digits + object_tag.size();
+        id1                  = line.find('\"', object0);
+        if (id1 == std::string::npos) break;
+        std::string object_str = line.substr(object0, id1 - object0);
+        search_pos             = id1;
 
 #if ZELPH_WIKIDATA_IMPORT_DIAGNOSTICS
         if (diag) diag->claim_scan_ns += to_ns(SteadyClock::now() - scan_begin);
 #endif
 
-        while ((search_pos = line.find(claim_value_tag, search_pos)) != std::string::npos && search_pos < boundary)
+        try
         {
-#if ZELPH_WIKIDATA_IMPORT_DIAGNOSTICS
-            const auto inner_scan_begin = SteadyClock::now();
+#ifdef SINGLE_THREADED_IMPORT
+            if (!lock.owns_lock()) lock.lock();
 #endif
-            size_t id0 = search_pos + claim_value_tag.size();
 
-            bool success = true;
-            while (++id0 < line.size() && line[id0] != ',')
+            if (subject == 0)
             {
-                if (line[id0] < '0' || line[id0] > '9')
-                {
-                    success = false;
-                    break;
-                }
+#if ZELPH_WIKIDATA_IMPORT_DIAGNOSTICS
+                const auto t = SteadyClock::now();
+#endif
+                subject = _pImpl->_n->node(id_str, "wikidata");
+#if ZELPH_WIKIDATA_IMPORT_DIAGNOSTICS
+                if (diag) diag->subject_ns += to_ns(SteadyClock::now() - t);
+#endif
             }
 
-            if (success)
+#if ZELPH_WIKIDATA_IMPORT_DIAGNOSTICS
+            const auto obj_begin = SteadyClock::now();
+#endif
+            network::Node object_node_handle = _pImpl->_n->node(object_str, "wikidata");
+#if ZELPH_WIKIDATA_IMPORT_DIAGNOSTICS
+            if (diag) diag->object_node_ns += to_ns(SteadyClock::now() - obj_begin);
+            const auto prop_begin = SteadyClock::now();
+#endif
+            network::Node property_node_handle;
+            auto          pit = property_cache.find(property_str);
+            if (pit != property_cache.end())
             {
-                if (line.substr(id0 + 1, object_tag.size()) == object_tag)
-                {
-                    id0 += object_tag.size() + 1;
-                    id1                    = line.find('\"', id0);
-                    std::string object_str = line.substr(id0, id1 - id0);
-
-#if ZELPH_WIKIDATA_IMPORT_DIAGNOSTICS
-                    if (diag) diag->claim_scan_ns += to_ns(SteadyClock::now() - inner_scan_begin);
-#endif
-
-                    try
-                    {
-#ifdef SINGLE_THREADED_IMPORT
-                        if (!lock.owns_lock()) lock.lock();
-#endif
-
-                        if (subject == 0)
-                        {
-#if ZELPH_WIKIDATA_IMPORT_DIAGNOSTICS
-                            const auto t = SteadyClock::now();
-#endif
-                            subject = _pImpl->_n->node(id_str, "wikidata");
-#if ZELPH_WIKIDATA_IMPORT_DIAGNOSTICS
-                            if (diag) diag->subject_ns += to_ns(SteadyClock::now() - t);
-#endif
-                        }
-
-#if ZELPH_WIKIDATA_IMPORT_DIAGNOSTICS
-                        const auto obj_begin = SteadyClock::now();
-#endif
-                        network::Node object_node_handle = _pImpl->_n->node(object_str, "wikidata");
-#if ZELPH_WIKIDATA_IMPORT_DIAGNOSTICS
-                        if (diag) diag->object_node_ns += to_ns(SteadyClock::now() - obj_begin);
-                        const auto prop_begin = SteadyClock::now();
-#endif
-                        network::Node property_node_handle;
-                        auto          pit = property_cache.find(property_str);
-                        if (pit != property_cache.end())
-                        {
-                            property_node_handle = pit->second;
-                        }
-                        else
-                        {
-                            property_node_handle = _pImpl->_n->node(property_str, "wikidata");
-                            property_cache.emplace(property_str, property_node_handle);
-                        }
-
-                        // Typing only once per thread/property. Even if two threads want to type the same
-                        // property twice,this is harmless in the trusted import path and very rare.
-                        if (typed_properties.insert(property_node_handle).second)
-                        {
-                            _pImpl->_n->fact_import_trusted_single_object(
-                                property_node_handle,
-                                _pImpl->_n->core.IsA,
-                                _pImpl->_n->core.RelationTypeCategory);
-                        }
-#if ZELPH_WIKIDATA_IMPORT_DIAGNOSTICS
-                        if (diag) diag->property_node_ns += to_ns(SteadyClock::now() - prop_begin);
-#endif
-
-#if ZELPH_WIKIDATA_IMPORT_DIAGNOSTICS
-                        const auto fact_begin = SteadyClock::now();
-#endif
-                        auto fact = _pImpl->_n->fact_import_trusted_single_object(
-                            subject,
-                            property_node_handle,
-                            object_node_handle);
-#if ZELPH_WIKIDATA_IMPORT_DIAGNOSTICS
-                        if (diag)
-                        {
-                            diag->fact_ns += to_ns(SteadyClock::now() - fact_begin);
-                            diag->claims += 1;
-                            diag->facts += 1;
-                        }
-#endif
-
-                        if (log)
-                        {
-                            std::string output;
-                            string::node_to_string(_pImpl->_n, output, "en", fact, 3);
-                            _pImpl->_n->diagnostic(id_str + ":       en> " + output, true);
-                            string::node_to_string(_pImpl->_n, output, "wikidata", fact, 3);
-                            _pImpl->_n->diagnostic(id_str + ": wikidata> " + output, true);
-                        }
-                    }
-                    catch (std::exception& ex)
-                    {
-                        _pImpl->_n->error(ex.what(), true);
-                    }
-
-                    search_pos = id1;
-                }
-                else
-                {
-                    search_pos = id0 + 1;
-                }
+                property_node_handle = pit->second;
             }
             else
             {
-                search_pos = id0;
+                property_node_handle = _pImpl->_n->node(property_str, "wikidata");
+                property_cache.emplace(property_str, property_node_handle);
+            }
+
+            // Typing only once per thread/property. Even if two threads want to type the same
+            // property twice,this is harmless in the trusted import path and very rare.
+            if (typed_properties.insert(property_node_handle).second)
+            {
+                _pImpl->_n->fact_import_trusted_single_object(
+                    property_node_handle,
+                    _pImpl->_n->core.IsA,
+                    _pImpl->_n->core.RelationTypeCategory);
+            }
+#if ZELPH_WIKIDATA_IMPORT_DIAGNOSTICS
+            if (diag) diag->property_node_ns += to_ns(SteadyClock::now() - prop_begin);
+#endif
+
+#if ZELPH_WIKIDATA_IMPORT_DIAGNOSTICS
+            const auto fact_begin = SteadyClock::now();
+#endif
+            auto fact = _pImpl->_n->fact_import_trusted_single_object(
+                subject,
+                property_node_handle,
+                object_node_handle);
+#if ZELPH_WIKIDATA_IMPORT_DIAGNOSTICS
+            if (diag)
+            {
+                diag->fact_ns += to_ns(SteadyClock::now() - fact_begin);
+                diag->claims += 1;
+                diag->facts += 1;
+            }
+#endif
+
+            if (log)
+            {
+                std::string output;
+                string::node_to_string(_pImpl->_n, output, "en", fact, 3);
+                _pImpl->_n->diagnostic(id_str + ":       en> " + output, true);
+                string::node_to_string(_pImpl->_n, output, "wikidata", fact, 3);
+                _pImpl->_n->diagnostic(id_str + ": wikidata> " + output, true);
             }
         }
-
-        id1 = (next_property0 != std::string::npos) ? next_property0 - 1 : line.size() - 1;
+        catch (std::exception& ex)
+        {
+            _pImpl->_n->error(ex.what(), true);
+        }
     }
 
     if (subject == 0)

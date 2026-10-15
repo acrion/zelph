@@ -127,6 +127,55 @@ fn a_fact_reads_back_as_its_parts() {
     assert!(z.fact_parts(socrates).is_err());
 }
 
+// A mention is a statement a program writes down without asserting it,
+// something the C ABI was unable to express: `fact` claims. It has to
+// remain absent from every answer until a claim of the identical
+// statement appears, and that claim must transform it into data.
+#[test]
+fn a_mention_is_data_only_once_it_is_claimed() {
+    let _guard = engine_lock();
+    let z = silent_engine();
+
+    let mary = z.resolve("mary").unwrap();
+    let waits = z.resolve("waits").unwrap();
+    let nil = z.resolve("nil").unwrap();
+
+    let mentioned = z.mention(mary, waits, &[nil]).unwrap();
+    assert!(!mentioned.is_null());
+    assert!(!z.exists(mary, waits, &[nil]).unwrap());
+
+    assert_eq!(z.fact(mary, waits, &[nil]).unwrap(), mentioned);
+    assert!(z.exists(mary, waits, &[nil]).unwrap());
+
+    // A mention of what is asserted keeps it asserted.
+    assert_eq!(z.mention(mary, waits, &[nil]).unwrap(), mentioned);
+    assert!(z.exists(mary, waits, &[nil]).unwrap());
+}
+
+// A rule expressed through a mention is a mention just like any other
+// statement written in this way, but it was in force the moment `mention`
+// returned it, since nothing held it. A claim of the same rule via `fact`
+// puts it in force.
+#[test]
+fn a_rule_written_as_a_mention_is_in_force_only_once_it_is_claimed() {
+    let _guard = engine_lock();
+    let z = silent_engine();
+
+    let [a, p, b, c, q, d, causes] =
+        ["a", "p", "b", "c", "q", "d", "=>"].map(|name| z.resolve(name).unwrap());
+    let condition = z.mention(a, p, &[b]).unwrap();
+    let consequence = z.mention(c, q, &[d]).unwrap();
+    let rule = z.mention(condition, causes, &[consequence]).unwrap();
+
+    z.fact(a, p, &[b]).unwrap();
+    z.run().unwrap();
+    assert!(!z.exists(c, q, &[d]).unwrap());
+
+    assert_eq!(z.fact(condition, causes, &[consequence]).unwrap(), rule);
+    z.run().unwrap();
+    assert!(z.exists(c, q, &[d]).unwrap());
+}
+
 #[test]
 fn a_list_reads_back_as_what_it_was_built_from() {
     let _guard = engine_lock();
@@ -307,6 +356,51 @@ fn weights_survive_save_and_load_and_nodes_keep_their_identity() {
     }
 
     let _ = std::fs::remove_file(&path);
+}
+
+// A ground marking `(F ~ refuted)` constitutes a refutation, and `fact`
+// refused to write it after having silently taken a claimed fact from
+// every query; a caller must use `refute` to say it instead. Refused for a
+// claimed fact, as `¬(F)` is.
+#[test]
+fn a_refutation_is_stated_with_refute_and_refused_for_a_claimed_fact() {
+    let _guard = engine_lock();
+    let z = silent_engine();
+
+    let socrates = z.resolve("Socrates").unwrap();
+    let is = z.resolve("is").unwrap();
+    let mortal = z.resolve("mortal").unwrap();
+    let immortal = z.resolve("immortal").unwrap();
+    let is_a = z.resolve("~").unwrap();
+    let refuted = z.resolve_in("refuted", "zelph").unwrap();
+
+    let claimed = z.fact(socrates, is, &[mortal]).unwrap();
+    let err = z
+        .fact(claimed, is_a, &[refuted])
+        .expect_err("a ground marking is a refutation");
+    assert_eq!(err.kind(), ErrorKind::Runtime);
+    assert!(err.message().contains("zelph_refute"));
+
+    let err = z
+        .refute(socrates, is, &[mortal])
+        .expect_err("a claimed fact cannot be refuted");
+    assert_eq!(err.kind(), ErrorKind::Runtime);
+    assert!(err.message().contains("known to be true"));
+    assert!(z.exists(socrates, is, &[mortal]).unwrap());
+    let err = z
+        .refute(claimed, is_a, &[refuted])
+        .expect_err("a refutation marking cannot be refuted");
+    assert_eq!(err.kind(), ErrorKind::Runtime);
+    assert!(err.message().contains("cannot itself be refuted"));
+    assert!(z.exists(socrates, is, &[mortal]).unwrap());
+
+    let denied = z.refute(socrates, is, &[immortal]).unwrap();
+    assert!(!denied.is_null());
+    assert!(!z.exists(socrates, is, &[immortal]).unwrap());
+    let err = z
+        .fact(socrates, is, &[immortal])
+        .expect_err("a refuted fact cannot be asserted");
+    assert!(err.message().contains("known to be wrong"));
 }
 
 #[test]
@@ -497,6 +591,184 @@ fn a_rules_condition_set_takes_no_further_condition() {
 }
 
 #[test]
+fn a_rule_whose_consequence_predicate_no_condition_binds_is_refused() {
+    // `rule` writes what zelph_rule writes, and a consequence whose predicate
+    // remains unbound by any condition is rejected in that context, just as
+    // every rule builder refuses it: a firing lacks a predicate to write. A
+    // predicate that a condition identifies becomes bound by each firing.
+    let _guard = engine_lock();
+    let z = silent_engine();
+
+    let waits = z.resolve("waits").unwrap();
+    let nil = z.resolve("nil").unwrap();
+    let ok = z.resolve("ok").unwrap();
+    let x = z.variable("X").unwrap();
+    let w = z.variable("W").unwrap();
+
+    let condition = z.fact(x, waits, &[nil]).unwrap();
+    let unbound = z.fact(x, w, &[nil]).unwrap();
+    let err = z
+        .rule(&[condition], &[unbound])
+        .expect_err("no condition binds W");
+    assert_eq!(err.kind(), ErrorKind::Runtime);
+    assert!(err
+        .message()
+        .contains("is the variable W, which no condition binds"));
+
+    let bound = z.fact(x, w, &[ok]).unwrap();
+    z.rule(&[unbound], &[bound]).unwrap();
+    let ann = z.resolve("ann").unwrap();
+    z.fact(ann, waits, &[nil]).unwrap();
+    z.run().unwrap();
+    assert!(z.exists(ann, waits, &[ok]).unwrap());
+}
+
+#[test]
+fn a_rule_written_with_fact_whose_consequence_predicate_no_condition_binds_is_refused_by_the_next_run() {
+    // `fact` writes the `=>` fact that `rule` produces, and nothing verified it
+    // there: `(X waits nil) => (W W nil)` derived `-> -> nil`. The call cannot
+    // reject it, since the inner rule of a generator has identical structure
+    // until the generator holds it, so the next run verifies it and fails; the
+    // rule is gone then, and the following run derives nothing.
+    let _guard = engine_lock();
+    let z = silent_engine();
+
+    let waits = z.resolve("waits").unwrap();
+    let nil = z.resolve("nil").unwrap();
+    let causes = z.resolve("=>").unwrap();
+    let x = z.variable("X").unwrap();
+    let w = z.variable("W").unwrap();
+
+    let condition = z.fact(x, waits, &[nil]).unwrap();
+    let consequence = z.fact(w, w, &[nil]).unwrap();
+    z.fact(condition, causes, &[consequence]).unwrap();
+    let ann = z.resolve("ann").unwrap();
+    z.fact(ann, waits, &[nil]).unwrap();
+
+    let err = z.run().expect_err("no condition binds W");
+    assert_eq!(err.kind(), ErrorKind::Runtime);
+    assert!(err
+        .message()
+        .contains("zelph_fact: The predicate of \"W W nil\" in the rule's consequence is the variable W"));
+    assert!(!z.exists(condition, causes, &[consequence]).unwrap());
+
+    z.run().unwrap();
+    let s = z.variable("S").unwrap();
+    let p = z.variable("P").unwrap();
+    let pattern = z.fact(s, p, &[nil]).unwrap();
+    // `ann waits nil` alone: no `-> -> nil` positioned
+    // next to it.
+    assert_eq!(z.query(pattern).unwrap().len(), 1);
+}
+
+#[test]
+fn a_rule_written_with_fact_whose_consequence_predicate_no_condition_binds_is_refused_by_the_next_save() {
+    // Before the next run, `save` wrote the rule to the file unchecked, and a
+    // subsequent `load` retrieved it as a rule the graph already holds, which
+    // no later run checks. The `save` performs its check first, just as a
+    // `run` does, and fails due to refusal; the file remains unwritten, the
+    // rule is gone, and the next `save` succeeds.
+    let _guard = engine_lock();
+    let z = silent_engine();
+
+    let waits = z.resolve("waits").unwrap();
+    let nil = z.resolve("nil").unwrap();
+    let causes = z.resolve("=>").unwrap();
+    let x = z.variable("X").unwrap();
+    let w = z.variable("W").unwrap();
+
+    let condition = z.fact(x, waits, &[nil]).unwrap();
+    let consequence = z.fact(w, w, &[nil]).unwrap();
+    z.fact(condition, causes, &[consequence]).unwrap();
+
+    let path = std::env::temp_dir().join("zelph_rust_fact_rule_save.bin");
+    let _ = std::fs::remove_file(&path);
+
+    let err = z.save(&path).expect_err("no condition binds W");
+    assert_eq!(err.kind(), ErrorKind::Runtime);
+    assert!(err
+        .message()
+        .contains("zelph_fact: The predicate of \"W W nil\" in the rule's consequence is the variable W"));
+    assert!(!path.exists());
+    assert!(!z.exists(condition, causes, &[consequence]).unwrap());
+
+    z.save(&path).unwrap();
+    assert!(path.exists());
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn a_mentioned_rule_that_fact_claims_into_force_is_refused_by_the_next_run_and_stays_a_mention() {
+    // A rule authored by `mention` is out of force until `fact` claims it.
+    // Without verification, that claim put a rule in force whose consequence
+    // predicate is not constrained by any condition. The next run checks the
+    // claim just as it checks a rule `fact` generates, yet the rule was
+    // already present before the call: the refusal takes the claim back,
+    // leaving the rule as a mere mention, which the next run does not fire and
+    // which `mention` finds in place.
+    let _guard = engine_lock();
+    let z = silent_engine();
+
+    let waits = z.resolve("waits").unwrap();
+    let nil = z.resolve("nil").unwrap();
+    let causes = z.resolve("=>").unwrap();
+    let x = z.variable("X").unwrap();
+    let w = z.variable("W").unwrap();
+
+    let condition = z.mention(x, waits, &[nil]).unwrap();
+    let consequence = z.mention(w, w, &[nil]).unwrap();
+    let rule = z.mention(condition, causes, &[consequence]).unwrap();
+    let ann = z.resolve("ann").unwrap();
+    z.fact(ann, waits, &[nil]).unwrap();
+
+    assert_eq!(z.fact(condition, causes, &[consequence]).unwrap(), rule);
+    let err = z.run().expect_err("no condition binds W");
+    assert_eq!(err.kind(), ErrorKind::Runtime);
+    assert!(err
+        .message()
+        .contains("zelph_fact: The predicate of \"W W nil\" in the rule's consequence is the variable W"));
+
+    z.run().unwrap();
+    let s = z.variable("S").unwrap();
+    let p = z.variable("P").unwrap();
+    let pattern = z.fact(s, p, &[nil]).unwrap();
+    assert_eq!(z.query(pattern).unwrap().len(), 1);
+    assert_eq!(z.mention(condition, causes, &[consequence]).unwrap(), rule);
+}
+
+#[test]
+fn a_rule_generator_built_from_facts_passes_the_run_and_fires() {
+    // The predicate used by the inner rule of a generator originates in the
+    // generator's binding, and by the time of the run, the generator holds it.
+    let _guard = engine_lock();
+    let z = silent_engine();
+
+    let causes = z.resolve("=>").unwrap();
+    let inverse = z.resolve("inverse").unwrap();
+    let parent = z.resolve("parent").unwrap();
+    let child = z.resolve("child").unwrap();
+    let (r, s, a, b) = (
+        z.variable("R").unwrap(),
+        z.variable("S").unwrap(),
+        z.variable("A").unwrap(),
+        z.variable("B").unwrap(),
+    );
+
+    let inner_condition = z.fact(a, r, &[b]).unwrap();
+    let inner_consequence = z.fact(b, s, &[a]).unwrap();
+    let inner = z.fact(inner_condition, causes, &[inner_consequence]).unwrap();
+    let condition = z.fact(r, inverse, &[s]).unwrap();
+    z.fact(condition, causes, &[inner]).unwrap();
+
+    let ann = z.resolve("ann").unwrap();
+    let bob = z.resolve("bob").unwrap();
+    z.fact(parent, inverse, &[child]).unwrap();
+    z.fact(ann, parent, &[bob]).unwrap();
+    z.run().unwrap();
+    assert!(z.exists(bob, child, &[ann]).unwrap());
+}
+
+#[test]
 fn negate_returns_the_negated_condition_and_the_pattern_stays_positive() {
     // `negate` wrote `~ negation` about the pattern and returned the
     // pattern, thus a rule built with it named the pattern itself - and
@@ -563,6 +835,40 @@ fn a_cluster_is_a_rollback() {
 
     assert!(!z.exists(ephemeral, is_a, &[thing]).unwrap());
     assert!(z.exists(permanent, is_a, &[thing]).unwrap());
+}
+
+// A query posed inside a cluster, which the caller subsequently drops,
+// results in no residual trace, assuming the drop takes back what the query
+// wrote. The pattern was the first fact of `b` as a predicate and declared it
+// a relation type, and the drop took the pattern while `b ~ ->` remained
+// intact.
+#[test]
+fn a_question_asked_in_a_dropped_cluster_takes_back_the_declaration_it_wrote() {
+    let _guard = engine_lock();
+    let z = silent_engine();
+
+    let is_a = z.resolve("~").unwrap();
+    let arrow = z.resolve("->").unwrap();
+    let b = z.resolve("b").unwrap();
+    z.fact(z.resolve("a").unwrap(), z.resolve("likes").unwrap(), &[b]).unwrap();
+    assert!(!z.exists(b, is_a, &[arrow]).unwrap());
+
+    z.cluster(Some("question")).unwrap();
+    let pattern = z
+        .fact(z.variable("X").unwrap(), b, &[z.variable("Y").unwrap()])
+        .unwrap();
+    assert!(z.query(pattern).unwrap().is_empty());
+    z.cluster(None).unwrap();
+    // The drop takes X, Y, the pattern and the declaration of its
+    // predicate.
+    assert_eq!(z.drop_cluster("question").unwrap(), 4);
+
+    assert!(!z.exists(b, is_a, &[arrow]).unwrap());
+
+    // The subsequent initial fact regarding `b` as a predicate
+    // declares it as usual.
+    z.fact(z.resolve("c").unwrap(), b, &[z.resolve("d").unwrap()]).unwrap();
+    assert!(z.exists(b, is_a, &[arrow]).unwrap());
 }
 
 #[test]

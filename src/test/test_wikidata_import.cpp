@@ -30,6 +30,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include "test_helpers.hpp"
 #include "wikidata_dump.hpp"
 
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
@@ -293,6 +294,102 @@ TEST_CASE("wikidata import: a label is searched only inside the labels object")
     remove_dump(dump);
 }
 
+// ---------------------------------------------------------------------------
+// Claims. Each main snak whose value is an item transforms into a fact;
+// no other element does.
+// ---------------------------------------------------------------------------
+
+namespace
+{
+    // The responses to a query in the language
+    // `wikidata`.
+    std::vector<std::string> answers_in_wikidata(zelph::io::OutputCollector& collector, const zelph::console::Interactive& interactive, const std::string& query)
+    {
+        interactive.process(".lang wikidata");
+        collector.clear();
+        interactive.process(query);
+        std::vector<std::string> answers = collect_answers(collector);
+        std::sort(answers.begin(), answers.end());
+        return answers;
+    }
+}
+
+TEST_CASE("wikidata import: a property whose first claim has no value keeps its item claims")
+{
+    // The importer found the claims array associated with a property
+    // through its first statement, but only when that statement contained
+    // a value. A property that begins with an unknown value (somevalue)
+    // or no value (novalue) forfeited every claim it holds; the property
+    // after it was located as usual.
+    const auto dump = write_lines("zelph_claims_without_value_first",
+                                  {entity("Q183",
+                                          text("en", "Germany"),
+                                          claims_of("P36", {statement_without_value("P36", "somevalue"), statement("P36", "Q64")}) + ","
+                                              + claims_of("P150", {statement_without_value("P150", "novalue"), statement("P150", "Q980"), statement("P150", "Q985")}) + ","
+                                              + claim("P31", "Q6256"))});
+
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+    interactive.process(".load \"" + dump.string() + "\"");
+
+    CHECK(answers_in_wikidata(collector, interactive, "Q183 P36 X") == std::vector<std::string>{"Q183 P36 Q64"});
+    CHECK(answers_in_wikidata(collector, interactive, "Q183 P150 X") == std::vector<std::string>{"Q183 P150 Q980", "Q183 P150 Q985"});
+    CHECK(answers_in_wikidata(collector, interactive, "Q183 P31 X") == std::vector<std::string>{"Q183 P31 Q6256"});
+
+    remove_dump(dump);
+}
+
+TEST_CASE("wikidata import: a main snak that carries a hash yields its claim")
+{
+    // The dumps do not insert a hash into the main snak, yet the entity
+    // data returned by Wikidata's API includes one, positioned between the
+    // property and the value. The importer expected the value to follow
+    // immediately after the property and thus imported nothing from such a
+    // line.
+    const auto dump = write_lines("zelph_claims_with_hash",
+                                  {entity("Q3107329",
+                                          text("en", "Guide"),
+                                          claims_of("P50", {statement("P50", "Q42", "5f2c1a"), statement("P50", "Q43")}))});
+
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+    interactive.process(".load \"" + dump.string() + "\"");
+
+    CHECK(answers_in_wikidata(collector, interactive, "Q3107329 P50 X") == std::vector<std::string>{"Q3107329 P50 Q42", "Q3107329 P50 Q43"});
+
+    remove_dump(dump);
+}
+
+TEST_CASE("wikidata import: a qualifier or a reference yields no claim of the entity")
+{
+    // A qualifier snak and a reference snak share the shape of a main snak,
+    // lacking the "mainsnak" key that surrounds them. Since claims are
+    // found by that key, a start date or a source never becomes a fact
+    // regarding the item.
+    const std::string qualified =
+        "{\"mainsnak\":{\"snaktype\":\"value\",\"property\":\"P39\",\"datavalue\":{\"value\":"
+        "{\"entity-type\":\"item\",\"numeric-id\":11696,\"id\":\"Q11696\"},\"type\":\"wikibase-entityid\"},"
+        "\"datatype\":\"wikibase-item\"},\"type\":\"statement\",\"qualifiers\":{\"P1365\":[{\"snaktype\":"
+        "\"value\",\"property\":\"P1365\",\"hash\":\"q1\",\"datavalue\":{\"value\":{\"entity-type\":"
+        "\"item\",\"numeric-id\":207,\"id\":\"Q207\"},\"type\":\"wikibase-entityid\"},\"datatype\":"
+        "\"wikibase-item\"}]},\"qualifiers-order\":[\"P1365\"],\"id\":\"S$2\",\"rank\":\"normal\","
+        "\"references\":[{\"hash\":\"r1\",\"snaks\":{\"P248\":[{\"snaktype\":\"value\",\"property\":"
+        "\"P248\",\"datavalue\":{\"value\":{\"entity-type\":\"item\",\"numeric-id\":36578,\"id\":"
+        "\"Q36578\"},\"type\":\"wikibase-entityid\"},\"datatype\":\"wikibase-item\"}]},"
+        "\"snaks-order\":[\"P248\"]}]}";
+    const auto dump = write_lines("zelph_claims_qualified", {entity("Q76", text("en", "Barack Obama"), claims_of("P39", {qualified}))});
+
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+    interactive.process(".load \"" + dump.string() + "\"");
+
+    CHECK(answers_in_wikidata(collector, interactive, "Q76 P39 X") == std::vector<std::string>{"Q76 P39 Q11696"});
+    CHECK(answers_in_wikidata(collector, interactive, "Q76 P1365 X").empty());
+    CHECK(answers_in_wikidata(collector, interactive, "Q76 P248 X").empty());
+
+    remove_dump(dump);
+}
+
 TEST_CASE("wikidata import: the import writes the marker, and .cleanup keeps it")
 {
     // A network that has labels assigned in this manner indicates its origin
@@ -340,6 +437,32 @@ TEST_CASE("wikidata import: the import writes the marker, and .cleanup keeps it"
 
     fs::remove(saved);
     remove_dump(dump);
+}
+
+// The first import into a non-empty graph executes within a cluster and
+// creates the marker there; the second import finds it. The drop removed the
+// marker along with the first import, and the network the second import left
+// behind no longer said how its items were labelled.
+TEST_CASE("wikidata import: a dropped cluster an earlier import ran in leaves the marker to the later one")
+{
+    const auto first  = write_lines("zelph_marker_in_cluster", {entity("Q8441", text("en", "man"))});
+    const auto second = write_lines("zelph_marker_after_cluster", {entity("Q5", text("en", "human"))});
+
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+    interactive.process("x likes y");
+    interactive.process(".cluster w1");
+    interactive.process(".load \"" + first.string() + "\"");
+    interactive.process(".cluster default");
+    interactive.process(".load \"" + second.string() + "\"");
+    interactive.process(".cluster-drop w1");
+
+    CHECK(interactive.graph()->get_node(zelph::network::Zelph::wikidata_labels_marker_name(), "zelph", true) != 0);
+    CHECK(entity_node(interactive, "Q5") != 0);
+    CHECK(entity_node(interactive, "Q8441") == 0);
+
+    remove_dump(first);
+    remove_dump(second);
 }
 
 TEST_CASE("wikidata import: .name keeps its takeover semantics after an import")

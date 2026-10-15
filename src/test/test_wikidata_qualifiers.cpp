@@ -117,6 +117,25 @@ TEST_CASE("wikidata qualifiers: full import materializes statement structures")
     std::filesystem::remove(dump);
 }
 
+TEST_CASE("wikidata qualifiers: the import says that it switched auto-run off and why, without calling the dump large")
+{
+    // When a qualifier import is executed, it disables auto-run regardless of
+    // the contents of the dump, and it stated "due to importing a large
+    // dataset" even for a dump containing just two entities, mirroring how
+    // `.load` behaved for a file with two facts. Since no mechanism evaluates
+    // the dump's size, the message communicates both the occurrence and the
+    // rationale, a principle that applies uniformly to every import.
+    const auto                  dump = write_dump();
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+    REQUIRE(interactive.is_auto_run_active());
+    interactive.process(".wikidata-qualifiers \"" + dump.string() + "\"");
+    CHECK(any_output_contains(collector, "Auto-run has been disabled, as every .wikidata-qualifiers disables it"));
+    CHECK_FALSE(any_event_contains(collector, "large dataset"));
+    CHECK_FALSE(interactive.is_auto_run_active());
+    std::filesystem::remove(dump);
+}
+
 TEST_CASE("wikidata qualifiers: selective import filters by qualifier property" * doctest::test_suite("slow"))
 {
     const auto dump = write_dump();

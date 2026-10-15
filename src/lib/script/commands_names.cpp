@@ -181,6 +181,12 @@ namespace zelph::console
         {
             if (node_in_target_lang == 0)
             {
+                // Rejected before any creation. The refusal in set_name came
+                // only after the node had been created, and the node remained
+                // under its name in the current language, subsequently
+                // obstructing the process of assigning a name to the
+                // vocabulary node.
+                _n->refuse_vocabulary_rename(0, name_in_target_lang, target_lang);
                 node_in_current_lang = _n->node(name_in_current_lang);
                 _n->set_name(node_in_current_lang, name_in_target_lang, target_lang, true);
 

@@ -101,6 +101,20 @@ namespace zelph::string
         bool atomic{false};
     };
 
+    // As long as one remains alive, this thread renders the premises of a
+    // deduction or of a proof, which name the facts a firing has discovered: a
+    // path or a neural condition prints as the fact it is,
+    // `(S p O) closure one-or-more` or `(P) nn net`, outside a condition slot.
+    // In all other locations, it appears exactly as it is typed, `S p⁺ O` or
+    // `≈net(P)`.
+    struct PremiseRendering
+    {
+        PremiseRendering();
+        ~PremiseRendering();
+        PremiseRendering(const PremiseRendering&)            = delete;
+        PremiseRendering& operator=(const PremiseRendering&) = delete;
+    };
+
     network::Node last_node_to_string_node();
     void          reset_last_node();
     void          set_last_node(network::Node node);

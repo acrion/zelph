@@ -101,6 +101,685 @@ TEST_CASE("rule identity: the same rule entered twice stays one rule")
         CHECK(answers_contain(collector, "a rel c")); });
 }
 
+TEST_CASE("rule identity: a rule written with the focus operator, entered twice, stays one rule")
+{
+    // The focus makes a rule statement evaluate to one of the rule's parts, and
+    // the parser used to pass precisely that part to dedup-rule as the value
+    // the thunk returned: the duplicate check detected no rule to match, thus
+    // every typing of the same rule introduced yet another. Each spelling
+    // listed below is documented (logic.md lists the first beside the plain
+    // rule).
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        const auto twice = [&](const std::string& first, const std::string& second)
+        {
+            interactive.process(first);
+            interactive.process(second);
+            collector.clear();
+            interactive.process(".list-rules");
+            CHECK(listed_rules(collector) == 1);
+        };
+
+        SUBCASE("the focus on the condition set")
+        {
+            twice("*{(X p Y)} => (X q Y)", "*{(X p Y)} => (X q Y)");
+        }
+        SUBCASE("the focus on the condition")
+        {
+            twice("*(X p Y) => (X q Y)", "*(A p B) => (A q B)");
+        }
+        SUBCASE("the focus on a consequence")
+        {
+            twice("(X p Y) => *(X q Y)", "(X p Y) => *(X q Y)");
+        }
+        SUBCASE("the focused spelling after the plain one")
+        {
+            twice("(X p Y) => (X q Y)", "*{(X p Y)} => (X q Y)");
+        } });
+}
+
+TEST_CASE("rule identity: a rule with the focus on its arrow is the rule statement itself")
+{
+    // A focus on a rule's arrow names the rule itself -- the node that the
+    // statement evaluates to without a focus. Since the parser's rule test
+    // required the bare arrow, the expression `(X p Y) *=> (X q Y)` was
+    // treated as a standard statement: `zelph/fact` built the `=>` fact
+    // without performing a duplicate check, each typing added a new rule, and
+    // the line evaluated to the arrow's name, which elicited no echo. The
+    // grammar reads a focused arrow as the arrow itself (`zelph-arrow`).
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        const auto rules = [&]
+        {
+            collector.clear();
+            interactive.process(".list-rules");
+            return listed_rules(collector);
+        };
+        const auto node_id = [&]
+        {
+            collector.clear();
+            interactive.process(".node");
+            for (const auto& e : collector.events())
+                if (const std::string t = normalize(e.text); t.rfind("Node ID:", 0) == 0) return t;
+            return std::string{};
+        };
+
+        SUBCASE("typed twice under other names, one rule")
+        {
+            interactive.process("(X p Y) *=> (X q Y)");
+            interactive.process("(A p B) *=> (A q B)");
+            CHECK(rules() == 1);
+        }
+        SUBCASE("the focused arrow after the plain one, one rule")
+        {
+            interactive.process("(X p Y) => (X q Y)");
+            interactive.process("(A p B) *=> (A q B)");
+            CHECK(rules() == 1);
+        }
+        SUBCASE("the statement names the rule, typed once and again")
+        {
+            collector.clear();
+            interactive.process("(X p Y) *=> (X q Y)");
+            CHECK(normalize(last_out_text(collector)) == "(X p Y) => (X q Y)");
+            const std::string first = node_id();
+            REQUIRE_FALSE(first.empty());
+            CHECK(any_output_contains(collector, "Representation: (X p Y) => (X q Y)"));
+
+            // Under different names, it refers to the rule that
+            // the graph keeps.
+            collector.clear();
+            interactive.process("(A p B) *=> (A q B)");
+            CHECK(normalize(last_out_text(collector)) == "(X p Y) => (X q Y)");
+            CHECK(node_id() == first);
+        }
+        SUBCASE("a ground rule names the rule, and stays one rule")
+        {
+            collector.clear();
+            interactive.process("(a p b) *=> (c q d)");
+            CHECK(normalize(last_out_text(collector)) == "(a p b) => (c q d)");
+
+            interactive.process("(a p b) *=> (c q d)");
+            CHECK(rules() == 1);
+        }
+        SUBCASE("beside a second focus, the arrow keeps its own")
+        {
+            // A single statement cannot contain two foci, and the
+            // arrow is read as the rule exclusively when its focus
+            // is the statement's sole focus.
+            CHECK_THROWS_WITH_AS(interactive.process("(X p Y) *=> *(X q Y)"), doctest::Contains("Multiple focus markers"), std::runtime_error);
+            CHECK(rules() == 0);
+        }
+        SUBCASE("as a command's pattern, it names the kept rule")
+        {
+            // A command's pattern traverses the identical grammar, thus the
+            // focus on the arrow names the rule the graph keeps there as well.
+            // Interpreted as a focus, the pattern denoted no node, and `.node`
+            // refused it.
+            interactive.process("(X p Y) => (X q Y)");
+
+            collector.clear();
+            interactive.process(".node (A p B) *=> (A q B)");
+            CHECK(any_output_contains(collector, "Representation: (X p Y) => (X q Y)"));
+            CHECK(rules() == 1);
+        } });
+}
+
+// The arrow in parentheses or in quotation marks is the node `=>`, and the
+// line represents the rule it encodes. Since the parser's rule test required
+// the bare arrow, the expression with variables `(X p Y) (=>) (X q Y)` was
+// interpreted as a query and did not yield a rule, whereas the ground form
+// `(a p b) "=>" (c q d)` built the `=>` fact via `zelph/fact`, which claimed
+// its parts. The grammar reads either spelling as the arrow (`zelph-arrow`),
+// with or without a focus.
+TEST_CASE("rule identity: an arrow in parentheses or in quotes is the arrow")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        const auto rules = [&]
+        {
+            collector.clear();
+            interactive.process(".list-rules");
+            return listed_rules(collector);
+        };
+        const auto answers = [&](const std::string& query)
+        {
+            collector.clear();
+            interactive.process(query);
+            return collect_answers(collector);
+        };
+
+        SUBCASE("in parentheses typed twice under other names is one rule")
+        {
+            interactive.process("(X p Y) (=>) (X q Y)");
+            interactive.process("(A p B) (=>) (A q B)");
+            CHECK(rules() == 1);
+        }
+        SUBCASE("in quotes after the plain spelling the statement names the kept rule")
+        {
+            interactive.process("(X p Y) => (X q Y)");
+            collector.clear();
+            interactive.process("(A p B) \"=>\" (A q B)");
+            CHECK(normalize(last_out_text(collector)) == "(X p Y) => (X q Y)");
+            CHECK(rules() == 1);
+        }
+        SUBCASE("a ground rule in either spelling keeps its parts patterns and fires")
+        {
+            interactive.process("(a p b) (=>) (c q d)");
+            interactive.process("(e r f) \"=>\" (g s h)");
+            CHECK(rules() == 2);
+            CHECK(answers("A p B").empty());
+            CHECK(answers("C q D").empty());
+            CHECK(answers("E r F").empty());
+            CHECK(answers("G s H").empty());
+
+            interactive.process("a p b");
+            interactive.process("e r f");
+            interactive.run(true, false, false);
+            CHECK(answers("C q D") == std::vector<std::string>{"c q d"});
+            CHECK(answers("G s H") == std::vector<std::string>{"g s h"});
+        }
+        SUBCASE("a focus over either spelling names the kept rule")
+        {
+            interactive.process("(X p Y) => (X q Y)");
+            for (const std::string arrow : {"*\"=>\"", "*(\"=>\")", "(*=>)", "((=>))"})
+            {
+                collector.clear();
+                interactive.process("(A p B) " + arrow + " (A q B)");
+                CHECK(normalize(last_out_text(collector)) == "(X p Y) => (X q Y)");
+            }
+            CHECK(rules() == 1);
+        }
+        SUBCASE("inside a statement it mentions the rule")
+        {
+            interactive.process("x says ((a p b) (=>) (c q d))");
+            CHECK(rules() == 0);
+            CHECK(answers("A p B").empty());
+            CHECK(answers("S says O").size() == 1);
+        }
+        // A rule that a set literal holds is a mention, just as one that a
+        // statement holds is. With the arrow enclosed in quotation marks, it
+        // was the `=>` fact constructed via `zelph/fact`, and its ground parts
+        // were claimed.
+        SUBCASE("inside a set the quoted arrow mentions the rule")
+        {
+            interactive.process("k has {((a p b) \"=>\" (c q d))}");
+            CHECK(rules() == 0);
+            CHECK(answers("A p B").empty());
+            CHECK(answers("C q D").empty());
+            CHECK(answers("S has O").size() == 1);
+        }
+        // A command reads its pattern using the identical grammar that a line
+        // employs: by means of either spelling, `.explain` finds the rule that
+        // the plain spelling names, where it reported that the fact was not
+        // asserted.
+        SUBCASE("a command pattern reads either spelling as the arrow")
+        {
+            interactive.process("(X p Y) => (X q Y)");
+            const auto explained = [&](const std::string& arrow)
+            {
+                collector.clear();
+                interactive.process(".explain (A p B) " + arrow + " (A q B)");
+                std::string text;
+                for (const auto& e : collector.events())
+                    text += normalize(e.text) + "\n";
+                return text;
+            };
+            const std::string plain = explained("=>");
+            CHECK(plain.find("[axiom]") != std::string::npos);
+            CHECK(explained("\"=>\"") == plain);
+            CHECK(explained("(=>)") == plain);
+        }
+        SUBCASE("beside a focus on a consequence the focus stays where it is")
+        {
+            collector.clear();
+            interactive.process("(X p Y) (=>) *(X q Y)");
+            CHECK(normalize(last_out_text(collector)) == "X q Y");
+            CHECK(rules() == 1);
+            CHECK_THROWS_WITH_AS(interactive.process("(A p B) *\"=>\" *(A q B)"), doctest::Contains("Multiple focus markers"), std::runtime_error);
+            CHECK(rules() == 1);
+        } });
+}
+
+TEST_CASE("rule identity: a line that is one rule under a focus is the rule statement")
+{
+    // A focus on an entire line lacks a surrounding statement to hand a part
+    // to, thus `*((X p Y) => (X q Y))` evaluates to the rule, just as the
+    // plain spelling does. It was read as a value: the parser wrote the rule
+    // down as a mention, which no entity named, hence the rule remained in
+    // force without undergoing the duplicate check, and each typing added one.
+    // The grammar reads the line as the rule statement (`zelph-line`).
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        const auto rules = [&]
+        {
+            collector.clear();
+            interactive.process(".list-rules");
+            return listed_rules(collector);
+        };
+
+        SUBCASE("typed twice under other names, one rule")
+        {
+            interactive.process("*((X p Y) => (X q Y))");
+            interactive.process("*((A p B) => (A q B))");
+            CHECK(rules() == 1);
+        }
+        SUBCASE("after the plain spelling, one rule, and the line names it")
+        {
+            interactive.process("(X p Y) => (X q Y)");
+
+            collector.clear();
+            interactive.process("*((A p B) => (A q B))");
+            CHECK(normalize(last_out_text(collector)) == "(X p Y) => (X q Y)");
+            CHECK(rules() == 1);
+        }
+        SUBCASE("as a command's pattern, it names the kept rule")
+        {
+            // A command's pattern traverses the identical grammar, thus
+            // the line names the rule the graph keeps there as well.
+            // Interpreted as a value, the pattern denoted no node, and
+            // `.node` refused it.
+            interactive.process("(X p Y) => (X q Y)");
+
+            collector.clear();
+            interactive.process(".node *((A p B) => (A q B))");
+            CHECK(any_output_contains(collector, "Representation: (X p Y) => (X q Y)"));
+            CHECK(rules() == 1);
+        } });
+}
+
+TEST_CASE("rule identity: a rule statement asks nothing")
+{
+    // The variables within a rule are scoped in the same manner as those in a
+    // query, and upon completion of the statement, the engine evaluated the
+    // statement's value as if it were a query: the focused consequence answered
+    // with the data that matched it, while the rule as a whole answered with
+    // another rule that its own pattern matched. A rule statement states a
+    // rule, regardless of its spelling.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        SUBCASE("a focused consequence typed again answers nothing")
+        {
+            interactive.process("a p b");
+            interactive.process("(X p Y) => *(X q Y)");
+            interactive.run(true, false, false);
+
+            collector.clear();
+            interactive.process("(X p Y) => *(X q Y)");
+            CHECK(collect_answers(collector).empty());
+        }
+        SUBCASE("a focused consequence answers nothing on its first typing either")
+        {
+            interactive.process("c q d");
+
+            collector.clear();
+            interactive.process("(X p Y) => *(X q Y)");
+            CHECK(collect_answers(collector).empty());
+        }
+        SUBCASE("a plain rule answers nothing with another rule its pattern matches")
+        {
+            interactive.process("(a p b) => (c q d)");
+
+            collector.clear();
+            interactive.process("(X p b) => (c q d)");
+            CHECK(collect_answers(collector).empty());
+
+            collector.clear();
+            interactive.process(".list-rules");
+            CHECK(listed_rules(collector) == 2);
+        } });
+}
+
+TEST_CASE("rule identity: a rule with the focus operator evaluates to that part of the rule it keeps")
+{
+    // The statement continues to evaluate to the focused part: it is echoed,
+    // and `.node` without an argument refers to it, just as it did before the
+    // duplicate check saw the rule. When the rule repeats one that the graph
+    // holds, the part is the kept rule's: the one the statement built is rolled
+    // back.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        const auto node_id = [&]
+        {
+            collector.clear();
+            interactive.process(".node");
+            for (const auto& e : collector.events())
+                if (const std::string t = normalize(e.text); t.rfind("Node ID:", 0) == 0) return t;
+            return std::string{};
+        };
+
+        SUBCASE("the condition set, typed once and again")
+        {
+            collector.clear();
+            interactive.process("*{(X p Y)} => (X q Y)");
+            CHECK(normalize(last_out_text(collector)) == "@{(X p Y)}");
+            const std::string first = node_id();
+            REQUIRE_FALSE(first.empty());
+            CHECK(any_output_contains(collector, "Representation: @{(X p Y)}"));
+
+            collector.clear();
+            interactive.process("*{(X p Y)} => (X q Y)");
+            CHECK(normalize(last_out_text(collector)) == "@{(X p Y)}");
+            CHECK(node_id() == first);
+        }
+        SUBCASE("a consequence among several, typed again under other names")
+        {
+            interactive.process("(A p B) => *(B q A) (A q B)");
+
+            // The consequence of the kept rule that pairs with the focused one,
+            // displayed using the variable names defined by the kept rule.
+            collector.clear();
+            interactive.process("(X p Y) => (X q Y) *(Y q X)");
+            CHECK(normalize(last_out_text(collector)) == "B q A");
+
+            collector.clear();
+            interactive.process("(X p Y) => *(X q Y) (Y q X)");
+            CHECK(normalize(last_out_text(collector)) == "A q B");
+        }
+        SUBCASE("a Janet program asks for the part with :focus")
+        {
+            // The identical path the parser follows, crafted manually: the rule
+            // repeats the typed one, thus the condition that comes back is the
+            // typed rule's.
+            interactive.process("(X p Y) => (X q Y)");
+            CHECK(janet_value(collector, interactive, R"js((= (zelph/dedup-rule (fn [] (let [c (zelph/fact 'A "p" 'B)] [(zelph/fact c "=>" (zelph/fact 'A "q" 'B)) c])) :focus) (get (zelph/parse ((first (zelph/rules)) :rule)) 0)))js")
+                  == "true");
+
+            collector.clear();
+            interactive.process(".list-rules");
+            CHECK(listed_rules(collector) == 1);
+        } });
+}
+
+TEST_CASE("rule identity: wherever the focus stands, a rule statement keeps all of its properties at once")
+{
+    // Each position a focus occupies within a rule statement held to four
+    // properties together: the statement asks nothing, when re-typed (using
+    // different names where variables appear) it remains a single rule and
+    // evaluates to the same part of the kept rule, and no ground part of the
+    // rule answers a query. The cases above take one property across several
+    // positions each; the focus on the arrow failed all four, while a focus on
+    // an entire line kept a rule for every typing, and neither position was
+    // among them. A fact that a focus nests in a condition or consequence is
+    // written beside the rule and claimed, hence those positions are taken
+    // with variables only.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        using Ground = std::vector<std::pair<std::string, std::string>>; // a query and the part it must not answer
+        const auto holds = [&](const std::string& first, const std::string& second, const Ground& ground)
+        {
+            // Each pattern listed below is matched by the data,
+            // such that a statement evaluated as a query would
+            // yield a response.
+            interactive.process("m p n");
+            interactive.process("m q n");
+
+            collector.clear();
+            interactive.process(first);
+            CHECK(collect_answers(collector).empty());
+            const std::string echo = normalize(last_out_text(collector));
+            CHECK_FALSE(echo.empty());
+
+            collector.clear();
+            interactive.process(second);
+            CHECK(collect_answers(collector).empty());
+            CHECK(normalize(last_out_text(collector)) == echo);
+
+            collector.clear();
+            interactive.process(".list-rules");
+            CHECK(listed_rules(collector) == 1);
+
+            interactive.run(true, false, false);
+            for (const auto& [query, part] : ground)
+            {
+                collector.clear();
+                interactive.process(query);
+                CHECK_FALSE(answers_contain(collector, part));
+            }
+        };
+        const Ground abcd{{"A p B", "a p b"}, {"C q D", "c q d"}};
+
+        SUBCASE("the condition, with variables")
+        {
+            holds("*(X p Y) => (X q Y)", "*(A p B) => (A q B)", {});
+        }
+        SUBCASE("the condition, ground")
+        {
+            holds("*(a p b) => (c q d)", "*(a p b) => (c q d)", abcd);
+        }
+        SUBCASE("the one-condition set, with variables")
+        {
+            holds("*{(X p Y)} => (X q Y)", "*{(A p B)} => (A q B)", {});
+        }
+        SUBCASE("the one-condition set, ground")
+        {
+            holds("*{(a p b)} => (c q d)", "*{(a p b)} => (c q d)", abcd);
+        }
+        SUBCASE("the comma list, with variables")
+        {
+            holds("*(X p Y, Y r Z) => (X q Z)", "*(A p B, B r C) => (A q C)", {});
+        }
+        SUBCASE("the comma list, ground")
+        {
+            holds("*(a p b, b r e) => (c q d)", "*(a p b, b r e) => (c q d)", {{"A p B", "a p b"}, {"B r E", "b r e"}, {"C q D", "c q d"}});
+        }
+        SUBCASE("a consequence, with variables")
+        {
+            holds("(X p Y) => *(X q Y)", "(A p B) => *(A q B)", {});
+        }
+        SUBCASE("a consequence, ground")
+        {
+            holds("(a p b) => *(c q d)", "(a p b) => *(c q d)", abcd);
+        }
+        SUBCASE("a consequence among several, typed in another order")
+        {
+            holds("(a p b) => *(c q d) (e r f)", "(a p b) => (e r f) *(c q d)", {{"A p B", "a p b"}, {"C q D", "c q d"}, {"E r F", "e r f"}});
+        }
+        SUBCASE("a fact nested in a condition")
+        {
+            holds("(x says *(X p Y)) => (X q Y)", "(x says *(A p B)) => (A q B)", {});
+        }
+        SUBCASE("a fact nested in a consequence")
+        {
+            holds("(X p Y) => (x says *(X q Y))", "(A p B) => (x says *(A q B))", {});
+        }
+        SUBCASE("the arrow, with variables")
+        {
+            holds("(X p Y) *=> (X q Y)", "(A p B) *=> (A q B)", {});
+        }
+        SUBCASE("the arrow, ground")
+        {
+            holds("(a p b) *=> (c q d)", "(a p b) *=> (c q d)", abcd);
+        }
+        SUBCASE("the arrow over a comma list with a ground condition")
+        {
+            holds("(X p Y, a r b) *=> (X q Y)", "(A p B, a r b) *=> (A q B)", {{"A r B", "a r b"}});
+        }
+        // A focus on a second focus, or on parentheses enclosing a solitary
+        // value, is that single focus: `**x`, `*(x)` and `*((x))` are
+        // interpreted as `*x`. The grammar took the arrow and the whole line
+        // for the rule solely in the shape `*x`, so one additional layer
+        // reintroduced the flaws mentioned earlier: a rule built without the
+        // duplicate check, its ground parts claimed.
+        SUBCASE("the arrow under a second focus, with variables")
+        {
+            holds("(X p Y) **=> (X q Y)", "(A p B) **=> (A q B)", {});
+        }
+        SUBCASE("the arrow in parentheses under the focus, ground")
+        {
+            holds("(a p b) *(=>) (c q d)", "(a p b) *(=>) (c q d)", abcd);
+        }
+        // The arrow enclosed in quotation marks beneath a focus, and a
+        // focus located within the parentheses around the arrow, are
+        // also the focused arrow.
+        SUBCASE("the arrow in quotes under the focus with variables")
+        {
+            holds("(X p Y) *\"=>\" (X q Y)", "(A p B) *\"=>\" (A q B)", {});
+        }
+        SUBCASE("the focused arrow in parentheses on a ground rule")
+        {
+            holds("(a p b) (*=>) (c q d)", "(a p b) (*=>) (c q d)", abcd);
+        }
+        SUBCASE("the whole rule, with variables")
+        {
+            holds("*((X p Y) => (X q Y))", "*((A p B) => (A q B))", {});
+        }
+        SUBCASE("the whole rule, ground")
+        {
+            holds("*((a p b) => (c q d))", "*((a p b) => (c q d))", abcd);
+        }
+        // A focus on the whole line reads the arrow from the rule it holds,
+        // and that arrow, whether enclosed in quotation marks or within
+        // parentheses, remains the same arrow: the line functioned as a query
+        // that left no rule behind.
+        SUBCASE("the whole rule over the arrow in quotes and in parentheses")
+        {
+            holds("*((X p Y) \"=>\" (X q Y))", "*((A p B) (=>) (A q B))", {});
+        }
+        // The entire line, beneath the same layers.
+        SUBCASE("the whole rule under a second focus, with variables")
+        {
+            holds("**((X p Y) => (X q Y))", "**((A p B) => (A q B))", {});
+        }
+        SUBCASE("the whole rule in a second pair of parentheses, with variables")
+        {
+            holds("*(((X p Y) => (X q Y)))", "*(((A p B) => (A q B)))", {});
+        } });
+}
+
+TEST_CASE("rule identity: a focus on a consequence written as a name or a variable is a focus on that part")
+{
+    // A name or variable that is focused arrives at dedup-rule as the string or
+    // symbol provided by the parser to zelph/fact, rather than as a node, and
+    // the check that the part belongs to the rule refused it: `(X p Y) => *!`
+    // was reported as "not a rule and one of its parts" and resulted in nothing
+    // being built. Before the existence of this check, the line built its rule
+    // without marking it, thus `(a p b) => *!` fired immediately.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        const auto twice = [&](const std::string& first, const std::string& second)
+        {
+            CHECK_NOTHROW(interactive.process(first));
+            CHECK_NOTHROW(interactive.process(second));
+            collector.clear();
+            interactive.process(".list-rules");
+            CHECK(listed_rules(collector) == 1);
+        };
+
+        SUBCASE("the contradiction")
+        {
+            twice("(X p Y) => *!", "(A p B) => *!");
+
+            collector.clear();
+            interactive.process("a p b");
+            CHECK(any_output_contains(collector, "! ⇐ (a p b)"));
+        }
+        SUBCASE("a name among several consequences")
+        {
+            twice("(X p Y) => (X q Y) *!", "(X p Y) => (X q Y) *!");
+        }
+        SUBCASE("a variable among several consequences, after the plain spelling")
+        {
+            // A rule requires just a single consequence it is able to assert
+            // (Zelph::has_rule_form), hence the bare variable next to it does
+            // not keep the line from qualifying as a rule. The focused spelling
+            // must locate the rule that the plain spelling built.
+            twice("(X p Y) => (X q Y) Y", "(X p Y) => (X q Y) *Y");
+        }
+        SUBCASE("a ground rule is a pattern until its condition is claimed")
+        {
+            interactive.process("(a p b) => *!");
+            CHECK_FALSE(any_output_contains(collector, "! ⇐"));
+
+            collector.clear();
+            interactive.process("a p b");
+            CHECK(any_output_contains(collector, "! ⇐ (a p b)"));
+        } });
+}
+
+TEST_CASE("rule identity: dedup-rule refuses a thunk that does not return a rule")
+{
+    // The duplicate check compares the `=>` fact produced by the thunk and
+    // finds no matching twin for any other item, hence the dedup-rule kept
+    // whatever that thunk constructed: a plain fact serving as a claim, and
+    // a rule whose thunk returned its condition set as a rule that had
+    // never been checked for a duplicate. Both are rejected just like a
+    // failing thunk, and none of the components they generated are
+    // preserved.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        const auto nodes = [&]
+        {
+            collector.clear();
+            interactive.process(".stat");
+            return node_count(collector);
+        };
+        const std::string before = nodes();
+
+        SUBCASE("a plain fact")
+        {
+            CHECK_THROWS_WITH_AS(interactive.process(R"js(%(zelph/dedup-rule (fn [] (zelph/fact "a" "b" "c"))))js"),
+                                 doctest::Contains("=>"),
+                                 std::runtime_error);
+            CHECK(nodes() == before);
+
+            collector.clear();
+            interactive.process("A b C");
+            CHECK(collect_answers(collector).empty());
+        }
+        SUBCASE("a condition set")
+        {
+            CHECK_THROWS_WITH_AS(interactive.process(R"js(%(zelph/dedup-rule (fn [] (let [c (zelph/conjunction (zelph/fact 'X "p" 'Y) (zelph/fact 'Y "p" 'Z))] (zelph/fact c "=>" (zelph/fact 'X "q" 'Z)) c)))))js"),
+                                 doctest::Contains("=>"),
+                                 std::runtime_error);
+            CHECK(nodes() == before);
+
+            collector.clear();
+            interactive.process(".list-rules");
+            CHECK(listed_rules(collector) == 0);
+        }
+        SUBCASE("a typed rule with the focus operator is not refused")
+        {
+            // The focus operator makes the statement evaluate to its condition
+            // set. Parsed statements were previously exempt from the refusal
+            // for that reason. The parser's thunk now returns the `=>` fact
+            // alongside the focused part (:focus), and the refusal applies to
+            // every caller.
+            interactive.process("*{(X p Y)} => (X q Y)");
+            collector.clear();
+            interactive.process(".list-rules");
+            CHECK(listed_rules(collector) == 1);
+        }
+        SUBCASE("with :focus, a rule without a part of it")
+        {
+            // Using :focus, the thunk returns a tuple consisting of the rule
+            // and the focused part. A rule by itself, or a part that belongs to
+            // no rule the thunk authored, fails to indicate which part to
+            // return.
+            CHECK_THROWS_WITH_AS(interactive.process(R"js(%(zelph/dedup-rule (fn [] (zelph/fact (zelph/fact 'X "p" 'Y) "=>" (zelph/fact 'X "q" 'Y))) :focus))js"),
+                                 doctest::Contains("not a rule and one of its parts"),
+                                 std::runtime_error);
+            CHECK(nodes() == before);
+        }
+        SUBCASE("with :focus, a part the rule does not have")
+        {
+            CHECK_THROWS_WITH_AS(interactive.process(R"js(%(zelph/dedup-rule (fn [] [(zelph/fact (zelph/fact 'X "p" 'Y) "=>" (zelph/fact 'X "q" 'Y)) (zelph/fact 'X "r" 'Y)]) :focus))js"),
+                                 doctest::Contains("not a rule and one of its parts"),
+                                 std::runtime_error);
+            CHECK(nodes() == before);
+
+            collector.clear();
+            interactive.process(".list-rules");
+            CHECK(listed_rules(collector) == 0);
+        }
+        SUBCASE("an option other than :focus")
+        {
+            CHECK_THROWS_WITH_AS(interactive.process(R"js(%(zelph/dedup-rule (fn [] (zelph/fact (zelph/fact 'X "p" 'Y) "=>" (zelph/fact 'X "q" 'Y))) :part))js"),
+                                 doctest::Contains("the only option is :focus"),
+                                 std::runtime_error);
+            CHECK(nodes() == before);
+        } });
+}
+
 TEST_CASE("rule identity: renaming the variables does not make a new rule")
 {
     run_both_modes([](auto& collector, auto& interactive)
@@ -272,6 +951,38 @@ TEST_CASE("rule identity: the rollback leaves no debris")
         collector.clear();
         interactive.process(".stat");
         CHECK(node_count(collector) == before); });
+}
+
+TEST_CASE("rule identity: the rollback of a rule with the focus operator leaves no debris")
+{
+    // With a focus, the duplicate is rolled back solely after the part of the
+    // kept rule has been retrieved (network::corresponding_part), meaning the
+    // lookup runs while two copies of the rule exist within the graph. Whatever
+    // it builds must not persist beyond the rollback.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        const auto twice = [&](const std::string& first, const std::string& second)
+        {
+            interactive.process(first);
+            collector.clear();
+            interactive.process(".stat");
+            const std::string before = node_count(collector);
+            REQUIRE_FALSE(before.empty());
+
+            interactive.process(second);
+            collector.clear();
+            interactive.process(".stat");
+            CHECK(node_count(collector) == before);
+        };
+
+        SUBCASE("the condition set")
+        {
+            twice("*{(X p Y)} => (X q Y)", "*{(A p B)} => (A q B)");
+        }
+        SUBCASE("a consequence among several")
+        {
+            twice("(X p Y) => *(X q Y) (Y q X)", "(A p B) => (B q A) *(A q B)");
+        } });
 }
 
 TEST_CASE("rule identity: different rules stay different")
@@ -507,6 +1218,104 @@ b foo c
             collector.clear();
             interactive.process("S flagged yes");
             CHECK(answers_contain(collector, "(a p b) flagged yes"));
+        } });
+}
+
+TEST_CASE("rule identity: zelph/rules lists the rules in force with their parts")
+{
+    // A front end that rejects a question when a rule currently in force
+    // could derive what the question supposes has to read the rules --
+    // including their negated conditions and guards. A query using `=>`
+    // finds only ground rules, as any rule text containing a variable can
+    // never serve as a match candidate, and .list-rules outputs the rule
+    // text. zelph/rules returns the rules in force as data, with conditions
+    // sorted by kind exactly as the engine itself reads them. Auto-run is
+    // disabled, meaning that adding a rule runs nothing.
+    static const std::string parts =
+        R"js(%(defn parts [sub] (def r (find |(string/find sub (string ($ :rule))) (zelph/rules))) (zelph/out (string sub " -> " (string/join (map (fn [k] (string k "=" (string/join (map string (r k)) "; "))) [:conditions :negated :guards :paths :neural :heads]) " ")))))js";
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process(".auto-run");
+        interactive.process(parts);
+        SUBCASE("a rule with a variable")
+        {
+            interactive.process("(X p Y) => (X q Y)");
+            collector.clear();
+            interactive.process(R"js(%(parts "(X q Y)"))js");
+            CHECK(any_output_contains(collector, "(X q Y) -> conditions=X p Y negated= guards= paths= neural= heads=X q Y"));
+        }
+        SUBCASE("a ground rule")
+        {
+            interactive.process("(a p b) => (c q d)");
+            collector.clear();
+            interactive.process(R"js(%(parts "(c q d)"))js");
+            CHECK(any_output_contains(collector, "(c q d) -> conditions=a p b negated= guards= paths= neural= heads=c q d"));
+        }
+        SUBCASE("a rule with a negated condition lists the pattern it negates")
+        {
+            // `¬(P)` is the fact `((P) ~ negation)`, and the rule names that
+            // fact as its condition. :negated lists P, the pattern a caller
+            // compares with what other rules derive.
+            interactive.process("(X ~ man, ¬(X ~ married)) => (X ~ bachelor)");
+            collector.clear();
+            interactive.process(R"js(%(parts "bachelor"))js");
+            CHECK(any_output_contains(collector, "bachelor -> conditions=X ~ man negated=X ~ married guards= paths= neural= heads=X ~ bachelor"));
+        }
+        SUBCASE("a denial")
+        {
+            interactive.process("(X ~ man, X ~ woman) => !");
+            collector.clear();
+            interactive.process(R"js(%(parts "woman"))js");
+            CHECK(any_output_contains(collector, " negated= guards= paths= neural= heads=!"));
+            CHECK(any_output_contains(collector, "X ~ man"));
+            CHECK(any_output_contains(collector, "X ~ woman"));
+        }
+        SUBCASE("a guard, a path and a neural condition each have their own part, printed as typed")
+        {
+            // This case pinned the prior printing of the path and the neural
+            // condition as the facts their operators build,
+            // `(S P279 T) closure one-or-more` and `(A relG B) nn gnet`. That
+            // spelling names `closure` and `nn` within the current language,
+            // and outside the zelph language the line re-entered as a different
+            // statement. The node now prints as the condition is typed.
+            interactive.process("(X p Y, X != Y) => (X differs Y)");
+            interactive.process("(S pair T, S P279⁺ T) => (S under T)");
+            interactive.process("(A relG B, ≈gnet(A relG B)) => (A verifiedG B)");
+            collector.clear();
+            interactive.process(R"js(%(parts "differs"))js");
+            interactive.process(R"js(%(parts "under"))js");
+            interactive.process(R"js(%(parts "verifiedG"))js");
+            CHECK(any_output_contains(collector, "differs -> conditions=X p Y negated= guards=X != Y paths= neural= heads=X differs Y"));
+            CHECK(any_output_contains(collector, "under -> conditions=S pair T negated= guards= paths=S P279⁺ T neural= heads=S under T"));
+            CHECK(any_output_contains(collector, "verifiedG -> conditions=A relG B negated= guards= paths= neural=≈gnet(A relG B) heads=A verifiedG B"));
+        }
+        SUBCASE("a rule a statement only mentions is not listed")
+        {
+            // A statement concerning a rule mentions it without asserting
+            // it, thus it is not in force (as explained in "talking about a
+            // rule does not assert it" above), and zelph/rules lists only
+            // the rule typed as a rule.
+            interactive.process("((X p Y) => (X r Y)) is nice");
+            interactive.process("(a p b) => (c q d)");
+            collector.clear();
+            interactive.process(R"js(%(zelph/out (string "rules=" (length (zelph/rules)) " " (string (((zelph/rules) 0) :rule)))))js");
+            CHECK(any_output_contains(collector, "rules=1 (a p b) => (c q d)"));
+        }
+        SUBCASE("the rules come sorted by node, and nothing is created")
+        {
+            // Reading the rules does not generate a node, which .stat
+            // counts; the sequence follows the order of the rule nodes,
+            // consistent across every call.
+            process_lines(interactive, R"(
+(X p Y) => (X q Y)
+(X ~ man, ¬(X ~ married)) => (X ~ bachelor)
+(a p b) => (c q d)
+)");
+            const std::size_t before = node_count(collector, interactive);
+            collector.clear();
+            interactive.process(R"js(%(zelph/out (string "rules=" (length (zelph/rules)) " sorted=" (apply < (map |($ :rule) (zelph/rules))))))js");
+            CHECK(any_output_contains(collector, "rules=3 sorted=true"));
+            CHECK(node_count(collector, interactive) == before);
         } });
 }
 

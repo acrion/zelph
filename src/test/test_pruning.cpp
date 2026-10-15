@@ -30,8 +30,8 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #include "network/reasoning.hpp"
 
+#include <algorithm>
 #include <filesystem>
-#include <regex>
 #include <set>
 
 using namespace zelph::test;
@@ -84,6 +84,378 @@ TEST_CASE("pruning: a pattern without variables removes exactly that fact")
         CHECK_FALSE(any_output_contains(collector, "a rel b")); });
 }
 
+// The variable form keeps the relation-type declaration associated with a
+// core predicate ("core names: pruning skips the core vocabulary instead of
+// aborting"), while the ground form removed it: `.prune-facts ~ ~ ->`
+// answered "Pruned 1", and subsequently no fact from `~` could be retrieved,
+// with `bob ~ man` echoing `??`. Now, both ground forms keep it and indicate
+// this through the variable form's line. The declarations are named in the
+// command's own syntax, which is how a user who cleans up declarations
+// reaches them.
+TEST_CASE("pruning: the ground form keeps a core predicate's declaration, as the variable form does")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("a p b");
+        const auto kept = [&](const std::string& prune, const std::string& pruned)
+        {
+            collector.clear();
+            interactive.process(prune);
+            CHECK(any_output_contains(collector, "Kept 1 relation-type declaration(s) of core predicates"));
+            CHECK(any_output_contains(collector, pruned));
+            CHECK_FALSE(any_event_contains(collector, "Consider running .cleanup"));
+            CHECK_FALSE(any_event_contains(collector, "carries variables"));
+
+            interactive.process("bob ~ man");
+            interactive.process("k has {x}");
+            collector.clear();
+            interactive.process("X ~ man");
+            CHECK(collect_answers(collector) == std::vector<std::string>{"bob ~ man"});
+            collector.clear();
+            interactive.process("S has O");
+            CHECK(collect_answers(collector) == std::vector<std::string>{"k has {x}"});
+        };
+
+        SUBCASE("the declaration of ~") { kept(".prune-facts ~ ~ ->", "Pruned 0 matching facts."); }
+        SUBCASE("the declaration of in") { kept(".prune-facts in ~ ->", "Pruned 0 matching facts."); }
+        SUBCASE("by .prune-nodes") { kept(".prune-nodes ~ ~ ->", "Pruned 0 matching facts and 0 nodes"); } });
+}
+
+// The ground form of .prune-facts, serving as a function for a program that
+// retracts a statement it previously asserted and needs to know what became
+// of it. No prior binding removed a fact: a program was obliged to build the
+// command's text manually. The command and the function utilize a single
+// shared implementation (Reasoning::prune_fact), hence the command's
+// properties are pinned here for the function as well, and any modification
+// to either is deliberate.
+TEST_CASE("janet: zelph/prune-fact removes one claimed fact, as .prune-facts does")
+{
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+    process_lines(interactive, "a rel b\nc rel d\n");
+    const auto value = [&](const std::string& expression)
+    { return janet_value(collector, interactive, expression); };
+    const auto answers = [&](const std::string& query)
+    {
+        collector.clear();
+        interactive.process(query);
+        return collect_answers(collector);
+    };
+
+    SUBCASE("named by its parts")
+    {
+        CHECK(value(R"((zelph/prune-fact "a" "rel" "b"))") == ":removed");
+        CHECK(answers("X rel Y") == std::vector<std::string>{"c rel d"});
+    }
+    SUBCASE("a fact node is accepted")
+    {
+        interactive.process(R"(%(def f (zelph/fact "a" "rel" "b")))");
+        CHECK(value("(zelph/prune-fact f)") == ":removed");
+        CHECK(answers("X rel Y") == std::vector<std::string>{"c rel d"});
+        CHECK(value("(zelph/prune-fact f)") == "nil");
+    }
+    SUBCASE("a fact nobody claimed is left alone")
+    {
+        // Absent, a rule's own pattern, a refuted fact, and a mention: where
+        // .prune-facts outputs "Pruned 0", nothing changes.
+        process_lines(interactive, "(e p f) => (g q h)\n¬(a rel z)\nbelieves ~ opaque\nk believes (m n o)\n");
+        const std::size_t before = node_count(collector, interactive);
+        CHECK(value(R"((zelph/prune-fact "a" "rel" "d"))") == "nil");
+        CHECK(value(R"((zelph/prune-fact "e" "p" "f"))") == "nil");
+        CHECK(value(R"((zelph/prune-fact "a" "rel" "z"))") == "nil");
+        CHECK(value(R"((zelph/prune-fact "m" "n" "o"))") == "nil");
+        CHECK(node_count(collector, interactive) == before);
+        CHECK(value("(length (zelph/rules))") == "1");
+    }
+    SUBCASE("a core predicate's declaration is kept, with the line of the command")
+    {
+        // The command's ground form eliminated it (see "pruning: the ground
+        // form keeps a core predicate's declaration"), and likewise did the
+        // function, which answered :removed.
+        CHECK(value(R"((zelph/prune-fact "~" "~" "->"))") == "nil");
+        CHECK(any_output_contains(collector, "Kept 1 relation-type declaration(s) of core predicates"));
+        interactive.process("bob ~ man");
+        CHECK(answers("X ~ man") == std::vector<std::string>{"bob ~ man"});
+    }
+    SUBCASE("a wider fact is not pruned through a narrower one")
+    {
+        interactive.process("x rel y z");
+        CHECK(value(R"((zelph/prune-fact "x" "rel" "y"))") == "nil");
+        CHECK(value(R"((zelph/exists "x" "rel" "y" "z" :exact))") == "true");
+    }
+    SUBCASE("a statement that nests the fact goes with it")
+    {
+        interactive.process("(a rel b) q c");
+        CHECK(value(R"((zelph/prune-fact "a" "rel" "b"))") == ":removed");
+        CHECK(answers("S q O").empty());
+    }
+    SUBCASE("a pattern with a variable is refused")
+    {
+        CHECK_THROWS_WITH(interactive.process(R"(%(zelph/prune-fact (zelph/var) "rel" "b"))"),
+                          doctest::Contains("zelph/prune-fact: the fact holds a variable"));
+        CHECK(answers("X rel Y").size() == 2);
+    }
+    SUBCASE("a node that is no fact is refused")
+    {
+        CHECK_THROWS_WITH(interactive.process(R"(%(zelph/prune-fact "a"))"), doctest::Contains("zelph/prune-fact: a is no fact"));
+    }
+    SUBCASE("inside a rule-building thunk it is refused")
+    {
+        CHECK_THROWS_WITH(interactive.process(R"(%(zelph/build-rule (fn [] (zelph/prune-fact "a" "rel" "b"))))"),
+                          doctest::Contains("zelph/prune-fact: refused while a rule is being built"));
+        CHECK(answers("X rel Y").size() == 2);
+    }
+    SUBCASE("on a partially loaded graph it is blocked, as the command is")
+    {
+        // A partial load is a read-only view where each command that removes
+        // content is prevented from executing: such a removal cannot see the
+        // holders and rules excluded by the view. The function removed what
+        // the command refuses to remove.
+        namespace fs       = std::filesystem;
+        const auto network = fs::temp_directory_path() / "zelph_prune_fact_partial_view.bin";
+        interactive.process(".save \"" + network.string() + "\"");
+        interactive.process(".new");
+        interactive.process(".load-partial \"" + network.string() + "\"");
+        CHECK_THROWS_WITH(interactive.process(R"(%(zelph/prune-fact "a" "rel" "b"))"),
+                          doctest::Contains("Blocked in partial load mode; full graph required for zelph/prune-fact"));
+        CHECK(answers("X rel Y").size() == 2);
+        fs::remove(network);
+    }
+}
+
+// A prune takes the statements that nest the fact along with it (pinned
+// above), so a program that must not lose one asks first. The answer
+// corresponds to what the first step of the removal takes: the statements
+// that claim the fact through nesting. Rule text, mentions, and the engine's
+// bookkeeping hold it without claiming it and are excluded.
+TEST_CASE("janet: zelph/holders lists the statements that claim a fact by nesting it")
+{
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+    interactive.process("a p b");
+    const auto value = [&](const std::string& expression)
+    { return janet_value(collector, interactive, expression); };
+    const auto answers = [&](const std::string& query)
+    {
+        collector.clear();
+        interactive.process(query);
+        return collect_answers(collector);
+    };
+
+    SUBCASE("the direct holders, sorted by node")
+    {
+        process_lines(interactive, "(a p b) q c\nd r (a p b)\n((a p b) q c) s e\n");
+        const std::size_t before = node_count(collector, interactive);
+        interactive.process(R"(%(def h (zelph/holders "a" "p" "b")))");
+        CHECK(value("(sort (map string h))") == R"js(@["(a p b) q c" "d r (a p b)"])js");
+        CHECK(value("(apply < h)") == "true");
+        CHECK(node_count(collector, interactive) == before);
+    }
+    SUBCASE("a fact nothing nests gives the empty tuple, an absent one nil")
+    {
+        CHECK(value(R"((zelph/holders "a" "p" "b"))") == "()");
+        CHECK(value(R"((zelph/holders "a" "p" "c"))") == "nil");
+    }
+    SUBCASE("a fact's own markings are no holders")
+    {
+        // A statement that uses the fact as its predicate holds it; the
+        // declaration that makes the fact a predicate, and the marking
+        // of a refuted fact, are intrinsic to the fact.
+        interactive.process("x (a p b) y");
+        CHECK(value(R"((map string (zelph/holders "a" "p" "b")))") == R"js(@["x (a p b) y"])js");
+        interactive.process("¬(a p c)");
+        CHECK(value(R"((zelph/holders "a" "p" "c"))") == "()");
+    }
+    SUBCASE("a rule that names the fact is no holder")
+    {
+        process_lines(interactive, "(a p b) => (c q d)\n(a p b, e f g) => (h i j)\n");
+        CHECK(value(R"((zelph/holders "a" "p" "b"))") == "()");
+    }
+    SUBCASE("a statement only a rule writes down is no holder")
+    {
+        interactive.process("((a p b) q c) => (x y z)");
+        CHECK(value(R"((zelph/holders "a" "p" "b"))") == "()");
+    }
+    SUBCASE("a contradiction record about the fact is no holder")
+    {
+        // The record serves as the engine's bookkeeping, which the prune
+        // takes along with the fact.
+        process_lines(interactive, "a q b\n(X p Y, X q Y) => !\n");
+        interactive.run(true, false, false);
+        REQUIRE(has_contradiction(collector));
+        CHECK(value(R"((zelph/holders "a" "p" "b"))") == "()");
+    }
+    SUBCASE("a statement that holds the fact in an opaque position is no holder")
+    {
+        process_lines(interactive, "believes ~ opaque\njohn believes (a p b)\n");
+        CHECK(value(R"((zelph/holders "a" "p" "b"))") == "()");
+        CHECK(value(R"((zelph/prune-fact "a" "p" "b"))") == ":unclaimed");
+        CHECK(answers("S believes O") == std::vector<std::string>{"john believes (a p b)"});
+    }
+    SUBCASE("a holder that is part of a rule is listed, since its claim goes")
+    {
+        process_lines(interactive, "(a p b) q c\n((a p b) q c) => (x y z)\n");
+        CHECK(value(R"((map string (zelph/holders "a" "p" "b")))") == R"js(@["(a p b) q c"])js");
+        CHECK(value(R"((zelph/prune-fact "a" "p" "b"))") == ":unclaimed");
+        CHECK(answers("S q O").empty());
+        CHECK(value("(length (zelph/rules))") == "1");
+    }
+    SUBCASE("a set a rule holds passes the question on to what holds the set")
+    {
+        // The membership is rule text and remains unchanged, just as the
+        // set does; the statement about the set goes with the claim
+        // (withdraw_claims).
+        process_lines(interactive, "(X r Y) => (X about {(a p b)})\nk has {(a p b)}\n");
+        CHECK(value(R"((map string (zelph/holders "a" "p" "b")))") == R"js(@["k has {(a p b)}"])js");
+        CHECK(value(R"((zelph/prune-fact "a" "p" "b"))") == ":unclaimed");
+        CHECK(answers("S has O").empty());
+        CHECK(value("(length (zelph/rules))") == "1");
+    }
+    SUBCASE("a set that is data passes the question on to what holds the set")
+    {
+        // The membership was listed, identifying nothing a program
+        // could judge, and the set it leads to is not a fact that
+        // `zelph/holders` could be asked about in turn. The prune takes
+        // the set with the membership, and the statement regarding
+        // the set with the set.
+        interactive.process("k has {(a p b) z}");
+        CHECK(value(R"((map string (zelph/holders "a" "p" "b")))") == R"js(@["k has {z (a p b)}"])js");
+        CHECK(value(R"((zelph/prune-fact "a" "p" "b"))") == ":removed");
+        CHECK(answers("S has O").empty());
+    }
+    SUBCASE("a membership in a set, asked about itself, passes the question on to what holds the set")
+    {
+        // The prune of the membership takes the set, comprising its
+        // members, and what holds the set, regardless of whether a rule
+        // holds the set or not; nothing nests the membership, and this
+        // answered the empty tuple.
+        const std::string membership = R"((zelph/fact "a" "p" "b") "in" (zelph/set (zelph/fact "a" "p" "b") "z"))";
+        std::string       rule;
+        SUBCASE("a set that is data") {}
+        SUBCASE("a set a rule also holds") { rule = "(X r Y) => (X about {(a p b) z})"; }
+        if (!rule.empty()) interactive.process(rule);
+        interactive.process("k has {(a p b) z}");
+        CHECK(value("(map string (zelph/holders " + membership + "))") == R"js(@["k has {z (a p b)}"])js");
+        CHECK(value("(zelph/prune-fact " + membership + ")") == ":removed");
+        CHECK(answers("S has O").empty());
+        CHECK(answers("S p O") == std::vector<std::string>{"a p b"});
+    }
+    SUBCASE("a set inside a set that is data passes the question on to what holds the outer set")
+    {
+        // The walk continues onward from every set it traverses: the
+        // inner set is a member of the outer one, and the prune operation
+        // removes both, along with the statement regarding the outer set.
+        interactive.process("k has {{(a p b) z} y}");
+        CHECK(value(R"((map string (zelph/holders "a" "p" "b")))") == R"js(@["k has {y {z (a p b)}}"])js");
+        CHECK(value(R"((zelph/prune-fact "a" "p" "b"))") == ":removed");
+        CHECK(answers("S has O").empty());
+    }
+    SUBCASE("an atom container that is data passes the question on to what names the container")
+    {
+        // The prune takes `k` along with its membership, treating it as a
+        // container that loses a member, and takes with `k` every statement
+        // that names it: `j likes k` went unannounced, since the membership
+        // was listed in its place, and `k` itself is not a fact to be
+        // queried in turn. The container's remaining membership goes with it
+        // and is passed over, just as a set's would be. When asked about
+        // itself, the membership answered nothing.
+        process_lines(interactive, "(a p b) in k\n(c p d) in k\nj likes k\n");
+        interactive.process(R"(%(def h (zelph/holders "a" "p" "b")))");
+        CHECK(value("(map string h)") == R"js(@["j likes k"])js");
+        CHECK(value(R"((map string (zelph/holders (zelph/fact "a" "p" "b") "in" "k")))") == R"js(@["j likes k"])js");
+        CHECK(value(R"((zelph/prune-fact "a" "p" "b"))") == ":removed");
+        CHECK(value("(map zelph/degree h)") == "@[0]");
+        CHECK(answers("S in O").empty());
+        CHECK(answers("S p O") == std::vector<std::string>{"c p d"});
+    }
+    SUBCASE("a collection that is data passes the question on to what holds it")
+    {
+        interactive.process("x has @{(a p b) z}");
+        CHECK(value(R"((map string (zelph/holders "a" "p" "b")))") == R"js(@["x has @{z (a p b)}"])js");
+        CHECK(value(R"((zelph/prune-fact "a" "p" "b"))") == ":removed");
+        CHECK(answers("S has O").empty());
+    }
+    SUBCASE("a container a rule names keeps the membership listed as all that goes")
+    {
+        // The pruning removes only the membership and keeps `k`, the rule
+        // and anything else that names `k` ("pruning: a container a rule
+        // names stays when a fact that is no part of a rule leaves it").
+        process_lines(interactive, "(X likes k) => (X ok yes)\n(a p b) in k\nj likes k\n");
+        CHECK(value(R"((map string (zelph/holders "a" "p" "b")))") == R"js(@["(a p b) in k"])js");
+        CHECK(value(R"((zelph/prune-fact "a" "p" "b"))") == ":removed");
+        CHECK(answers("S likes O") == std::vector<std::string>{"j likes k"});
+        CHECK(answers("S in O").empty());
+    }
+    SUBCASE("a membership in a container that goes and one that stays is listed beside what names the first")
+    {
+        // The prune removes `(a p b) in k1 k2`, takes `k1` along with it,
+        // and `j likes k1` alongside `k1`, while preserving `k2`, which a
+        // rule names: `k2` loses the member, and only the membership
+        // indicates this. It went unlisted as soon as one of its containers
+        // was passed through. A second membership of `k1` that also stands
+        // in `k2` is listed for the same reason.
+        process_lines(interactive, "(X likes k2) => (X ok yes)\n(a p b) in k1 k2\n(c p d) in k1 k2\nj likes k1\nj likes k2\n");
+        CHECK(value(R"((sort (map string (zelph/holders "a" "p" "b"))))") == R"js(@["(a p b) in k2 k1" "(c p d) in k2 k1" "j likes k1"])js");
+        CHECK(value(R"((zelph/prune-fact "a" "p" "b"))") == ":removed");
+        CHECK(answers("S likes O") == std::vector<std::string>{"j likes k2"});
+        CHECK(answers("S in O").empty());
+        CHECK(answers("S p O") == std::vector<std::string>{"c p d"});
+    }
+    SUBCASE("a core predicate's declaration has no holder, as zelph/prune-fact keeps it")
+    {
+        // zelph/prune-fact keeps the declaration and takes nothing alongside
+        // it (see "janet: zelph/prune-fact removes one claimed fact"),
+        // whereas this previously listed the statement regarding it as what
+        // the prune would take.
+        interactive.process("x says (~ ~ ->)");
+        CHECK(value(R"((zelph/holders "~" "~" "->"))") == "()");
+        CHECK(value(R"((zelph/prune-fact "~" "~" "->"))") == "nil");
+        CHECK(answers("S says O") == std::vector<std::string>{"x says (~ ~ ->)"});
+    }
+    SUBCASE("what it lists is what zelph/prune-fact takes with the fact, a set's holder in place of its membership")
+    {
+        // Each listed holder is removed, together with the statement that
+        // nests it in turn: the outer statement, and the statement
+        // regarding the set that holds the fact. A refuted holder is
+        // taken away along with its refutation. Each surviving fact stays. Under
+        // the name "what it lists is what zelph/prune-fact takes with the
+        // fact" this listed the membership `(a p b) in {z (a p b)}` instead
+        // of `k has {…}`; a membership within a set constant is now
+        // passed through (see above).
+        process_lines(interactive, "(a p b) q c\n((a p b) q c) s e\nk has {(a p b) z}\n¬(x says (a p b))\nu v w\n(u v w) q c\n");
+        interactive.process(R"(%(def h (zelph/holders "a" "p" "b")))");
+        CHECK(value("(sort (map string h))") == R"js(@["(a p b) q c" "k has {z (a p b)}" "\xC2\xAC(x says (a p b))"])js");
+        CHECK(value(R"((zelph/prune-fact "a" "p" "b"))") == ":removed");
+        CHECK(value("(map zelph/degree h)") == "@[0 0 0]");
+        CHECK(answers("S s O").empty());
+        CHECK(answers("S has O").empty());
+        CHECK(answers("S q O") == std::vector<std::string>{"(u v w) q c"});
+        CHECK(answers("S v O") == std::vector<std::string>{"u v w"});
+    }
+    SUBCASE("a pattern, a node that is no fact and a rule-building thunk are refused")
+    {
+        CHECK_THROWS_WITH(interactive.process(R"(%(zelph/holders (zelph/var) "p" "b"))"), doctest::Contains("zelph/holders: the fact holds a variable"));
+        CHECK_THROWS_WITH(interactive.process(R"(%(zelph/holders "a"))"), doctest::Contains("zelph/holders: a is no fact"));
+        CHECK_THROWS_WITH(interactive.process(R"(%(zelph/build-rule (fn [] (zelph/holders "a" "p" "b"))))"),
+                          doctest::Contains("zelph/holders: refused while a rule is being built"));
+    }
+    SUBCASE("on a partially loaded graph it is blocked, as zelph/prune-fact is")
+    {
+        // A partial view may omit a holder, and the response showed no sign
+        // of it: an empty tuple read as "nothing holds the fact" which a
+        // program prunes on.
+        namespace fs = std::filesystem;
+        interactive.process("(a p b) q c");
+        const auto network = fs::temp_directory_path() / "zelph_holders_partial_view.bin";
+        interactive.process(".save \"" + network.string() + "\"");
+        interactive.process(".new");
+        interactive.process(".load-partial \"" + network.string() + "\"");
+        CHECK_THROWS_WITH(interactive.process(R"(%(zelph/holders "a" "p" "b"))"),
+                          doctest::Contains("Blocked in partial load mode; full graph required for zelph/holders"));
+        fs::remove(network);
+    }
+}
+
 TEST_CASE("pruning: a variable pattern still removes every match")
 {
     run_both_modes([](auto& collector, auto& interactive)
@@ -103,6 +475,238 @@ TEST_CASE("pruning: a variable pattern still removes every match")
         collector.clear();
         interactive.process("X other Y");
         CHECK(answers_contain(collector, "a other x")); });
+}
+
+// The ground form of `.prune-facts` removed a fact via remove_node, whose
+// upward cascade takes every statement holding that fact; the variable form
+// only eliminated the matched facts. A statement that once held one lost a
+// part, and a statement lacking its object is interpreted as a self-fact of
+// its subject: following `.prune-facts a p O` beside `x says (a p b)`,
+// `S says O` responded with `:says x`, and a .save followed by a .load kept
+// it. Both forms now run the identical cascade and count what went with the
+// facts; a matched fact that is a component of a rule still only loses its
+// claim.
+TEST_CASE("pruning: the variable form takes the statements that hold a matched fact")
+{
+    const auto file = std::filesystem::temp_directory_path() / "zelph_pruned_holder.bin";
+    run_both_modes([&](auto& collector, auto& interactive)
+                   {
+        const auto answers = [&](const std::string& query)
+        {
+            collector.clear();
+            interactive.process(query);
+            return collect_answers(collector);
+        };
+
+        SUBCASE("a statement holding the fact goes and the count says so")
+        {
+            process_lines(interactive, "x says (a p b)\nc p d");
+            collector.clear();
+            interactive.process(".prune-facts a p O");
+            CHECK(any_output_contains(collector, "Pruned 2 matching facts"));
+            CHECK(answers("S says O").empty());
+            CHECK(answers("S p O") == std::vector<std::string>{"c p d"});
+        }
+        SUBCASE("a statement holding the holder goes as well")
+        {
+            process_lines(interactive, "y has ((a p b) q z)\nc p d");
+            collector.clear();
+            interactive.process(".prune-facts a p B");
+            CHECK(any_output_contains(collector, "Pruned 3 matching facts"));
+            CHECK(answers("S has O").empty());
+            CHECK(answers("S q O").empty());
+        }
+        // The holder was already removed by the ground form, yet its count
+        // remained one, for the fact alone.
+        SUBCASE("the ground form counts what went with the fact as well")
+        {
+            process_lines(interactive, "x says (a p b)\nc p d");
+            collector.clear();
+            interactive.process(".prune-facts a p b");
+            CHECK(any_output_contains(collector, "Pruned 2 matching facts"));
+            CHECK(answers("S says O").empty());
+        }
+        SUBCASE("a statement holding a refutation marking goes with the marking")
+        {
+            process_lines(interactive, "x says ((a p b) ~ refuted)\nc p d");
+            interactive.process(".prune-facts X ~ refuted");
+            CHECK(answers("X ~ refuted").empty());
+            CHECK(answers("S says O").empty());
+        }
+        SUBCASE("a collection holding the fact goes with what holds it")
+        {
+            process_lines(interactive, "k has {e (a p b)}\nc p d");
+            interactive.process(".prune-facts A p B");
+            CHECK(answers("S has O").empty());
+        }
+        // One prune across both routes: `a p b` serves as the rule's pattern
+        // too and merely loses its claim, whereas `e p f` goes with the
+        // statement that holds it. The count is the claim withdrawn and the
+        // two facts removed.
+        SUBCASE("a rule holding a matched fact as its pattern stays in force")
+        {
+            process_lines(interactive, ".auto-run\n(a p b) => (c q d)\na p b\nx says (e p f)");
+            collector.clear();
+            interactive.process(".prune-facts A p B");
+            CHECK(any_output_contains(collector, "Pruned 3 matching facts"));
+            CHECK(answers("S says O").empty());
+            CHECK(answers("S p O").empty());
+
+            process_lines(interactive, "a p b\n.run");
+            CHECK(answers("S q O") == std::vector<std::string>{"c q d"});
+        }
+        SUBCASE("a .save and a .load read what the session reads")
+        {
+            std::filesystem::remove(file);
+            process_lines(interactive, "x says (a p b)\nc p d");
+            interactive.process(".prune-facts a p O");
+            interactive.process(".save " + file.string());
+            interactive.process(".new");
+            interactive.process(".load " + file.string());
+            CHECK(answers("S says O").empty());
+            CHECK(answers("S p O") == std::vector<std::string>{"c p d"});
+            std::filesystem::remove(file);
+        } });
+}
+
+// The single-fact form of `.prune-nodes` removed the facts it matched
+// independently, before processing the nodes, and the cascade a victim starts
+// no longer reached what held such a fact: beside `x says (a p b)`,
+// `.prune-nodes A p b` resulted in `x says` lacking its object, read as the
+// self-fact `:says x`, and a .save recorded it, whereas
+// `.prune-nodes X (X p b)` took the statement along with `a`. A matched fact
+// now goes with what holds it, just as in .prune-facts, and both forms produce
+// an identical graph. A fact that nothing holds is still removed
+// independently, following the path by which the published Wikidata networks
+// are cut.
+TEST_CASE("pruning: the single-fact form of .prune-nodes takes what holds a matched fact")
+{
+    const auto file = std::filesystem::temp_directory_path() / "zelph_pruned_node_holder.bin";
+    run_both_modes([&](auto& collector, auto& interactive)
+                   {
+        const auto answers = [&](const std::string& query)
+        {
+            collector.clear();
+            interactive.process(query);
+            return collect_answers(collector);
+        };
+
+        SUBCASE("a statement holding the fact goes and the count says so")
+        {
+            process_lines(interactive, "x says (a p b)\nc p d");
+            collector.clear();
+            interactive.process(".prune-nodes A p b");
+            CHECK(any_output_contains(collector, "Pruned 2 matching facts and 1 nodes"));
+            CHECK(answers("S says O").empty());
+            CHECK(answers("S p O") == std::vector<std::string>{"c p d"});
+        }
+        SUBCASE("a statement holding the holder goes as well")
+        {
+            process_lines(interactive, "y has ((a p b) q z)\nc p d");
+            collector.clear();
+            interactive.process(".prune-nodes A p b");
+            CHECK(any_output_contains(collector, "Pruned 3 matching facts and 1 nodes"));
+            CHECK(answers("S has O").empty());
+            CHECK(answers("S q O").empty());
+        }
+        SUBCASE("a collection holding the fact goes with what holds it")
+        {
+            process_lines(interactive, "k has {e (a p b)}\nc p d");
+            interactive.process(".prune-nodes A p b");
+            CHECK(answers("S has O").empty());
+            CHECK(answers("S in O").empty());
+        }
+        // A membership takes its collection along, just as removing its
+        // member does: the named form and .prune-facts took `k` and
+        // `j has k`, whereas this form left `k` devoid of members and
+        // `j has k` intact.
+        SUBCASE("a matched membership takes its collection and what holds it")
+        {
+            process_lines(interactive, "x in k\ny in k\nj has k\nc p d");
+            collector.clear();
+            interactive.process(".prune-nodes A in k");
+            CHECK(any_output_contains(collector, "and 2 nodes"));
+            CHECK(answers("S has O").empty());
+            CHECK(answers("S in O").empty());
+            CHECK(answers("S p O") == std::vector<std::string>{"c p d"});
+        }
+        // A victim that is carried along by the cascade of a matched fact
+        // remains one of the nodes named by the pattern, and it is counted
+        // as a node.
+        SUBCASE("a victim that holds another matched fact counts as a node")
+        {
+            process_lines(interactive, "w p b\n((w p b) r s) p b");
+            collector.clear();
+            interactive.process(".prune-nodes A p b");
+            CHECK(any_output_contains(collector, "Pruned 2 matching facts and 2 nodes"));
+            CHECK(answers("S r O").empty());
+        }
+        SUBCASE("a .save and a .load read what the session reads")
+        {
+            std::filesystem::remove(file);
+            process_lines(interactive, "x says (a p b)\nc p d");
+            interactive.process(".prune-nodes A p b");
+            interactive.process(".save " + file.string());
+            interactive.process(".new");
+            interactive.process(".load " + file.string());
+            CHECK(answers("S says O").empty());
+            CHECK(answers("S p O") == std::vector<std::string>{"c p d"});
+            std::filesystem::remove(file);
+        }
+        // The `Pruned` line, the number of nodes and rules, and the sorted
+        // facts following a prune operation on `setup`.
+        const auto outcome = [&](const std::string& setup, const std::string& prune)
+        {
+            process_lines(interactive, setup);
+            collector.clear();
+            interactive.process(prune);
+            std::vector<std::string> seen;
+            for (const auto& e : collector.events())
+            {
+                const std::string t = normalize(e.text);
+                if (t.rfind("Pruned", 0) == 0) seen.push_back(t);
+            }
+            collector.clear();
+            interactive.process(".stat");
+            for (const auto& e : collector.events())
+            {
+                const std::string t = normalize(e.text);
+                if (t.rfind("Nodes:", 0) == 0 || t.rfind("Rules:", 0) == 0) seen.push_back(t);
+            }
+            auto facts = answers("S P O");
+            std::sort(facts.begin(), facts.end());
+            seen.insert(seen.end(), facts.begin(), facts.end());
+            return seen;
+        };
+
+        // The named form starts the cascade beginning at each victim,
+        // extending to every fact that victim is a part of, thereby serving
+        // as the reference: a rule over the matched fact, statements
+        // enclosing it, and a collection containing it, alongside an
+        // unrelated membership situated beside them.
+        SUBCASE("it leaves the graph the named form leaves")
+        {
+            const std::string setup = "(a p b) => (c q d)\na p b\n.run\nx says (a p b)\n"
+                                      "y has ((a p b) q z)\nk has {e (a p b)}\nm in n\nn is good\nc p d";
+
+            const auto single = outcome(setup, ".prune-nodes A p b");
+            interactive.process(".new");
+            CHECK(single == outcome(setup, ".prune-nodes X (X p b)"));
+            CHECK(std::find(single.begin(), single.end(), "Rules: 0") != single.end());
+        }
+        // A fact used as the predicate in a different one is held by its
+        // relation-type declaration, which is why the edge test does not
+        // require inspecting the facts that use it: `x (a p b) y` goes with
+        // `a p b`, just as the declaration does. When removed independently,
+        // `a p b` left both lacking a part.
+        SUBCASE("a fact used as a predicate leaves the graph the named form leaves")
+        {
+            const std::string setup = "x (a p b) y\nc p d";
+
+            const auto single = outcome(setup, ".prune-nodes A p b");
+            interactive.process(".new");
+            CHECK(single == outcome(setup, ".prune-nodes X (X p b)"));
+        } });
 }
 
 // A negated pattern is valid when its pattern is ABSENT, meaning it does not
@@ -417,6 +1021,79 @@ TEST_CASE("pruning: .prune-nodes insists on the one variable it deletes by")
 
         // The documented forms are unaffected.
         interactive.process(".prune-nodes A rel b"); });
+}
+
+// The form lacking a name deleted by position: a variable serving as subject
+// deletes the subject, any other the object -- even when the variable resides
+// within a nested fact, where it is neither. `.prune-nodes (X p b) q c`
+// deleted c, which the pattern names as data, and kept a, which X binds. The
+// single variable in a pattern names what is deleted wherever the pattern
+// nests it, just as it does once it has been named; two variables are
+// rejected, as previously.
+TEST_CASE("pruning: .prune-nodes deletes what its one variable binds, wherever the pattern nests it")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        SUBCASE("inside the subject")
+        {
+            process_lines(interactive, "(a p b) q c\nc r d\n");
+            collector.clear();
+            interactive.process(".prune-nodes (X p b) q c");
+            CHECK(any_output_contains(collector, "and 1 nodes."));
+        }
+        SUBCASE("inside an object")
+        {
+            process_lines(interactive, "c q (a p b)\nc r d\n");
+            collector.clear();
+            interactive.process(".prune-nodes c q (X p b)");
+            CHECK(any_output_contains(collector, "and 1 nodes."));
+        }
+
+        collector.clear();
+        interactive.process("S p O");
+        CHECK(collect_answers(collector).empty());
+        collector.clear();
+        interactive.process("S r O");
+        CHECK(collect_answers(collector) == std::vector<std::string>{"c r d"});
+        CHECK_THROWS_AS(interactive.process(".node a"), std::runtime_error); });
+}
+
+// The single-fact form wants its relation to be fixed, and a variable that
+// stands as the predicate within a fact nested in the pattern also binds a
+// relation: `.prune-nodes (a X b) q c` deleted p, and all facts of p were
+// eliminated too, including `e p f`, which the pattern does not mention. The
+// unnamed form rejects such a variable at any level, just as it refuses one
+// at the outermost level; named, the variable says that the relation itself
+// is meant to be removed.
+TEST_CASE("pruning: .prune-nodes without a name refuses a variable that stands as a nested predicate")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, "(a p b) q c\n{(a p b)} q d\ne p f\n");
+
+        SUBCASE("inside a nested fact")
+        {
+            CHECK_THROWS_WITH_AS(interactive.process(".prune-nodes (a X b) q c"), doctest::Contains("must be fixed"), std::runtime_error);
+        }
+        SUBCASE("inside a set pattern")
+        {
+            CHECK_THROWS_WITH_AS(interactive.process(".prune-nodes {(a X b)} q d"), doctest::Contains("must be fixed"), std::runtime_error);
+        }
+        SUBCASE("named, the relation goes")
+        {
+            interactive.process(".prune-nodes X ((a X b) q c)");
+            collector.clear();
+            interactive.process("S p O");
+            CHECK(collect_answers(collector).empty());
+            return;
+        }
+
+        collector.clear();
+        interactive.process("S p O");
+        std::vector<std::string> answers = collect_answers(collector);
+        std::sort(answers.begin(), answers.end());
+        CHECK(answers == std::vector<std::string>{"a p b", "e p f"});
+        CHECK_NOTHROW(interactive.process(".node c")); });
 }
 
 TEST_CASE("removal: a node takes what it is a part of with it")
@@ -992,6 +1669,151 @@ TEST_CASE("removal: a real element still takes the container with it")
         CHECK(any_output_contains(collector, "No rules found")); });
 }
 
+// A fact that does not belong to any rule goes with what holds it, and a
+// container it is a member of goes along with whatever names that container,
+// as demonstrated in the preceding example involving a set constant. When a
+// rule named an atom used in this capacity as a container, the container
+// went, and the rule vanished with it: beside `(X likes k) => (X ok yes)`,
+// pruning `a p b` with `(a p b) in k` resulted in "No rules found" and took
+// `j likes k` along with the other membership `(c p d) in k`, whereas the
+// same prune kept all of them once another rule made `a p b` its pattern
+// ("a membership in a node a rule names goes, and the node keeps its facts"
+// below). The container is a part of the rule, and either form of the prune
+// now stops at it, meaning only the membership goes. A set constant that a
+// rule names still goes with the rule, since it consists of its members (as
+// illustrated in the prior case). An atom that a rule names and that data
+// uses as a collection constitutes a standard user configuration.
+TEST_CASE("pruning: a container a rule names stays when a fact that is no part of a rule leaves it")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        const auto answers = [&](const std::string& query)
+        {
+            collector.clear();
+            interactive.process(query);
+            std::vector<std::string> found = collect_answers(collector);
+            std::sort(found.begin(), found.end());
+            return found;
+        };
+        const auto pruned = [&](const std::string& prune)
+        {
+            process_lines(interactive, "(X likes k) => (X ok yes)\n(a p b) in k\n(c p d) in k\nj likes k\n");
+            collector.clear();
+            interactive.process(prune);
+            CHECK(any_output_contains(collector, "Pruned 2 matching facts"));
+
+            collector.clear();
+            interactive.process(".list-rules");
+            CHECK(any_output_contains(collector, "(X likes k) => (X ok yes)"));
+            CHECK(answers("S likes O") == std::vector<std::string>{"j likes k"});
+            CHECK(answers("S in O") == std::vector<std::string>{"(c p d) in k"});
+            CHECK(answers("S p O") == std::vector<std::string>{"c p d"});
+
+            process_lines(interactive, "m likes k\n.run\n");
+            CHECK(answers("S ok O") == std::vector<std::string>{"j ok yes", "m ok yes"});
+        };
+
+        SUBCASE("the ground form") { pruned(".prune-facts a p b"); }
+        SUBCASE("the variable form") { pruned(".prune-facts A p b"); }
+        // The boundary: a container that no rule designates goes as
+        // previously, and with it every statement that refers to it.
+        SUBCASE("a container no rule names goes with what names it")
+        {
+            process_lines(interactive, "(a p b) in k\n(c p d) in k\nj likes k\n");
+            interactive.process(".prune-facts a p b");
+            CHECK(answers("S likes O").empty());
+            CHECK(answers("S in O").empty());
+            CHECK(answers("S p O") == std::vector<std::string>{"c p d"});
+        }
+        // A mention names the container in the same manner a rule
+        // does, and the prune stops at it similarly: the arguments
+        // of an opaque fact and what `zelph/mention` writes down are
+        // kept as the parts of a rule are (Reasoning::rule_parts). The opaque
+        // SUBCASE pins this choice. Beside a statement written by
+        // `zelph/mention`, the prune took the container, `j likes k`, and the
+        // mention along.
+        SUBCASE("a container an opaque fact names stays as one a rule names")
+        {
+            process_lines(interactive, "mentions ~ opaque\nx mentions k\n(a p b) in k\n(c p d) in k\nj likes k\n");
+            collector.clear();
+            interactive.process(".prune-facts a p b");
+            CHECK(any_output_contains(collector, "Pruned 2 matching facts"));
+            CHECK(answers("S likes O") == std::vector<std::string>{"j likes k"});
+            CHECK(answers("S in O") == std::vector<std::string>{"(c p d) in k"});
+            CHECK(answers("S mentions O") == std::vector<std::string>{"x mentions k"});
+        }
+        SUBCASE("a container zelph/mention names stays as one a rule names")
+        {
+            process_lines(interactive, "%(zelph/mention \"x\" \"says\" \"k\")\n(a p b) in k\n(c p d) in k\nj likes k\n");
+            collector.clear();
+            interactive.process(".prune-facts a p b");
+            CHECK(any_output_contains(collector, "Pruned 2 matching facts"));
+            CHECK(answers("S likes O") == std::vector<std::string>{"j likes k"});
+            CHECK(answers("S in O") == std::vector<std::string>{"(c p d) in k"});
+            CHECK(janet_value(collector, interactive, R"((zelph/mentioned "x" "says" "k"))") == "true");
+        }
+        // A query that names the container under a negation retains what it
+        // wrote there as its pattern (zelph/query-text), and that pattern
+        // constitutes a question, not a mention: the prune kept the
+        // container, `j likes k` and the other membership due to its
+        // presence.
+        SUBCASE("a container only a query's negation names goes, as one no rule names")
+        {
+            process_lines(interactive, "(a p b) in k\n(c p d) in k\nj likes k\nm q n\nS q O, ¬(x says k)\n");
+            interactive.process(".prune-facts a p b");
+            CHECK(answers("S likes O").empty());
+            CHECK(answers("S in O").empty());
+            CHECK(answers("S p O") == std::vector<std::string>{"c p d"});
+        } });
+}
+
+// The membership itself is the shorter way to the same container.
+// Pruning `(a p b) in k`, or eliminating every membership of `k`
+// simultaneously via `X in k`, removed the membership and then `k` as a
+// container that lost a member, and with `k` went the rule
+// `(X likes k) => (X ok yes)` and `j likes k`, while the member `a p b`
+// stayed. Now only the membership goes, in both forms, and the rule still
+// fires on `k`.
+TEST_CASE("pruning: a membership in a container a rule names goes alone, in either form")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        const auto answers = [&](const std::string& query)
+        {
+            collector.clear();
+            interactive.process(query);
+            std::vector<std::string> found = collect_answers(collector);
+            std::sort(found.begin(), found.end());
+            return found;
+        };
+        process_lines(interactive, "(X likes k) => (X ok yes)\n(a p b) in k\n(c p d) in k\nj likes k\n");
+
+        std::vector<std::string> memberships_left;
+        SUBCASE("the ground form")
+        {
+            collector.clear();
+            interactive.process(".prune-facts ((a p b) in k)");
+            CHECK(any_output_contains(collector, "Pruned 1 matching facts"));
+            memberships_left = {"(c p d) in k"};
+        }
+        SUBCASE("the variable form")
+        {
+            collector.clear();
+            interactive.process(".prune-facts X in k");
+            CHECK(any_output_contains(collector, "Pruned 2 matching facts"));
+        }
+
+        CHECK(answers("S in O") == memberships_left);
+        CHECK(answers("S p O") == std::vector<std::string>{"a p b", "c p d"});
+        CHECK(answers("S likes O") == std::vector<std::string>{"j likes k"});
+        collector.clear();
+        interactive.process(".list-rules");
+        CHECK(any_output_contains(collector, "(X likes k) => (X ok yes)"));
+
+        process_lines(interactive, "m likes k\n.run\n");
+        CHECK(answers("S ok O") == std::vector<std::string>{"j ok yes", "m ok yes"}); });
+}
+
 TEST_CASE("pruning: a pattern that is not a bare variable is pruned too")
 {
     // .prune-facts takes a rule condition and removes what it matches, and
@@ -1403,6 +2225,49 @@ namespace
         return listed;
     }
 } // namespace
+
+// What the ground .prune-facts does to a statement that is both asserted
+// and a rule's pattern, through the function: the answer :unclaimed signals
+// to the program that the node remains, ensuring that whatever it retains
+// regarding the statement beside the graph -- an annotation, for instance --
+// continues to be attached to it.
+TEST_CASE("janet: zelph/prune-fact of a rule's asserted pattern withdraws the claim and keeps the rule")
+{
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+    process_lines(interactive, "(a p b) => (c q d)\na p b\n");
+    const auto value = [&](const std::string& expression)
+    { return janet_value(collector, interactive, expression); };
+    const auto answers = [&](const std::string& query)
+    {
+        collector.clear();
+        interactive.process(query);
+        return collect_answers(collector);
+    };
+    const std::string rules = listed_rules(interactive, collector);
+
+    SUBCASE("the rule stays in force, the statement no longer answers")
+    {
+        CHECK(value(R"((zelph/prune-fact "a" "p" "b"))") == ":unclaimed");
+        CHECK(listed_rules(interactive, collector) == rules);
+        CHECK(answers("S p O").empty());
+        CHECK(value(R"((zelph/mentioned "a" "p" "b"))") == "true");
+    }
+    SUBCASE("the node keeps its annotations")
+    {
+        process_lines(interactive, "%(def f (zelph/fact \"a\" \"p\" \"b\"))\n%(zelph/annotate f \"source\" \"a p b.\")\n");
+        CHECK(value("(zelph/prune-fact f)") == ":unclaimed");
+        CHECK(value("(zelph/annotations f)") == R"({"source" ("a p b.")})");
+    }
+    SUBCASE("the statements that hold it outside rule text go with the claim")
+    {
+        process_lines(interactive, "x says (a p b)\nx has (a p b)\n");
+        CHECK(value(R"((zelph/prune-fact "a" "p" "b"))") == ":unclaimed");
+        CHECK(answers("S says O").empty());
+        CHECK(answers("S has O").empty());
+        CHECK(listed_rules(interactive, collector) == rules);
+    }
+}
 
 TEST_CASE("pruning: what holds a rule's pattern goes with its claim")
 {
@@ -1865,87 +2730,176 @@ a s b
     }
 }
 
-// Documented and known behaviour, maintained deliberately. The variable
-// form of `.prune-facts` eliminates the facts it matched and leaves
-// untouched anything that holds them, in contrast to the ground form,
-// which runs the cascade of `remove_node`. A contradiction record is a set
-// holding the facts it pertains to, thus it stays, without the removed
-// fact, and the run that asserting the fact again starts cannot write the
-// record anew: the prior membership continues to occupy its node. The
-// error names that node, and `.remove` with its identifier takes it and
-// the record away. Implementing a cascade in the variable form would
-// change the bulk prune path used to construct the published Wikidata
-// networks; `rules.md` and `.help .prune-facts` describe the behaviour
-// instead.
-TEST_CASE("pruning: the variable form leaves a contradiction record behind")
+// This case was "pruning: the variable form leaves a contradiction record
+// behind" and pinned that the variable form of `.prune-facts` eliminates
+// only the matched facts: the record, a set holding the facts it refers to,
+// stayed without the removed fact, attempting to assert the fact once more
+// triggered an error naming the record's node, and invoking `.remove` on
+// that node provided the way back. The variable form was kept that way
+// because a cascade changes the bulk prune path used to construct the
+// published Wikidata networks. It now runs the cascade of the ground form,
+// so the record goes with the fact in either form, and asserting the fact
+// again reports the contradiction anew.
+//
+// Then named "pruning: either form takes a contradiction record along with
+// its fact", it read the record via the memberships that `S in O` answered. A
+// record fails to answer any query because "contradiction record: the record
+// itself answers no query and matches no condition", thus it is read off the
+// extent of the refutation marking.
+TEST_CASE("pruning: either form takes a contradiction record along with its fact, read off the graph")
 {
-    zelph::io::OutputCollector  collector;
-    zelph::console::Interactive interactive(collector.sink());
-    process_lines(interactive, R"(
+    const std::string              records = R"(%(each s (zelph/sources "~" "refuted") (zelph/out (string/format "REC %q" s))))";
+    const std::vector<std::string> prunes  = {".prune-facts a p b", ".prune-facts A p b"};
+    for (const std::string& prune : prunes)
+    {
+        CAPTURE(prune);
+        zelph::io::OutputCollector  collector;
+        zelph::console::Interactive interactive(collector.sink());
+        process_lines(interactive, R"(
 (X p Y, X r Y) => !
 a r b
 a p b
 )");
-
-    // The reference: the ground form takes the record along, and the
-    // contradiction is reported once more.
-    SUBCASE("the ground form takes the record along")
-    {
-        interactive.process(".prune-facts a p b");
+        interactive.process(prune);
         collector.clear();
-        interactive.process("S in O");
-        CHECK(collect_answers(collector).empty());
+        interactive.process(records);
+        CHECK_FALSE(any_output_contains(collector, "REC "));
 
         collector.clear();
         process_lines(interactive, "a p b\n");
         CHECK(any_event_contains(collector, "Found one or more contradictions"));
-    }
 
-    // The error that asserting the fact once more ends in.
-    const auto assert_again = [&]
-    {
-        try
-        {
-            interactive.process("a p b");
-        }
-        catch (const std::exception& e)
-        {
-            return std::string(e.what());
-        }
-        return std::string();
-    };
-
-    SUBCASE("the variable form leaves the record without the fact")
-    {
-        interactive.process(".prune-facts A p b");
         collector.clear();
-        interactive.process("S in O");
-        CHECK(answers_contain(collector, "(a r b) in @{(a r b)}"));
+        interactive.process(records);
+        CHECK(any_output_contains(collector, "REC <zelph/node {(a p b) (a r b)}>"));
     }
+}
 
-    SUBCASE("asserting the fact again then fails, naming a node")
-    {
-        interactive.process(".prune-facts A p b");
-        CHECK(std::regex_search(assert_again(), std::regex(R"(node [0-9]+ already exists)")));
-    }
+// The variable form of the prune commands reads through unification, which
+// skips the engine's bookkeeping, thus `.prune-facts S ~ refuted` keeps a
+// contradiction record and `.prune-facts S ~ "rule pattern"` keeps the marks
+// associated with a rule's patterns. The ground form asked is_asserted_fact
+// alone and deleted what it named: a record, via its marking or one of its
+// memberships, causing the next line to report the contradiction anew; and
+// the mark of a rule's pattern, so that after a load the pattern answered
+// `S p O` as data. One command, two notions of matching, as in "pruning: a
+// rule's own ground pattern is not data to prune".
+TEST_CASE("pruning: the ground form leaves the engine's bookkeeping, as the variable form does")
+{
+    const auto file = std::filesystem::temp_directory_path() / "zelph_prune_bookkeeping.bin";
+    run_both_modes([&](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+(X p Y, X r Y) => !
+a r b
+a p b
+(c p d) => (e q f)
+)");
+        std::string variable;
+        std::string ground;
+        SUBCASE("a contradiction record")
+        {
+            variable = ".prune-facts S ~ refuted";
+            ground   = ".prune-facts ({(a p b) (a r b)} ~ refuted)";
+        }
+        SUBCASE("a membership of a contradiction record")
+        {
+            variable = ".prune-facts S in O";
+            ground   = ".prune-facts ((a p b) in {(a p b) (a r b)})";
+        }
+        SUBCASE("the mark of a rule's pattern")
+        {
+            variable = R"(.prune-facts S ~ "rule pattern")";
+            ground   = R"(.prune-facts ((c p d) ~ "rule pattern"))";
+        }
 
-    SUBCASE(".remove of that node takes the record, and the contradiction is found anew")
-    {
-        interactive.process(".prune-facts A p b");
-        const std::string error = assert_again();
-        std::smatch       named;
-        REQUIRE(std::regex_search(error, named, std::regex(R"(node ([0-9]+) already exists)")));
+        for (const std::string& prune : {variable, ground})
+        {
+            CAPTURE(prune);
+            collector.clear();
+            interactive.process(prune);
+            CHECK(any_output_contains(collector, "Pruned 0"));
+        }
+        CHECK(any_event_contains(collector, "bookkeeping"));
+        CHECK_FALSE(any_event_contains(collector, "carries variables"));
 
-        interactive.process(".remove " + named[1].str());
+        collector.clear();
+        interactive.process(R"(%(each s (zelph/sources "~" "refuted") (zelph/out (string/format "REC %q" s))))");
+        CHECK(any_output_contains(collector, "REC <zelph/node {(a p b) (a r b)}>"));
         collector.clear();
         interactive.process(".run");
-        CHECK(any_event_contains(collector, "Found one or more contradictions"));
+        CHECK_FALSE(has_contradiction(collector));
+
+        interactive.process(".save \"" + file.string() + "\"");
+        interactive.process(".load \"" + file.string() + "\"");
+        collector.clear();
+        interactive.process("S p O");
+        CHECK(collect_answers(collector) == std::vector<std::string>{"a p b"}); });
+    std::filesystem::remove(file);
+}
+
+// `.prune-facts S ~ conjunction` deleted the tag from each rule's condition
+// set, resulting in no rule being able to fire; `.prune-facts S in O` deleted
+// the memberships linked to a rule's ground conditions, thereby preventing
+// that rule from firing again, and `.prune-nodes` took the condition sets
+// along. Queries and conditions read a rule's text ("rule patterns: a rule's
+// condition set is data, its tag and the memberships of its ground
+// conditions"), yet the scan of a prune skips it, thus preserving every rule
+// unchanged: the prune commands remove claims, not rule text.
+TEST_CASE("pruning: the variable form leaves a rule's condition set, its tag and its members")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        const auto answers = [&](const std::string& query)
+        {
+            collector.clear();
+            interactive.process(query);
+            return collect_answers(collector);
+        };
+
+        process_lines(interactive, R"(
+(A go B, B p C) => (A ok C)
+(c p d, g q h) => (e r f)
+)");
+        std::string prune;
+        SUBCASE("the tag") { prune = ".prune-facts S ~ conjunction"; }
+        SUBCASE("the members") { prune = ".prune-facts S in O"; }
+        SUBCASE("the sets the tag names") { prune = ".prune-nodes S ~ conjunction"; }
+        SUBCASE("the sets a named variable binds") { prune = ".prune-nodes A (A ~ conjunction)"; }
+        CAPTURE(prune);
+        collector.clear();
+        interactive.process(prune);
+        CHECK(any_output_contains(collector, "Pruned 0"));
+        CHECK(answers("S ~ conjunction").size() == 2);
+
+        process_lines(interactive, "t go k\nk p m\nc p d\ng q h\n");
+        CHECK(answers("S ok O") == std::vector<std::string>{"t ok m"});
+        CHECK(answers("S r O") == std::vector<std::string>{"e r f"}); });
+}
+
+// The ground form reads a rule's text in the same manner as the variable
+// form. When a user inputs a tag such as `and ~ conjunction`, it
+// instructs the engine to treat `and` as a condition set, and it answers
+// as data; neither form prunes it, and the ground form explains the
+// reasoning rather than labelling it as the engine's bookkeeping.
+TEST_CASE("pruning: the ground form leaves a condition set's tag, as the variable form does")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("and ~ conjunction");
+        collector.clear();
+        interactive.process(".prune-facts S ~ conjunction");
+        CHECK(any_output_contains(collector, "Pruned 0"));
 
         collector.clear();
-        interactive.process("S in O");
-        CHECK(answers_contain(collector, "(a p b) in {(a p b) (a r b)}"));
-        CHECK_FALSE(answers_contain(collector, "(a r b) in @{(a r b)}"));
-    }
+        interactive.process(".prune-facts (and ~ conjunction)");
+        CHECK(any_output_contains(collector, "Pruned 0"));
+        CHECK(any_event_contains(collector, "part of a rule's text"));
+        CHECK_FALSE(any_event_contains(collector, "bookkeeping"));
+
+        collector.clear();
+        interactive.process("S ~ conjunction");
+        CHECK(collect_answers(collector) == std::vector<std::string>{"and ~ conjunction"}); });
 }
 
 // A refuted fact is the SECOND way is_asserted_fact says no, and the hint knew
@@ -1977,6 +2931,57 @@ c q d
     interactive.process(".prune-facts (c q d)");
     CHECK(any_output_contains(collector, "Pruned 1"));
     CHECK_FALSE(any_event_contains(collector, "REFUTED"));
+}
+
+// The refuted index caches the claimed markings, and pruning a marking left
+// its fact within the index: `.prune-facts X ~ refuted` answered "Pruned 1",
+// `X ~ refuted` subsequently returned nothing, and the fact remained excluded
+// from every query until a .save and a .load read the index back from the
+// remaining markings, after which it answered again. A marking goes as a
+// plain fact or, if a rule wrote it as its pattern, as a withdrawn claim,
+// through either form of the command. What is pinned is that the session
+// reads what a reload reads; what a fact that nobody claimed becomes once its
+// refutation is withdrawn is not settled here.
+TEST_CASE("pruning: a pruned refutation marking ends the refutation as a reload does")
+{
+    const auto file = std::filesystem::temp_directory_path() / "zelph_pruned_marking.bin";
+    run_both_modes([&](auto& collector, auto& interactive)
+                   {
+        const auto answers = [&](const std::string& query)
+        {
+            collector.clear();
+            interactive.process(query);
+            std::vector<std::string> found = collect_answers(collector);
+            std::sort(found.begin(), found.end());
+            return found;
+        };
+
+        interactive.process("c p d");
+        std::string prune = ".prune-facts X ~ refuted";
+        SUBCASE("a marking that is a fact") { interactive.process("¬(a p b)"); }
+        SUBCASE("a marking that is a fact named in the command")
+        {
+            interactive.process("¬(a p b)");
+            prune = ".prune-facts ((a p b) ~ refuted)";
+        }
+        SUBCASE("a marking a rule wrote as its pattern") { process_lines(interactive, "((a p b) ~ refuted) => (x y z)\n¬(a p b)"); }
+        SUBCASE("a marking a rule wrote as its pattern named in the command")
+        {
+            process_lines(interactive, "((a p b) ~ refuted) => (x y z)\n¬(a p b)");
+            prune = ".prune-facts ((a p b) ~ refuted)";
+        }
+        collector.clear();
+        interactive.process(prune);
+        REQUIRE(any_output_contains(collector, "Pruned 1"));
+
+        CHECK(answers("X ~ refuted").empty());
+        const std::vector<std::string> in_session = answers("S p O");
+
+        interactive.process(".save \"" + file.string() + "\"");
+        interactive.process(".load \"" + file.string() + "\"");
+        CHECK(answers("X ~ refuted").empty());
+        CHECK(answers("S p O") == in_session); });
+    std::filesystem::remove(file);
 }
 
 // ---------------------------------------------------------------------------

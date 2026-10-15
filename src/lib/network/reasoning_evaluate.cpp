@@ -272,17 +272,7 @@ void Reasoning::evaluate(RulePos rule, ReasoningContext& ctx, int depth)
                         }
                         else
                         {
-                            std::lock_guard<std::mutex> lock(_mtx_output);
-                            if (_query_results)
-                            {
-                                _query_results->push_back(vars);
-                            }
-                            else
-                            {
-                                std::string output;
-                                string::condition_to_string(this, output, _lang, ctx_copy.current_condition, 3, *vars, rule.node);
-                                out("Answer: " + string::unmark_identifiers(output), true);
-                            }
+                            answer(ctx_copy.current_condition, vars, rule.node);
                         }
                     }
                 };
@@ -366,18 +356,7 @@ void Reasoning::evaluate(RulePos rule, ReasoningContext& ctx, int depth)
                     }
                     else
                     {
-                        // Normal query output / collection
-                        std::lock_guard<std::mutex> lock(_mtx_output);
-                        if (_query_results)
-                        {
-                            _query_results->push_back(bindings);
-                        }
-                        else
-                        {
-                            std::string output;
-                            string::condition_to_string(this, output, _lang, ctx_copy.current_condition, 3, *bindings, rule.node);
-                            out("Answer: " + string::unmark_identifiers(output), true);
-                        }
+                        answer(ctx_copy.current_condition, bindings, rule.node);
                     }
                 }
             };
@@ -586,18 +565,7 @@ void Reasoning::evaluate(RulePos rule, ReasoningContext& ctx, int depth)
                 }
                 else
                 {
-                    // normal query output / collection
-                    std::lock_guard<std::mutex> lock(_mtx_output);
-                    if (_query_results)
-                    {
-                        _query_results->push_back(joined);
-                    }
-                    else
-                    {
-                        std::string output;
-                        string::condition_to_string(this, output, _lang, ctx_copy.current_condition, 3, *joined, rule.node);
-                        out("Answer: " + string::unmark_identifiers(output), true);
-                    }
+                    answer(ctx_copy.current_condition, joined, rule.node);
                 }
             }
         };
@@ -670,8 +638,40 @@ void Reasoning::evaluate(RulePos rule, ReasoningContext& ctx, int depth)
 // binding is how a real workload turns one diagnostic into a million.
 void Reasoning::refuse_condition(const Node condition, const std::string& message)
 {
-    if (!_refused_conditions.insert(condition).second) return;
+    // A quiet run outputs nothing, and it does not register the refusal as
+    // reported either, so the next run that produces output names it.
+    if (_quiet || !_refused_conditions.insert(condition).second) return;
     out("Error: " + message, true);
+}
+
+namespace
+{
+    std::uint64_t binding_hash(const Variables& binding)
+    {
+        // The sequence of pairs as defined by the map's arrangement, which
+        // corresponds to the order of the variables.
+        std::uint64_t h = binding.size();
+        for (const auto& [variable, value] : binding)
+        {
+            h = h * UINT64_C(0x9E3779B97F4A7C15) + variable;
+            h = h * UINT64_C(0x9E3779B97F4A7C15) + value;
+        }
+        return h;
+    }
+}
+
+void Reasoning::answer(const Node condition, const std::shared_ptr<Variables>& bindings, const Node rule)
+{
+    std::lock_guard<std::mutex> lock(_mtx_output);
+    if (!_answered.insert({bindings, binding_hash(*bindings)}).second) return;
+    if (_query_results)
+    {
+        _query_results->push_back(bindings);
+        return;
+    }
+    std::string output;
+    string::condition_to_string(this, output, _lang, condition, 3, *bindings, rule);
+    out("Answer: " + string::unmark_identifiers(output), true);
 }
 
 bool Reasoning::is_negated_condition(Node condition, int depth)

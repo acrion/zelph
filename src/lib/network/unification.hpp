@@ -65,12 +65,30 @@ namespace zelph::network
 
     ZELPH_EXPORT PatternInfo build_pattern_info(const Zelph* n, Node condition, int log_depth);
 
-    // Whether the pattern node `node` holds, at any level of nesting, a rule
-    // whose conditions constitute a set. Unification matches that set by its
-    // members, meaning the pattern matches more than just the facts naming its
-    // own nodes: it does not serve as an anchor, and an instance identified by
-    // a lookup is not the fact from which a match was originally read.
-    bool holds_condition_set(const Zelph* n, Node node);
+    // Whether a fact within the graph matches the ground condition
+    // `subject predicate objects` in the way it matches a rule's condition:
+    // a fact possessing additional objects states it, just as a fact whose
+    // parts state the statements among the condition's parts does --
+    // `(a p b c) bad k` states `(a p c) bad k`. The rule's own pattern, a
+    // refuted fact, and the engine's bookkeeping constitute no data. Creates
+    // nothing; zelph/exists and zelph_exists ask it where the exact fact is
+    // not claimed.
+    ZELPH_EXPORT bool ground_condition_matches(Zelph* n, Node subject, Node predicate, const adjacency_set& objects);
+
+    // Whether the pattern node `node` contains, at any depth of nesting, a
+    // set that unification matches through its members: either the
+    // conditions of a rule when they constitute a set (unify_condition), or
+    // a set pattern (Zelph::set_pattern_members).
+    // The pattern then matches more than just the facts naming its own
+    // nodes: it does not serve as an anchor, and an instance identified by a
+    // lookup is not the fact from which a match was originally read.
+    bool holds_member_matched_set(const Zelph* n, Node node);
+
+    // Whether the pattern node `node` holds a set pattern at any nesting
+    // depth: a pattern whose variables collect_variables does not
+    // perceive, because they are located within the members of a
+    // container.
+    bool holds_set_pattern(const Zelph* n, Node node);
 
     // A node within a pattern that represents what a firing builds in its
     // place (Reasoning::firing_stand_ins): the `term` contained in a bucket,

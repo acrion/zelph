@@ -80,6 +80,8 @@ sentence that quotes it — so it survives `.save` and `.load` unchanged.
 
 Being on record does not make it findable: a condition matches solely facts that lack variables, and since alice’s rule includes variables, neither a query like `R "was proposed by" alice` nor a rule can access the statement (refer to [Mentioning a Rule Is Not Asserting It](#mentioning-a-rule-is-not-asserting-it)).
 
+The engine’s bookkeeping regarding a rule is likewise not to be found: the mark that records a ground part as the rule’s pattern does not respond to any query and fails to satisfy any condition, nor does the record of a contradiction (refer to [Contradiction Detection](#contradiction-detection)). Only the engine is permitted to write this mark: `(a p b) ~ "rule pattern"` is rejected in any context where it would be written by anyone else – whether on a standalone line, embedded within a statement, written by a program, derived by a firing, or included in a rule – since a load would reconstruct the patterns from every such mark and subsequently read a claimed `a p b` as a rule’s pattern. A rule’s text, however, is treated as data: the tag `~ conjunction` that makes a set the rule’s conditions and the memberships within that set answer like any fact, and a rule over rules reads the conditions of a rule via them (see [Mentioning a Rule Is Not Asserting It](#mentioning-a-rule-is-not-asserting-it)).
+
 Predicate position is the least obvious of the three, and it works like the others:
 
 ```
@@ -394,7 +396,7 @@ zelph> .explain (alarm is on)
 alarm is on  [rule pattern; not asserted]
 ```
 
-The mentioned rule itself remains stored as data, accessible for reading by a rule over rules, unless it is contained within another mentioned rule, in which case it is a part of that rule; a statement that holds it outside a rule claims it as a node, yet not what it says. A query that names a mention does not mark anything. The same principle applies to a Janet program that writes a mention using `zelph/rule-text` (see [Claimed or Merely Written Down](janet.md#claimed-or-merely-written-down)), and to a mention written by a firing. What a firing derives claims the facts its consequence writes outside the mentioned rule, just as any statement does, yet it does not assert a value that a variable within the rule represents: a value the rule binds is claimed solely by the statement that asserted it. A rule over rules therefore asserts no part of the rules it reads, and the proposal stays a proposal:
+The mentioned rule itself remains stored as data, accessible for reading by a rule over rules, unless it is contained within another mentioned rule, in which case it is a part of that rule, or it is written as a mention in its own right (see below); a statement that holds it outside a rule claims it as a node, yet not what it says. A query that names a mention does not mark anything. The same principle applies to a Janet program that writes a mention using `zelph/rule-text` (see [Claimed or Merely Written Down](janet.md#claimed-or-merely-written-down)), and to a mention written by a firing. What a firing derives claims the facts its consequence writes outside the mentioned rule, just as any statement does, yet it does not assert a value that a variable within the rule represents: a value the rule binds is claimed solely by the statement that asserted it. A rule over rules therefore asserts no part of the rules it reads, and the proposal stays a proposal:
 
 ```
 zelph> (G => H) => (G seen H)
@@ -406,6 +408,38 @@ alarm is on  [rule pattern; not asserted]
 ```
 
 When the user types the identical `(rust is bad) seen (alarm is on)`, it writes both parts and claims them.
+
+A rule may also function as a mention in its own right: one authored by `zelph/mention` or `zelph_mention`, and one that stands in an argument of an [opaque predicate](#mentioning-a-statement-opaque-predicates), regardless of whether it is typed or written by a firing. This kind of rule carries the same mark as any mention, meaning it remains out of force, even after no statement holds it any longer, and a rule over rules does not read it, just as neither a query nor a rule condition takes a mention as data. A claim of the same rule puts it in force: a typed rule, `zelph/fact` inside a Janet block, `zelph_fact`, `zelph/dedup-rule`, or `zelph/build-rule`. A rule that a plain statement holds, like alice’s proposal above, remains accessible for reading:
+
+```
+zelph> believes ~ opaque
+zelph> (G => H) => (G seen H)
+zelph> alice says ((rust is bad) => (alarm is on))
+((rust is bad) seen (alarm is on)) ⇐ ((rust is bad) => (alarm is on))
+zelph> john believes ((tea is cold) => (kettle is on))
+zelph> .prune-facts john believes ((tea is cold) => (kettle is on))
+Pruned 1 matching facts.
+Consider running .cleanup.
+zelph> tea is cold
+zelph> A is B
+Answer: tea is cold
+zelph> S seen O
+Answer: (rust is bad) seen (alarm is on)
+zelph> .explain ((tea is cold) => (kettle is on))
+(tea is cold) => (kettle is on)  [rule mentioned; not in force]
+```
+
+A rule over rules reads the conditions of a rule, regardless of how numerous they may be, by means of the memberships within its condition set: `G => H` binds `G` to the set, and `M in G` binds `M` to every condition sequentially. This mechanism applies equally to a rule that a statement holds as to one that is currently in force, and the tag `~ conjunction` answers just like any fact, here for the rule over rules as well:
+
+```
+zelph> alice says ((a p b, c q d) => (alarm is on))
+zelph> (G => H, M in G) => (M cond-of H)
+((a p b) cond-of (alarm is on)) ⇐ {((a p b) in {(c q d) (a p b)}) (((c q d), (a p b)) => (alarm is on))}
+((c q d) cond-of (alarm is on)) ⇐ {((c q d) in {(c q d) (a p b)}) (((c q d), (a p b)) => (alarm is on))}
+zelph> S ~ conjunction
+Answer: {(M in G) (G => H)} ~ conjunction
+Answer: {(c q d) (a p b)} ~ conjunction
+```
 
 A rule over rules may additionally specify the rule it seeks. A rule held as an argument within a condition matches every rule sharing identical conditions and the same consequence, regardless of which statement wrote it. A comma list of conditions is compared as a set, irrespective of sequence, and a rule that differs in any single condition, in the number of its conditions, or in its consequence constitutes a distinct rule:
 
@@ -478,6 +512,58 @@ Until `k is on` fires, `(X p Y) => (X q Y)` is an object of the outer rule and t
 
 The one shape this cannot separate is a fully **ground** rule — no variables anywhere — that is asserted and mentioned at once: hash-consing makes those a single node.
 A rule with variables is two nodes, because every statement names its own variables.
+
+### Mentioning a Statement: Opaque Predicates
+
+A rule is not the sole entity that can be written down without being claimed. The sentence "John believes that Mary waits" conveys information regarding John and nothing about Mary: the statement `john believes (mary waits nil)` must not make `mary waits nil` a fact. `=>` serves as the built-in instance of such a predicate – the parts of a rule are discussed, not asserted – and the fact `P ~ opaque` makes any predicate `P` behave in the same way; `opaque` is a node within the language `zelph`, akin to `refuted`. In every argument position of an opaque fact, whether subject or object, whatever the statement newly creates is a *mention*: it carries the same mark as a rule’s ground pattern, no query and no rule condition takes it as data, and `.explain` labels it by the position it stands in:
+
+```
+zelph> believes ~ opaque
+zelph> john believes (mary waits nil)
+zelph> X waits nil
+zelph> S believes O
+Answer: john believes (mary waits nil)
+zelph> .explain mary waits nil
+mary waits nil  [mentioned; not asserted]
+```
+
+What existed before keeps its status, meaning that a belief in a statement previously asserted leaves that statement asserted, and a subsequent claim of the identical statement makes the mention data. A rule condition examines the interior of an opaque argument based on its structure, just as it examines the interior of a rule that a statement holds, and a firing whose consequence involves an opaque predicate writes its arguments as mentions too:
+
+```
+zelph> believes ~ opaque
+zelph> john believes (mary waits nil)
+zelph> (Z believes (Y waits nil)) => (Z ~ credulous)
+(john ~ credulous) ⇐ (john believes (mary waits nil))
+zelph> (X ~ woman) => (X believes (bob waits nil))
+zelph> ann ~ woman
+(ann believes (bob waits nil)) ⇐ (ann ~ woman)
+(ann ~ credulous) ⇐ (ann believes (bob waits nil))
+zelph> X waits nil
+zelph> mary waits nil
+zelph> X waits nil
+Answer: mary waits nil
+```
+
+The same applies to a statement constructed using `zelph/fact` from Janet and created via the C API with `zelph_fact`: neither claims the arguments of an opaque fact. Every invocation is a statement of its own, meaning that an argument established by a distinct `zelph/fact` call is claimed by that call; `zelph/mention` and `zelph_mention` write it as a mention instead (refer to [Claimed or Merely Written Down](janet.md#claimed-or-merely-written-down)). The negation levels read nothing within an opaque argument, and `.prune-facts` on a claimed statement that an opaque fact also holds withdraws the claim while preserving the statement as a mention that the fact holds.
+
+In an opaque argument, a rule constitutes a mention in its own right: it is not in force, even after the fact that holds it is removed, and a rule over rules does not read it (refer to [Mentioning a Rule Is Not Asserting It](#mentioning-a-rule-is-not-asserting-it)).
+
+A query asserts what it creates within an opaque argument, just as it asserts what it creates beneath a `=>` that it mentions outside every condition operator. A program that asks without writing runs its question within a cluster that it drops afterwards:
+
+```
+zelph> believes ~ opaque
+zelph> S believes (sue sleeps nil)
+zelph> X sleeps nil
+Answer: sue sleeps nil
+```
+
+The declaration is refused when any of the predicate’s facts holds a statement in an argument position, since the claims such a fact made can no longer be distinguished from what it would merely mention; facts whose arguments are atoms do not prevent this. Removing the declaration is likewise refused under the same condition, and the same applies to declaring a core predicate. A name merge (`.name`) that would make a predicate opaque while one of its facts holds a statement is refused in the same way and with the same error message, before any modification: this constitutes a merge involving a declared predicate and one that is not declared, in either direction. The node `opaque` retains its name within the language `zelph` and does not merge with any other node, just as every node in the engine’s vocabulary does, meaning that neither a rename nor a merge makes or ends a declaration. Everything preceding ` -- ` in the message remains constant, allowing a program to recognize the refusal by this prefix:
+
+```
+zelph> sue knows (tom sleeps nil)
+zelph> knows ~ opaque
+Error in line "knows ~ opaque": fact(): a predicate cannot be declared opaque while one of its facts holds a statement -- knows: sue knows (tom sleeps nil)
+```
 
 ### Deep Unification
 
@@ -573,6 +659,44 @@ zelph> (A parent_of B) => (B child_of A)
 ```
 
 The rule matches each object independently. Whether `bob` or `charlie` was written first is irrelevant — both are equally "objects of" the `parent_of` fact.
+
+The same applies when a fact is embedded within another. A statement contained within a pattern is stated by a fact that includes additional objects as well, meaning `(a p b c)` states both `(a p b)` and `(a p c)`, a variable among the objects takes each of them in turn, and a rule over such a statement fires whichever of its conditions the engine evaluates first, with anchoring on or off (`.anchors`):
+
+```
+zelph> a p b c
+zelph> (a p b c) bad k
+zelph> a q c
+zelph> (a p c) bad Z
+Answer: (a p c) bad k
+zelph> (a p Y) bad k
+Answer: (a p b) bad k
+Answer: (a p c) bad k
+zelph> (X q Y, (X p Y) bad Z) => (X ok Z)
+(a ok k) ⇐ {((a p c) bad k) (a q c)}
+```
+
+An answer names the statement the pattern requested, `(a p c) bad k`, whereas the fact stating it is `(a p b c) bad k`. A consequence is read exactly: a rule whose consequence is `(a p b) bad k` writes that fact beside the wider one. A statement functioning as a predicate is interpreted identically: next to `x (a p b c) y`, the query `x (a p c) Z` answers `x (a p c) y`, and a rule applying to it fires.
+
+`.explain` names the fact that states a condition as its premise, across every level of the condition and where a statement is its predicate, even when the narrower statement appears solely as a rule’s pattern. A query answers each binding exactly once, even if a narrower fact, alongside the wider one, states it a second time:
+
+```
+zelph> ((a p c) bad k) => (x ok y)
+zelph+> .explain x ok y
+x ok y
+   └─ (a p b c) bad k  [axiom]
+
+zelph+> x (a p b c) y
+zelph> (x (a p c) Z) => (Z ok c)
+(y ok c) ⇐ (x (a p c) y)
+zelph> .explain y ok c
+y ok c
+   └─ x (a p b c) y  [axiom]
+
+zelph> a p c
+zelph> a p Y
+Answer: a p b
+Answer: a p c
+```
 
 This distinction becomes critical in more complex rules. Consider a naïve attempt at function composition using multiple objects:
 
@@ -760,6 +884,113 @@ On its own line "¬(a p b)" says that the fact does not hold.
 
 The marking a refutation writes is printed without the prefix for the same reason – `(a p b) ~ refuted` – since the predicate is already saying it, and a `¬` inside the subject would be interpreted as the condition operator when the line is re-entered.
 
+What the graph _claims_ is a fact that has been asserted, derived, or written as a part of a claimed statement. A statement that a rule or query merely writes down as its pattern does not constitute a claim, and thus may be refuted; a rule that concludes it then reports a contradiction when it fires:
+
+```
+zelph> (mary waits nil) => (john sleeps nil)
+zelph> ¬(john sleeps nil)
+zelph> mary waits nil
+! ⇐ (mary waits nil)
+Found one or more contradictions!
+```
+
+The alternative ordering functions equally: a rule can name a fact that had been previously refuted, whether within its conditions or in its consequence. A condition referencing the refuted fact never succeeds in matching, and a consequence attempting to derive it is reported as a contradiction.
+
+The marking also serves as a second spelling for the refutation. On a separate line, `(a p b) ~ refuted` conveys the same meaning as `¬(a p b)`: it is refused for a fact the graph claims, and accepted again, changing nothing, for a fact that is already refuted – thus, the printed marking re-enters. A fact that the line names by reference – a Janet variable within `,f ~ refuted`, or the node yielded by an inline keyword – is refuted and refused in identical fashion. When containing a variable, `(X p b) ~ refuted` functions as a query seeking refutations. Within a rule, the parenthesized marking acts as a condition checking whether a fact is refuted, or as a consequence that derives a refutation. A refutation that is derived and meets a fact somebody claimed is reported as a contradiction, and the fact keeps answering:
+
+```
+zelph> (X ~ person) => ((X sleeps nil) ~ refuted)
+zelph> mary sleeps nil
+zelph> mary ~ person
+! ⇐ (mary ~ person)
+Found one or more contradictions!
+zelph> S sleeps O
+Answer: mary sleeps nil
+```
+
+The contradiction is recorded with the claimed fact among its members, thus it is reported only once. The focus spelling `*(P) ~ refuted` is rejected by both a rule and a query: the focus transforms it into the pattern P, which the rule would otherwise read or derive positively. From Janet, the refutation of a ground fact is expressed via `zelph/refute`; `zelph/fact` refuses to write its marking.
+
+A condition can read the refutation directly. A rule whose condition matches the marking and whose consequence is the refuted fact reports the same contradiction, recorded with the facts its conditions matched, including the marking, and thus reported once:
+
+```
+zelph> ¬(t p b)
+zelph> t go k
+zelph> ((X p b) ~ refuted, X go Y) => (X p b)
+! ⇐ {(t go k) ((t p b) ~ refuted)}
+Found one or more contradictions!
+zelph> X ~ refuted
+Answer: (t p b) ~ refuted
+```
+
+A marking that a claimed statement writes is itself claimed alongside it, meaning the refutation remains the same regardless of position. If embedded within another statement, or present as a member in a comma-separated list devoid of variables, it is refused for a fact the graph claims, and a rule whose consequence writes it within a statement reports a contradiction rather than deriving it:
+
+```
+zelph> a p b
+zelph> x says ((a p b) ~ refuted)
+Error in line "x says ((a p b) ~ refuted)": fact(): this fact is known to be true
+zelph> (X go Y) => (k says ((a p b) ~ refuted))
+zelph> t go k
+! ⇐ (t go k)
+Found one or more contradictions!
+zelph> S p O
+Answer: a p b
+```
+
+Regardless of which spelling builds the marking, the refutation is the same. A `refuted` or a `~` provided by a binding produces the same marking: a derived marking of a claimed fact constitutes a contradiction, recorded identically, and nothing is written. A derived marking of a fact that is already refuted is accepted and changes nothing, whether it appears independently or within a statement, just like the typed line does. Within an argument of an opaque predicate, a derived marking functions as a mention, just as a typed one does, and does not refute anything:
+
+```
+zelph> a p b
+zelph> t go refuted
+zelph> (X go Y) => ((a p b) ~ Y)
+! ⇐ (t go refuted)
+Found one or more contradictions!
+zelph> S p O
+Answer: a p b
+zelph> ¬(c p d)
+zelph> (X go Y) => (X says ((c p d) ~ Y))
+(t says ((c p d) ~ refuted)) ⇐ (t go refuted)
+```
+
+The same applies in any context where the consequence writes a marking or a refuted fact: whether as a member within a set, a collection, or a comma list, or within a composite predicate. Each such location is read exactly as it is in a typed statement, which is refused in every one of these forms: introducing a marking of a claimed fact there, or a refuted fact that the statement claims there, constitutes a contradiction, and marking a refuted fact changes nothing. A rule that a consequence derives may name a refuted fact, just as a typed rule may, including one that the binding completes: a condition on that fact never matches, a marking of it as a condition reads the refutation, and a consequence based on it results in a contradiction once the rule fires:
+
+```
+zelph> ¬(t p d)
+zelph> t go k
+zelph> (X go Y) => (((X p d) ~ refuted) => (X r s))
+(((t p d) ~ refuted) => (t r s)) ⇐ (t go k)
+(t r s) ⇐ ((t p d) ~ refuted)
+zelph> S r O
+Answer: t r s
+zelph> (X go Y) => (X says {(X p d)})
+! ⇐ (t go k)
+Found one or more contradictions!
+```
+
+The C API refuses the marking within `zelph_fact` and states a refutation via `zelph_refute` (refer to [the C API](capi.md)). A refutation cannot be refuted in turn: `¬((a p b) ~ refuted)`, the line `((a p b) ~ refuted) ~ refuted`, and attempts to apply `zelph/refute` or `zelph_refute` to a marking are all refused, as the marking they wrote refuted its fact all the same, even a fact the graph claims. A refutation is withdrawn by removing its marking.
+
+A refutation claims its own marking and nothing concerning the fact it refutes. A fact that a rule merely wrote down remains the rule’s pattern, while a fact generated by a refutation is written as a [mention](#mentioning-a-statement-opaque-predicates), together with its content: `¬(x says (a p b))` conveys no information about `a p b`, and any marking within it does not refute anything. A statement whose refutation is rejected keeps nothing it wrote, thus `c q d, (c q d) ~ refuted` results in no trace of `c q d`. A focus on a part of the marked statement hands that part to the marking: `(x says *(a p b)) ~ refuted` refutes `a p b` and records `x says (a p b)` beside it, which claims `a p b`. The line is thus rejected, as its two lines are in either sequence, except when the part appears within an argument of an opaque predicate, which mentions it. Withdrawing a refutation – pruning its marking via `.prune-facts X ~ refuted`, or erasing it through `.remove` – also removes the probability 0 from the fact’s edge, leaving the fact a pattern or a mention, whether in the current session or after a `.save` followed by a `.load`: it will not respond to any query and will not fire any rule until a statement claims it:
+
+```
+zelph> (a p b) => (c q d)
+zelph> ¬(a p b)
+zelph> .prune-facts X ~ refuted
+Pruned 1 matching facts.
+Consider running .cleanup.
+zelph> S p O
+zelph> a p b
+zelph+> S q O
+Answer: c q d
+```
+
+A statement that claims a refuted fact is refused as known to be wrong, as asserting the fact is, even if it holds the fact by node: a mention that a Janet block builds, the fact that the focus `*(F) ~ refuted` stands for, or a node that a Janet variable or an inline keyword hands in. A comma list that asserts a rule’s pattern while refuting it is rejected in the same way:
+
+```
+zelph> (a p b) => (c q d)
+zelph> ¬(a p b)
+zelph> x says (*(a p b) ~ refuted)
+Error in line "x says (*(a p b) ~ refuted)": fact(): this fact is known to be wrong
+```
+
 A rule derives what holds, so a negated _consequence_ still has no reading and is refused:
 
 ```
@@ -939,6 +1170,8 @@ Answer: bill is happy
 ```
 
 The warning names the fact that has lost its support, not what that fact blocks. After `fido` barks, `(john is happy)` ought to follow, yet locating it would require assessing the rules as though `(john h1 nil)` had been removed – its withdrawal, which zelph does not perform. Nor does the warning refer to a fact that a rule lacking negation derived from the stale one, since that fact is still derived. The records are held in memory, one per fact that a rule with a negated condition derives, which is why the toggle is off by default: disabling it frees those records, `.new` and a `.load` that replaces the network discard them, and a saved network excludes them. Each record contains the fact, the rule, the rule’s condition set, and the variable bindings from the firing event: 72 bytes in an array that grows by doubling, plus 48 bytes per binding. Measured over 200,000 and 400,000 derived facts, the process grew by approximately 250 bytes per record for a rule binding one variable, and by an additional 60 bytes for each further variable, so a million such facts cost roughly a quarter to two fifths of a gigabyte. The time is spent on re-evaluation: after each execution, every record whose rule negates a predicate that has acquired new facts since the last check is re-verified under its bindings, taking about a microsecond per record, while the remaining records incur a pass across the array that was too small to measure at this size. A session holding a million records with auto-run enabled thus pays about one second after each statement that adds a fact to a negated predicate. A Janet program switches the records on via [`(zelph/negation-records true)`](janet.md#running-the-engine) and retrieves the list of the most recent run from [`(zelph/defeated)`](janet.md#running-the-engine).
+
+A warning names a fact once, as its record is removed with the report. A run within a [cluster](rules.md#node-clusters-transactional-workspaces) that is dropped later gives its reports back, because the drop takes back what the cluster wrote, potentially including the defeating fact: a later run names the fact again where its negated premise holds, whereas merging the cluster keeps the report. A name merge (`.name`) runs no inference: any defeat induced by the merge is reported by the next run, and the records, much like the list returned by `(zelph/defeated)`, follow the nodes the merge rebuilt.
 
 `.strata` shows the levels of the rules in their current state, without executing any of them. Regarding the three rules from the example above:
 
@@ -1149,7 +1382,19 @@ It is the same node in both lines; a node the engine generated has no name to pr
 The default mode is `quiet`, which prints a deduction only when its subject came from something you entered ([reference](quickstart.md#full-command-reference)) — and the subject of a generative rule's consequence is the generated node itself, which by definition never did.
 The fact is derived and stored either way; only the line announcing it is suppressed.
 
-**No duplicate witnesses:** Before producing a new node, zelph checks whether any assignment of the fresh variables already makes every consequence of the rule into a fact; if such an assignment exists, the rule creates nothing for this match. This verification operates as a join akin to the one applied across a rule’s conditions, meaning that any node can function as a witness, including the subject itself – `a q a` satisfies `(A q B)` for `a` – whereas a pattern that a rule merely records, among them its own consequence, never qualifies. A consequence is considered present even though it is not a fact when its instance would keep a variable from a rule it mentions, such as `k about ((C r D, C s D) => (c q d))`: a firing keeps the conditions of a mentioned rule exactly as written, meaning the instance would be rule text, no firing derives it (see [Mentioning a Rule Is Not Asserting It](#mentioning-a-rule-is-not-asserting-it)), and the check concentrates exclusively on the remaining consequences. A consequence is likewise considered present when a rule inside a value constructed by the firing would keep a variable: within a value, the firing keeps every variable it leaves unbound, including a fresh variable for which only a consequence that is not derived would make a witness. A witness that has already been made stays, even if a subsequent fact alone would have satisfied the consequence.
+A fresh variable is not permitted to serve as a predicate. There exists no condition that provides a relation for it, and substituting a new node in its place would result in a relation type that remains unnamed by anyone, hence a rule whose consequence writes a fact using such a predicate is rejected upon creation. A negated condition does not bind anything, thus a variable that is named solely by a negated condition is considered unbound. The inner rule within a [rule generator](rule-generators.md) takes its predicate from the generator’s binding at the time the generator builds it, and a rule that a statement mentions does not fire, so neither is refused:
+
+```
+zelph> (X waits nil) => (X W nil)
+Error in line "(X waits nil) => (X W nil)": The predicate of "X W nil" in the
+rule's consequence is the variable W, which no condition binds: a firing has no
+predicate to write, and a new node standing in for one would be a relation type
+without a name. Bind W in a condition, or write the predicate as a name.
+```
+
+A rule expressed one fact at a time – using `zelph/fact` in Janet, or with `zelph_fact` in the C ABI – undergoes verification later than a typed rule, because the `=>`-writing call cannot know whether a generator or a statement will hold it: at the conclusion of the outermost Janet evaluation that wrote it, and before the next run or save. A rule that remains in force at that moment is removed and rejected, whereas an inner rule and a rule a statement holds are permitted to pass (refer to [`zelph/rule`](janet.md#zelphrule) and [`zelph_fact`](capi.md#the-graph)). A rule authored by `zelph/mention` or `zelph_mention` constitutes a mention, and a call claiming it brings it into force: that call undergoes verification in the same way, and its rejection retracts the claim alone, leaving the rule as a mention.
+
+**No duplicate witnesses:** Before producing a new node, zelph checks whether any assignment of the fresh variables already makes every consequence of the rule into a fact; if such an assignment exists, the rule creates nothing for this match. This verification operates as a join akin to the one applied across a rule’s conditions, meaning that any node can function as a witness, including the subject itself – `a q a` satisfies `(A q B)` for `a` – whereas a pattern that a rule merely records, among them its own consequence, never qualifies. A consequence is considered present even though it is not a fact when its instance would keep a variable from a rule it mentions, such as `k about ((C r D, C s D) => (c q d))`: a firing keeps the conditions of a mentioned rule exactly as written, meaning the instance would be rule text, no firing derives it (see [Mentioning a Rule Is Not Asserting It](#mentioning-a-rule-is-not-asserting-it)), and the check concentrates exclusively on the remaining consequences. A consequence is likewise considered present when a rule inside a value constructed by the firing would keep a variable: within a value, the firing keeps every variable it leaves unbound, including a fresh variable for which only a consequence that is not derived would make a witness. A consequence that no firing writes, since the binding makes its predicate one of its objects, is regarded as present in the same way: given `a p a`, the rule `(X p Y) => (Z Y X) (Z r X)` makes one witness for `Z r a` and no additional witness. A witness that has already been made stays, even if a subsequent fact alone would have satisfied the consequence.
 
 The arithmetic that follows requires no such thing: a rule builds a result list like `(D cons T)` using variables its conditions bound, and a fact node built from those identical components is the same node.
 
@@ -1565,13 +1810,15 @@ zelph> (X member C, C P279⁺ T) => (X "belongs to" T)
 (alice "belongs to" Q4) ⇐ {((Q1 P279 Q4) closure one-or-more) (alice member Q1)}
 ```
 
-`C` is bound by the first condition, so the path condition walks forward from `Q1` and produces one binding for `T` per class reached. With the target bound instead, it walks backward; with both ends bound it is a reachability *test* that filters rather than generates. Reachability is answered by the same indexed closure engine that `zelph/closure` and the SPARQL layer's `p+` / `p*` use — built once per predicate and cached next to the `.bin`, not walked per query.
+`C` is bound by the first condition, so the path condition walks forward from `Q1` and produces one binding for `T` per class reached. With the target bound instead, it walks backward; with both ends bound it is a reachability *test* that filters rather than generates. Reachability is answered by the same indexed closure engine utilized by `zelph/closure` and the SPARQL layer’s `p+` / `p*` – constructed once per predicate and stored alongside the `.bin` file until a fact involving that predicate is modified, rather than walked for each query.
 
-**Both ends free is refused**, with a message asking you to bind one: a path over an unanchored pair would enumerate every path in the graph. The condition is scheduled after the conditions that bind ordinary variables, so the order in which you write it does not matter. The predicate itself must be a concrete predicate — a closure is indexed per predicate, and quantifying over predicates remains the business of an ordinary condition, which can do it.
+A walk proceeds through the facts that satisfy a condition and nothing else: a rule’s own pattern does not constitute a step, nor does the engine’s bookkeeping, that is, the mark of such a pattern and the record of a contradiction (see [Contradiction Detection](#contradiction-detection)).
+
+**Both ends free is refused**, with a message asking you to bind one: a path over an unanchored pair would enumerate every path in the graph. A path condition terminating in a constant is not held back: it is processed according to the same scoring mechanism as any other condition, and frequently scheduled first, as a walk originating from the constant through the indexed closure is computationally inexpensive. It only delays execution when both of its endpoints remain unbound, awaiting another condition to bind one; thus, the order in which conditions are written has no influence. The predicate itself must be a concrete predicate — a closure is indexed per predicate, and quantifying over predicates remains the business of an ordinary condition, which can do it.
 
 The operator is **not a reserved character**. It is read only as a trailing marker in *predicate* position, and only when a name is left over once it is removed, so `Na⁺` is an ordinary node name in any position, `a⁺b` is an ordinary predicate, and `⁺` on its own is the predicate `⁺`. ASCII `+` deliberately has no such reading, because `z+` and `d+` are the addition predicates of the arithmetic modules, and `*` is the [focus operator](concepts.md#the-focus-operator).
 
-Like `≈`, the sugar is input syntax over an ordinary fact: `(C P279⁺ T)` is the fact `((C P279 T) closure one-or-more)`, and when this fact is typed within a condition, it is the same condition. In any context where a condition appears – within `.list-rules`, in the echo of a rule or query – it prints as the sugar form, which re-enters as the identical rule. The premises following `⇐` are not conditions, but rather the facts identified during a firing, hence they name the fact.
+Like `≈`, the sugar is input syntax over an ordinary fact: `(C P279⁺ T)` is the fact `((C P279 T) closure one-or-more)`, and when this fact is typed within a condition, it is the same condition. In any context where a condition appears – within `.list-rules`, in the echo of a rule or query – it prints as the sugar form, which re-enters as the identical rule. It appears so in all other contexts too – the fact displayed independently, as `(zelph/rules)` hands it out, within `.node`, inside a statement that holds it, or in a rule that a statement mentions – since `closure` and `one-or-more` are names in the zelph language: spelled out under `.lang en`, the fact points to other nodes and constitutes a different statement. The commands that take a fact as input – `.node`, `.mermaid`, `.explain` – take it in that same spelling: `.node a P279⁺ b` finds the condition that `.node` printed as `a P279⁺ b`. The premises after `⇐`, and the entries in `.explain`, are not conditions, but instead represent the facts recognized during a firing, hence they refer to the fact.
 
 **A marker on a [self-fact](concepts.md#the-self-fact-prefix) inquires if a node reaches itself**, since `:pred X` is `(X pred X)` and predicate position is where the marker is read. That is a cycle test, and it needs nothing beyond what is already here – one condition to bind the node, and the path condition to ask:
 
@@ -1640,6 +1887,38 @@ This mechanism is central to zelph's [Wikidata ontology work](wikidata.md), wher
 The record is a fact in the graph, and it says what a contradiction says: the set of the statements that matched, entered as **refuted** – these do not hold together. None of them is retracted; each stays asserted and keeps answering queries, and the set is the only node created.
 
 That is also why a contradiction is announced once rather than on every later run. A set constant is identified by its members, so the same contradiction always yields the same node, and the next run finds it already there – the same way a derived fact stays quiet the second time because the graph holds it. Details, including the switch that turns the record off, are on the [overview page](rules.md#exporting-derivations) and in `.help .contradiction-records`.
+
+The record stands as the engine’s own account of the contradiction, not a declaration made by anyone: it answers no query and matches no rule condition, nor do the memberships within its set. A refutation you compose yourself functions as a statement and continues to answer as previously:
+
+```
+zelph> (X p Y, X q Y) => !
+zelph> a p b
+zelph> a q b
+! ⇐ {(a p b) (a q b)}
+Found one or more contradictions!
+zelph> ¬(c p d)
+zelph> S ~ refuted
+Answer: (c p d) ~ refuted
+zelph> S in O
+zelph>
+```
+
+Otherwise, a rule whose condition matches `~` facts and whose consequence refutes a claimed fact would meet the record of each contradiction it causes as a new fact, causing its execution to never end.
+
+A set constant consists solely of its content, so a set that a statement names over the same facts is the record’s set as well, and it stays that statement’s set: its memberships answer as those of any set do, while the marking `~ refuted` continues to belong exclusively to the record. A ground rule condition that names the record yields no match, and `zelph/exists` reports the record as missing, because it asks what a rule condition asks; a path condition likewise does not traverse the record. `zelph/sources`, `zelph/targets`, and `.node` enumerate it, reflecting the graph’s structural perspective:
+
+```
+zelph> {(a p b) (a q b)} label foo
+zelph> (X p Y, X q Y) => !
+! ⇐ {(a q b) (a p b)}
+Found one or more contradictions!
+zelph> (a p b) in O
+Answer: (a p b) in {(a p b) (a q b)}
+zelph> ({(a p b) (a q b)} ~ refuted) => (k r s)
+zelph> S r O
+```
+
+A rule that has one condition not part of a condition set does not generate a record and is announced on every run; the [overview page](rules.md#examples) says how to write it so that it is recorded.
 
 Silence differs from a clean graph, thus the summary of a run says which of the two applies. A network that already holds records reports them next to the count of what this run found: `0 contradictions found (1 already recorded in this network)`. The number is extracted from the graph rather than counted as the run meets them, so it counts contradictions and not the rule instantiations that reach them – a symmetric rule matches the same pair twice and still reports one. A network you downloaded therefore states what it holds on the very first run over it.
 

@@ -45,6 +45,7 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(unordered_dense)
 
 add_executable(zelph_tests
+    test_annotations.cpp
     test_bin_inspection.cpp
     test_capi.cpp
     test_check_fact.cpp
@@ -61,6 +62,7 @@ add_executable(zelph_tests
     test_inline_keyword.cpp
     test_integers.cpp
     test_jacobian.cpp
+    test_janet_names.cpp
     test_math.cpp
     test_math_identities.cpp
     test_math_syntax.cpp
@@ -73,6 +75,7 @@ add_executable(zelph_tests
     test_intervals.cpp
     test_contradiction_records.cpp
     test_ontology.cpp
+    test_opaque.cpp
     test_path_conditions.cpp
     test_output.cpp
     test_paper_scripts.cpp
@@ -402,13 +405,28 @@ if (Python3_Interpreter_FOUND)
 
     # --- a Janet program that makes Janet collect ----------------------------
     #
-    # Janet 1.41.2 frees the table storing zelph's :err binding during its
+    # Janet 1.42.1 frees the table storing zelph's :err binding during its
     # first garbage collection, and the process died once the event loop read
-    # it (src/lib/patch_janet_gc.cmake). Since a crash ends the process it
+    # it (src/lib/patch_janet_gc.cmake). Janet 1.41.2 also ran a Janet program
+    # started from within another one, as (zelph/import ...) does, on a fiber
+    # that a collection might free while active, and two of the cases hold the
+    # build to a release that roots it. Since a crash ends the process it
     # encounters, a separate process is invoked instead of the doctest suite.
     if (TARGET zelph)
         zelph_add_check_test(janet_programs_survive_garbage_collection "${CMAKE_SOURCE_DIR}/tools/check_janet_gc.py"
                 "$<TARGET_FILE:zelph>" 0)
+    endif ()
+
+    # --- a subset cut out of a Wikidata dump ---------------------------------
+    #
+    # The script `dev_scripts/wikidata-subset.py` builds a network from a dump
+    # based on criteria that are data, and nothing else ran it. The check
+    # operation generates a dump of its own, extracts a subset from it, imports
+    # the subset with the binary of this build, and then queries the network to
+    # verify whether the criteria deliver as expected.
+    if (TARGET zelph)
+        zelph_add_check_test(wikidata_subset_holds_what_its_criteria_keep "${CMAKE_SOURCE_DIR}/tools/check_wikidata_subset.py"
+                "$<TARGET_FILE:zelph> ${CMAKE_SOURCE_DIR}/dev_scripts/wikidata-subset.py" 0)
     endif ()
 
     # --- the paper's timing table --------------------------------------------

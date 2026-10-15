@@ -165,11 +165,82 @@ impl Engine {
     /// already there: the condition set [`rule`](Engine::rule) returns, or
     /// a collection a rule written in zelph's language holds as its own. A
     /// rule's text remains immutable once the rule is written.
+    ///
+    /// The marking `(F ~ refuted)` applied to a ground fact F is
+    /// rejected via [`ErrorKind::Runtime`] as well: it constitutes
+    /// a refutation, which [`refute`](Engine::refute) states.
+    ///
+    /// A `=>` fact whose consequence writes a fact with a predicate that no
+    /// condition binds, which [`rule`](Engine::rule) refuses, is permitted
+    /// here, because a generator's inner rule maintains this form until the
+    /// generator holds it: the next [`run`](Engine::run),
+    /// [`run_once`](Engine::run_once), [`run_delta`](Engine::run_delta), or
+    /// [`save`](Engine::save) checks it first, and if it remains a rule in
+    /// force, removes it and fails with [`ErrorKind::Runtime`] without running
+    /// or writing the file. The following run or save proceeds. A rule that
+    /// [`mention`](Engine::mention) recorded is checked in the same way once
+    /// this call claims it into force, and its rejection retracts only the
+    /// claim: the rule persists as a mention.
     pub fn fact(&self, subject: Node, predicate: Node, objects: &[Node]) -> Result<Node> {
         let mut fact: zelph_sys::zelph_node = 0;
 
         check(unsafe {
             zelph_sys::zelph_fact(
+                self.raw,
+                subject.0,
+                predicate.0,
+                objects.as_ptr().cast(),
+                objects.len(),
+                &mut fact,
+            )
+        })?;
+
+        Ok(Node(fact))
+    }
+
+    /// State that the fact `(subject predicate object...)` does NOT hold, as
+    /// `¬(F)` does on its own line, and return its corresponding node.
+    ///
+    /// The fact fails to satisfy any subsequent query, and asserting it is
+    /// rejected. A fact that the graph claims is rejected via
+    /// [`ErrorKind::Runtime`]; a statement which a rule recorded solely as its
+    /// pattern may be refuted, and refuting a fact that was already refuted
+    /// has no further effect. The marking `(F ~ refuted)` is not subject to
+    /// refutation and is rejected through [`ErrorKind::Runtime`].
+    pub fn refute(&self, subject: Node, predicate: Node, objects: &[Node]) -> Result<Node> {
+        let mut fact: zelph_sys::zelph_node = 0;
+
+        check(unsafe {
+            zelph_sys::zelph_refute(
+                self.raw,
+                subject.0,
+                predicate.0,
+                objects.as_ptr().cast(),
+                objects.len(),
+                &mut fact,
+            )
+        })?;
+
+        Ok(Node(fact))
+    }
+
+    /// Write the fact `(subject predicate object...)` without asserting it,
+    /// and return its node: a mention.
+    ///
+    /// A fact newly introduced is marked as written down, meaning that
+    /// neither a query nor a rule condition takes it as data until
+    /// [`fact`](Engine::fact), a firing, or a typed statement claims it; a
+    /// fact that existed before remains unchanged, including one that was
+    /// asserted.
+    ///
+    /// A rule written in this way, a `=>` fact over a condition and a
+    /// consequence, constitutes a mention too: it is not in force until
+    /// [`fact`](Engine::fact) or a typed rule claims the identical rule.
+    pub fn mention(&self, subject: Node, predicate: Node, objects: &[Node]) -> Result<Node> {
+        let mut fact: zelph_sys::zelph_node = 0;
+
+        check(unsafe {
+            zelph_sys::zelph_mention(
                 self.raw,
                 subject.0,
                 predicate.0,
@@ -340,7 +411,8 @@ impl Engine {
     }
 
     /// Save the graph, as the `.save` command does. The path must end in
-    /// `.bin`.
+    /// `.bin`. A `=>` fact written by [`fact`](Engine::fact) undergoes
+    /// verification first, as before a run (see there).
     ///
     /// What a compiled net has learnt lives in the net until
     /// [`Net::write_back`] puts it into the graph, so a save without that
@@ -616,9 +688,11 @@ impl Engine {
     /// Reasoning seeded by what was created since the prior run, meaning that
     /// for rules eligible to be seeded, the expense aligns with the addition
     /// instead of the graph. This distinction determines whether inference
-    /// can occur within a loop. A rule featuring a negated condition or one
-    /// that cannot be seeded still takes a pass over the facts that satisfy
-    /// its conditions.
+    /// can occur within a loop. A rule that cannot be seeded still undergoes
+    /// evaluation on the facts satisfying its conditions, and likewise, in the
+    /// scenarios outlined by `.help .run-delta`, a newly introduced rule, a
+    /// rule featuring a path condition, and a rule with a negated condition
+    /// also take a pass over the matching facts.
     pub fn run_delta(&self) -> Result<()> {
         check(unsafe { zelph_sys::zelph_run_delta(self.raw) })
     }

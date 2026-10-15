@@ -120,10 +120,16 @@ namespace
             else if (fs.predicate != 0)
                 preds.insert(fs.predicate);
 
-            collect_predicates(z, fs.subject, preds, vars, history);
+            // Within the argument of an opaque predicate, what appears is a
+            // mention: no rule derives it there, and no condition reads it as
+            // data.
             collect_predicates(z, fs.predicate, preds, vars, history);
-            for (const Node o : fs.objects)
-                collect_predicates(z, o, preds, vars, history);
+            if (!z->is_opaque_predicate(fs.predicate))
+            {
+                collect_predicates(z, fs.subject, preds, vars, history);
+                for (const Node o : fs.objects)
+                    collect_predicates(z, o, preds, vars, history);
+            }
         }
 
         history.pop_back();
@@ -160,10 +166,13 @@ namespace
 
         std::unordered_set<Node> nested;
         std::vector<Node>        history{pattern};
-        collect_predicates(z, fs.subject, nested, vars, history);
         collect_predicates(z, fs.predicate, nested, vars, history);
-        for (const Node o : fs.objects)
-            collect_predicates(z, o, nested, vars, history);
+        if (!z->is_opaque_predicate(fs.predicate))
+        {
+            collect_predicates(z, fs.subject, nested, vars, history);
+            for (const Node o : fs.objects)
+                collect_predicates(z, o, nested, vars, history);
+        }
         for (const Node p : nested)
         {
             preds.insert(p);
@@ -213,13 +222,18 @@ void Reasoning::read_footprint(const Node condition, RuleFootprint& f)
         return;
     }
 
-    if (rel == core.Unequal) return; // a guard compares, it reads no fact
+    if (rel == core.Unequal) // a guard compares, it reads no fact
+    {
+        f.guard_conds.push_back(condition);
+        return;
+    }
     if (neural)
     {
         // The net processes whatever facts are fed into it, and no
         // indication here says which ones.
         f.reads_any     = true;
         f.reads_unnamed = true;
+        f.neural_conds.push_back(condition);
         return;
     }
     if (closure)
@@ -232,6 +246,7 @@ void Reasoning::read_footprint(const Node condition, RuleFootprint& f)
         collect_keys(this, path, f.reads, f.reads_vars, f.reads_keys, false);
         if (!f.reads_vars.empty()) f.reads_any = true;
         f.paths.push_back(path);
+        f.path_conds.push_back(condition);
         return;
     }
 
@@ -240,6 +255,7 @@ void Reasoning::read_footprint(const Node condition, RuleFootprint& f)
     // variable there is bound to a predicate that already has facts (see
     // footprint).
     if (Zelph::Impl::is_var(rel)) f.binds_vars.insert(rel);
+    f.plain_conds.push_back(condition);
     collect_keys(this, condition, f.reads, f.reads_vars, f.reads_keys);
     if (!f.reads_vars.empty()) f.reads_any = true;
 
@@ -345,6 +361,46 @@ Reasoning::NegationLevels Reasoning::strata()
     for (const Node rule : _pImpl->get_left(core.Causes))
         if (!is_mentioned(rule)) rules.push_back(rule);
     return negation_levels(rules);
+}
+
+std::vector<Reasoning::ListedRule> Reasoning::rules_in_force()
+{
+    // The footprint reads the two predicates a run queries upon
+    // initiation, and in their absence, a `≈` or a path condition would
+    // read as a plain one.
+    _nn_pred      = get_node("nn", "zelph");
+    _closure_pred = get_node("closure", "zelph");
+
+    const adjacency_set listed = get_rules();
+    std::vector<Node>   rules(listed.begin(), listed.end());
+    std::sort(rules.begin(), rules.end());
+
+    const auto sorted = [](std::vector<Node> nodes)
+    {
+        std::sort(nodes.begin(), nodes.end());
+        return nodes;
+    };
+
+    std::vector<ListedRule> result;
+    result.reserve(rules.size());
+    for (const Node rule : rules)
+    {
+        RuleFootprint f = footprint(rule);
+
+        adjacency_set heads;
+        parse_fact(rule, heads);
+
+        ListedRule entry;
+        entry.rule       = rule;
+        entry.conditions = sorted(std::move(f.plain_conds));
+        entry.negated    = sorted(std::move(f.negated_conditions));
+        entry.guards     = sorted(std::move(f.guard_conds));
+        entry.paths      = sorted(std::move(f.path_conds));
+        entry.neural     = sorted(std::move(f.neural_conds));
+        entry.heads      = sorted(std::vector<Node>(heads.begin(), heads.end()));
+        result.push_back(std::move(entry));
+    }
+    return result;
 }
 
 Reasoning::NegationLevels Reasoning::negation_levels(const std::vector<Node>& rules)
@@ -606,6 +662,9 @@ Reasoning::NegationLevels Reasoning::negation_levels(const std::vector<Node>& ru
             result.negates[i] = true;
             result.level[i]   = static_cast<std::size_t>(std::lower_bound(used.begin(), used.end(), level[component[i]]) - used.begin());
         }
+    result.transparent.assign(n, false);
+    for (std::size_t i = 0; i < n; ++i)
+        result.transparent[i] = footprint[i].transparent;
     result.component       = std::move(component);
     result.negation_inside = std::move(negation_inside);
     result.levels          = used.size();

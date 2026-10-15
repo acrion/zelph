@@ -241,7 +241,7 @@ Answer: "Q8441 - man" "P279 - subclass of" "Q5 - human"
 en-> man "instance of" X
 en-> .lang wikidata
 wikidata-> .prune-nodes A P279 Q5
-Pruned 3 matching facts and 1 nodes.
+Pruned 1 matching facts and 1 nodes.
 Consider running .cleanup.
 wikidata-> .lang en
 en-> man "instance of" X
@@ -273,6 +273,16 @@ zelph provides several additional commands for working with Wikidata:
   ```
 
   Each line is written to `<id>.json` in the current directory, byte for byte as the dump held it — the usual way to get a realistic fixture to develop against. IDs are matched in full, so asking for `Q4` does not also give you `Q42`. Any ID that turns out not to be in the dump is listed at the end (`Not found in …: Q9999`); the scan itself reads the whole file, so on a full dump this takes as long as any other pass over it.
+
+- **Cut a subset out of a dump:** `dev_scripts/wikidata-subset.py` builds a smaller network straight from a dump, selected based on criteria in a JSON file: the number of sitelinks, a population, instances of a class or of its subclasses, the subclass graph. The import excludes both sitelinks and quantitative data, hence these criteria can only be evaluated on the dump:
+
+  ```sh
+  python3 dev_scripts/wikidata-subset.py scan download/wikidata-20250127-all.json.bz2 table.tsv --criteria criteria.json
+  python3 dev_scripts/wikidata-subset.py keep table.tsv criteria.json keep.tsv
+  python3 dev_scripts/wikidata-subset.py extract download/wikidata-20250127-all.json.bz2 keep.tsv subset.json --criteria criteria.json
+  ```
+
+  `scan` and `extract` each read the entire dump in a single pass; `keep` reads only the table and lists every entity it retains, along with the criteria that led to its retention. `.load subset.json` imports the result: the kept entities with their labels in English and `mul`, plus the item claims linking them, and nothing beyond that. The keys within the criteria file are described at the top of the script.
 
 ### Checking Wikidata's own constraints
 

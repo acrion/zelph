@@ -55,6 +55,12 @@ Reasoning::Reasoning(const io::OutputHandler& output)
 {
     _on_graph_replaced = [this]
     { forget_graph_state(); };
+    _on_removal = [this](const adjacency_set& removed, const bool derived)
+    { note_removal(removed, derived); };
+    _on_cluster_closed = [this](const std::string& name, const std::string* into)
+    { close_cluster_negations(name, into); };
+    observe_merges([this](const std::unordered_map<Node, Node>& moved)
+                   { follow_merge(moved); });
 }
 
 // All data the engine retains between commands concerning graph node
@@ -75,12 +81,13 @@ void Reasoning::forget_graph_state()
     _input_focus.clear();
     {
         std::lock_guard<std::mutex> lock(_mtx_delta_since_run);
-        _delta_since_run.clear();
-        _delta_valid = false;
+        drop_delta_record_locked(false);
     }
     {
         std::lock_guard<std::mutex> lock(_mtx_negation_records);
         std::vector<NegationRecord>().swap(_negation_records);
+        _reported_in_cluster.clear();
+        _any_reported_in_cluster.store(false, std::memory_order_release);
     }
     _negating_rules.clear();
     _check_touched.clear();
@@ -90,6 +97,121 @@ void Reasoning::forget_graph_state()
     _nn_reported.clear();
     _refused_conditions.clear();
     _explain_rules.reset();
+    // The noted `=>` facts would refer to the nodes from the loaded file,
+    // which the caller did not produce (note_fact_rule).
+    _fact_rules.clear();
+}
+
+void Reasoning::note_fact_rule(const Node rule, const char* const writer, const bool claimed)
+{
+    _fact_rules.push_back({rule, writer, claimed});
+}
+
+// The `=>` fact departs in the same manner as query text does
+// (drop_query_text): removed node by node, it would disarm the fact stores for
+// the rest of the session (drop_cluster). Its components persist, just as
+// .remove-rules leaves them too: they consist of the claims or rule text
+// originating from the calls that wrote them. A rule removed here might have
+// been the sole fact holding another noted rule, which is then in force; thus,
+// the pass continues iteratively until no further elements are removed.
+//
+// A claimed fact existed before the call: zelph/mention or zelph_mention wrote
+// it, and the claim revoked the mention's mark. It is not a fact that the call
+// created to take back, and the action the call performed on it is the claim
+// alone, thus the claim is undone and the fact stays a mention, exactly as it
+// had been before the call. Claimed unchecked, it was a rule in force whose
+// consequence predicate is not bound by any condition.
+std::string Reasoning::settle_fact_rules()
+{
+    if (_fact_rules.empty()) return {};
+
+    std::vector<NotedFactRule> pending;
+    pending.swap(_fact_rules);
+
+    std::string refused;
+    for (bool removed = true; removed;)
+    {
+        removed = false;
+        for (auto it = pending.begin(); it != pending.end();)
+        {
+            const Node rule = it->rule;
+            if (!_pImpl->exists(rule))
+            {
+                it = pending.erase(it);
+                continue;
+            }
+            if (!is_rule_in_force(rule))
+            {
+                ++it;
+                continue;
+            }
+
+            adjacency_set     consequences;
+            const Node        condition = parse_fact(rule, consequences);
+            const std::string why       = unbound_predicate(this, {condition}, consequences);
+            if (!why.empty())
+            {
+                refused += (refused.empty() ? "" : "\n") + std::string(it->writer) + ": " + why;
+                if (it->claimed)
+                    restore_mention(rule);
+                else
+                {
+                    const std::string scratch = "__fact-rule";
+                    move_into_cluster(scratch, {rule});
+                    drop_scratch_cluster(scratch);
+                    removed = true;
+                }
+            }
+            it = pending.erase(it);
+        }
+    }
+    return refused;
+}
+
+// A run within this cluster reported the defeats of these records, and
+// reporting a record removes it. A drop takes back what the cluster wrote,
+// potentially the fact that caused the defeat, and the report from a dry run
+// accompanies the dry run. With the records gone, the run in the caller's
+// cluster that meets the same defeat had nothing left to report. A merge
+// assigns the cluster's work to the target.
+void Reasoning::close_cluster_negations(const std::string& name, const std::string* into)
+{
+    if (!_any_reported_in_cluster.load(std::memory_order_acquire)) return;
+    {
+        std::lock_guard<std::mutex> lock(_mtx_negation_records);
+        if (_reported_in_cluster.empty()) return;
+        const auto it = _reported_in_cluster.find(name);
+        if (it == _reported_in_cluster.end()) return;
+
+        std::vector<NegationRecord> reported = std::move(it->second);
+        _reported_in_cluster.erase(it);
+
+        if (into != nullptr)
+        {
+            if (!into->empty())
+            {
+                auto& target = _reported_in_cluster[*into];
+                target.insert(target.end(), std::make_move_iterator(reported.begin()), std::make_move_iterator(reported.end()));
+            }
+            _any_reported_in_cluster.store(!_reported_in_cluster.empty(), std::memory_order_release);
+            return;
+        }
+        _any_reported_in_cluster.store(!_reported_in_cluster.empty(), std::memory_order_release);
+
+        if (!keeps_negation_records()) return;
+        _negation_records.insert(_negation_records.end(), std::make_move_iterator(reported.begin()), std::make_move_iterator(reported.end()));
+
+        // The predicates that gained facts since the previous re-test convey no
+        // insight into those: what defeated them might have existed all along.
+        _check_touched_all = true;
+    }
+
+    // The records given back remain pending a re-test that no run has
+    // performed since, hence the graph no longer reflects the state the last
+    // run left, and the host's run following a keyword handler must not be
+    // skipped (unchanged_since_last_run).
+    std::lock_guard<std::mutex> lock(_mtx_delta_since_run);
+    _fixpoint_at_last_run = false;
 }
 
 void Reasoning::set_export_file(const std::string& path)
@@ -102,68 +224,125 @@ void Reasoning::set_query_collector(std::vector<std::shared_ptr<Variables>>* col
     _query_results = collector;
 }
 
-bool Reasoning::record_contradiction(const contradiction_error& error)
+namespace
 {
-    if (!_record_contradictions) return false;
+    // The fact that Unification matches `condition` with under `variables`,
+    // or 0. The bindings encompass all variables within the condition,
+    // making each match an instance the run met; the first in the order of
+    // ids is selected, ensuring the same contradiction is recorded with
+    // identical members across every run.
+    Node matched_fact(Zelph* const z, const Node condition, const Variables& variables, const Node parent)
+    {
+        Unification unification(z, condition, parent, std::make_shared<Variables>(variables), std::make_shared<Variables>(), /*pool*/ nullptr, /*log_depth*/ 1, /*profiler*/ nullptr);
+        unification.enumerate_by_id();
+        while (unification.Next())
+            if (const Node fact = unification.matched_fact(); fact != 0) return fact;
+        return 0;
+    }
+}
+
+Reasoning::ContradictionRecord Reasoning::record_contradiction(const contradiction_error& error, std::vector<Node>* conditions)
+{
+    if (!_record_contradictions && conditions == nullptr) return ContradictionRecord::None;
 
     const Node       condition = error.get_fact();
     const Variables& variables = error.get_variables();
 
-    // The members of the condition set, found the way render_premises finds
-    // them -- and the way node_to_string finds them when it prints "{...}".
+    std::vector<Node> members = condition_elements(condition);
+
+    // A rule with a single condition outside a set contains no members,
+    // and unless a claimed fact joins it (as detailed below), it remains
+    // unrecorded (see count_contradiction_records). A quiet run still names
+    // the fact that the condition matched.
+    //
+    // A refutation obtained through derivation that met a claimed fact: the
+    // record consists of the conditions along with that fact, distinguishing
+    // it from a denial over the conditions alone. A plain single condition,
+    // possessing no members, joins as itself in this context, so a marking
+    // rule with a solitary condition leaves the record that the equivalent
+    // denial `(X p Y, X q Y) => !` would leave.
+    const bool single  = members.empty();
+    const Node claimed = error.get_claimed();
+    if (single && (conditions != nullptr || claimed != 0)) members.push_back(condition);
+
     std::unordered_set<Node> matched;
-    for (const Node rel : get_right(condition))
+    bool                     nameable = true;
+    for (const Node element : members)
     {
-        if (parse_relation(rel) != core.PartOf) continue;
-        adjacency_set objs;
-        const Node    element = parse_fact(rel, objs, 0);
-        if (element == 0 || objs.count(condition) != 1) continue;
-
         // A condition that matched no FACT contributes nothing: a guard
-        // filtered, a negation succeeded on absence. Instantiating one would
-        // assert it -- see the note on this function.
-        if (is_negated_condition(element, 0)) continue;
-        const Node element_predicate = parse_relation(element);
-        if (element_predicate == core.Unequal
-            || (_nn_pred != 0 && element_predicate == _nn_pred)
-            || (_closure_pred != 0 && element_predicate == _closure_pred))
-            continue;
+        // filtered, a negation succeeded on absence. When looked up, it would
+        // find nothing and leave the record unnamed -- see the note on this
+        // function.
+        if (!matches_a_fact(element)) continue;
 
-        // No recipe: every container remains unchanged. A condition matched a
-        // fact through its nodes, and Unification compares a container via
-        // its node, thus the condition with its containers preserved
-        // constitutes the fact that was matched; a rebuilt container would
-        // make the record name a fact that nobody derived. A condition's
-        // container is matched exclusively by a fact that names that precise
-        // container, which nothing writes, hence no input reaches the
-        // difference.
+        // Looked up, never built: a record asserts nothing. The condition
+        // matched a fact, and the record names that fact as it stands: one
+        // that carries more objects than the condition names (`X p Y`
+        // matched `a p b c`), the set constant that a set in the condition
+        // matched via its members, the marking of a refuted fact. Built
+        // through fact(), the condition asserted `a p b`, which nobody had
+        // said, and the fact a marking names was refused as known to be
+        // wrong, which ended the run and the input following it.
+        //
+        // The look-up finds the fact that the condition denotes, and this
+        // does not necessarily correspond to the fact it was matched
+        // against: a rule's pattern or a refuted fact, which no condition
+        // matches, may stand beside a wider fact that it did match, and a
+        // held rule matches a stored rule through the members of its
+        // conditions. Unification is subsequently requested again for the
+        // fact that was matched (matched_fact). A condition for which
+        // neither finds a fact leaves the record unnamed.
         std::vector<Node> history;
-        const Node        instance = instantiate_fact(this, element, variables, 0, history);
-        if (instance == 0) return false; // cannot name this one; report it as new
+        Node              instance = 0;
+        if (resolve_pattern(this, element, variables, instance, history, /*containing*/ true) != Resolve::Ok || is_rule_pattern(instance) || is_refuted_fact(instance))
+            instance = matched_fact(this, element, variables, error.get_parent());
+        if (instance == 0)
+        {
+            if (conditions == nullptr) return ContradictionRecord::None; // cannot name this one; report it as new
+            nameable = false;
+            continue;
+        }
         matched.insert(instance);
     }
+
+    if (conditions != nullptr)
+    {
+        conditions->assign(matched.begin(), matched.end());
+        std::sort(conditions->begin(), conditions->end());
+    }
+
+    if (!_record_contradictions || !nameable || (single && claimed == 0)) return ContradictionRecord::None;
+    if (claimed != 0) matched.insert(claimed);
 
     // A rule whose conditions are ALL guards or negations leaves nothing to
     // point at. Rare, and the honest answer is to keep reporting it rather
     // than to invent a record.
-    if (matched.empty()) return false;
+    if (matched.empty()) return ContradictionRecord::None;
 
     const Node record = set(matched);
-    if (record == 0) return false;
+    if (record == 0) return ContradictionRecord::None;
 
-    if (is_refuted_fact(record)) return true;
+    if (is_refuted_fact(record)) return ContradictionRecord::Existing;
 
     mark_refuted_fact(record);
-    return false;
+    return ContradictionRecord::New;
 }
 
 void Reasoning::report_contradiction(const contradiction_error& error)
 {
     // Before the output lock, never under it: this takes the network locks,
     // and deduce establishes network-then-output as the order.
-    const bool already_known = record_contradiction(error);
+    std::vector<Node>         conditions;
+    const ContradictionRecord record        = record_contradiction(error, _quiet ? &conditions : nullptr);
+    const bool                already_known = record == ContradictionRecord::Existing;
 
     std::lock_guard<std::mutex> lock(_mtx_output);
+
+    // A quiet run keeps what it met, regardless of whether a record
+    // already stored it, and lists each instantiation just once, even if
+    // both the seeded and the classic passes reach it multiple times.
+    if (_quiet && _met_keys.emplace(error.get_rule(), error.get_variables()).second)
+        _met_contradictions.push_back({error.get_rule(), std::move(conditions), error.get_conclusion(), record, error.get_variables(), string::unmark_identifiers(error.get_reason())});
 
     // A contradiction the graph already holds is not a new finding, and
     // saying so again on every later input line is what this replaces. The
@@ -179,11 +358,14 @@ void Reasoning::report_contradiction(const contradiction_error& error)
     _contradiction = true;
     ++_total_contradictions;
 
-    const bool print = _print_deductions || _contradictions_printed;
+    const bool print = !_quiet && (_print_deductions || _contradictions_printed);
     if (!print && !_export_derivations) return;
 
     std::string output;
-    string::node_to_string(this, output, _lang, error.get_fact(), 3, error.get_variables(), error.get_parent());
+    {
+        const string::PremiseRendering premises;
+        string::node_to_string(this, output, _lang, error.get_fact(), 3, error.get_variables(), error.get_parent());
+    }
 
     if (print)
     {
@@ -226,9 +408,75 @@ std::string Reasoning::contradiction_symbol() const
     return string::mark_identifier(get_formatted_name(core.Contradiction, _lang));
 }
 
+// The members of the condition set, found the way render_premises finds
+// them -- and the way node_to_string finds them when it prints "{...}".
+std::vector<Node> Reasoning::condition_elements(const Node condition) const
+{
+    std::vector<Node> members;
+    for (const Node rel : get_right(condition))
+    {
+        if (parse_relation(rel) != core.PartOf) continue;
+        adjacency_set objs;
+        const Node    element = parse_fact(rel, objs, 0);
+        if (element == 0 || objs.count(condition) != 1) continue;
+        members.push_back(element);
+    }
+    return members;
+}
+
+bool Reasoning::matches_a_fact(const Node element)
+{
+    if (is_negated_condition(element, 0)) return false;
+    const Node element_predicate = parse_relation(element);
+    return element_predicate != core.Unequal
+        && (_nn_pred == 0 || element_predicate != _nn_pred)
+        && (_closure_pred == 0 || element_predicate != _closure_pred);
+}
+
+// Describes a fact that a firing derived, during a quiet run initiated via
+// `derived`. Each premise is retrieved without being instantiated:
+// instantiation generates the fact upon a lookup failure, such as when
+// unification matched a fact through its members, and a description must
+// never perform a write operation; at this stage, the export also reads the
+// graph. Such a premise is omitted. A premise that carries more objects than
+// the condition names is found (`containing`).
+Reasoning::DerivedFact Reasoning::describe_derivation(const Node fact, const Node condition, const Variables& bindings, const Node rule)
+{
+    DerivedFact derived{fact, rule, {}, {}, bindings};
+
+    std::vector<Node> elements = condition_elements(condition);
+    if (elements.empty()) elements.push_back(condition);
+    for (const Node element : elements)
+    {
+        if (const Node operand = negation_operand(element); operand != 0)
+        {
+            derived.absent.push_back(operand);
+            continue;
+        }
+        if (!matches_a_fact(element)) continue;
+
+        std::vector<Node> history;
+        Node              premise = 0;
+        if (resolve_pattern(this, element, bindings, premise, history, /*containing*/ true) == Resolve::Ok && premise != 0)
+            derived.premises.push_back(premise);
+    }
+    std::sort(derived.premises.begin(), derived.premises.end());
+    derived.premises.erase(std::unique(derived.premises.begin(), derived.premises.end()), derived.premises.end());
+    return derived;
+}
+
+std::vector<Reasoning::DerivedFact> Reasoning::take_derived_facts()
+{
+    std::lock_guard<std::mutex> lock(_mtx_output);
+    std::vector<DerivedFact>    taken;
+    taken.swap(_derived_facts);
+    return taken;
+}
+
 std::vector<std::string> Reasoning::render_premises(const Node condition, const Variables& variables, const Node parent) const
 {
-    std::vector<std::string> out;
+    std::vector<std::string>       out;
+    const string::PremiseRendering premises;
 
     // Elements of the conjunction set, found the same way node_to_string
     // finds them when it prints "{...}".
@@ -254,66 +502,176 @@ std::vector<std::string> Reasoning::render_premises(const Node condition, const 
     return out;
 }
 
-void Reasoning::run(const bool print_deductions, const bool export_derivations, const bool suppress_repetition, const bool silent, const bool incremental)
+void Reasoning::run(const bool print_deductions, const bool export_derivations, const bool suppress_repetition, const bool silent_requested, const bool incremental, const bool quiet, const bool derived)
 {
+    // Before anything can fire it, a rule authored by the assertion API
+    // undergoes verification (settle_fact_rules). A refusal halts the run
+    // before it has changed anything, and the rule is gone.
+    if (const std::string refused = settle_fact_rules(); !refused.empty()) throw std::runtime_error(refused);
+
     // Input capture must not extend into evaluation: in classic mode the
     // observer would otherwise collect every deduced fact into the focus
     // set, neutralizing the filter (semi-naive mode replaces the observer
     // anyway, but the boundary belongs here, not to the evaluation mode).
+    //
+    // When a capture was previously open, it resumes once the run
+    // concludes, along every exit route. Any statement written by a `%`
+    // block or a keyword handler after its own run is treated as
+    // input, just like earlier statements, yet it did not serve as an
+    // anchor: only the start of the next input line began the capture
+    // again. A run may trigger a throw at its termination (such as in
+    // check mode, due to a negation check or a completeness violation),
+    // and a handler that catches this continues execution.
+    struct ResumeCapture
+    {
+        Reasoning* r;
+        bool       resume;
+        ~ResumeCapture()
+        {
+            if (resume) r->begin_input_capture();
+        }
+    } resume_capture{this, _capturing};
     end_input_capture();
     _filled_terms.clear();
     _consequence_text.clear();
+
+    // A quiet run is silent too. The flag is cleared regardless of how the
+    // run concludes, a throw included: deduce and report_contradiction read
+    // it on the worker threads, and an engine left quiet would hide what any
+    // subsequent run finds.
+    const bool silent = silent_requested || quiet;
+    struct QuietScope
+    {
+        Reasoning& r;
+        ~QuietScope()
+        {
+            r._quiet = false;
+            r._met_keys.clear();
+            r._capture_derived = false;
+        }
+    } quiet_scope{*this};
+    _quiet = quiet;
+    _met_contradictions.clear();
+    _met_keys.clear();
+    _capture_derived = derived;
+    _derived_facts.clear();
 
     // Take the facts created since the last run before anything else can add
     // to them. A classic run does not need them, but it must not leave them
     // behind either: they are covered by its own first pass, and carrying
     // them into a later incremental run would seed work twice.
     std::vector<std::pair<Node, Node>> carried;
-    bool                               delta_valid = false;
+    std::unordered_set<Node>           removed_preds;
+    bool                               delta_valid     = false;
+    bool                               lost_to_removal = false;
     {
         std::lock_guard<std::mutex> lock(_mtx_delta_since_run);
         carried.swap(_delta_since_run);
-        delta_valid = _delta_valid;
+        removed_preds   = _removed_preds_since_run;
+        delta_valid     = _delta_valid;
+        lost_to_removal = _delta_lost_to_removal;
+        // From this point onward until the end of the current run, where the
+        // graph is declared a fixpoint again, the record remains empty and
+        // signifies nothing. A run interrupted by an error before this stage
+        // -- such as a .run-export whose file fails to open -- left it valid
+        // yet empty, and the next .run-delta seeded nothing from the facts
+        // this run had taken over.
+        _delta_valid = false;
+        if (_delta_erased != 0)
+            std::erase_if(carried, [](const std::pair<Node, Node>& entry)
+                          { return entry.first == 0; });
+        _fixpoint_at_last_run = false;
+        _delta_index.clear();
+        _delta_repeated.clear();
+        _delta_revived.clear();
+        _delta_indexed = 0;
+        _delta_erased  = 0;
     }
+
+    // What a run creates is recorded in the active cluster as derived (see
+    // Network::cluster_derived), and a removal made by the run itself leaves
+    // the record alone: the run ends at a fixpoint that triggers a reset.
+    struct Deriving
+    {
+        Network& network;
+        explicit Deriving(Network& n)
+            : network(n) { network.enter_derivation(); }
+        ~Deriving() { network.leave_derivation(); }
+        Deriving(const Deriving&)            = delete;
+        Deriving& operator=(const Deriving&) = delete;
+    } const deriving(*_pImpl);
 
     // Delta seeding replaces the classic pass that would otherwise establish
     // what the rules derive from the graph as a whole. That is only equivalent
     // if the graph already was a fixpoint of these rules, so a previous run
-    // and the semi-naive strategy are required -- and the rules must not have
-    // changed since, because a new rule has to see facts that are older than
-    // itself, which is precisely what the skipped pass would have shown it.
+    // and the semi-naive strategy are required.
     //
-    // A new rule announces itself in the delta as a fact with the Causes
-    // predicate. The rule COUNT cannot carry that alone: get_left returns the
-    // distinct condition nodes, so two rules sharing a condition collapse into
-    // one entry. Both checks are kept -- the delta catches additions, the
-    // count catches wholesale replacement (e.g. .load).
-    bool rules_changed = false;
-    for (const auto& [f, p] : carried)
+    // A new rule must observe facts that predate it, exactly the kind of
+    // insight a skipped pass would have provided, thus the seeded run gives
+    // each new rule that same pass for itself alone and continues seeding the
+    // remaining rules as previously. A new rule announces itself in the record
+    // as a fact using the Causes predicate; likewise, the `=>` fact of a rule
+    // that a statement merely mentions -- though not a rule in force and
+    // therefore disregarded here -- also appears in this manner. The full pass
+    // is kept for a rule that has been removed since the last run (as it might
+    // have been the sole mention of another rule, now in force and having
+    // observed nothing), for a `=>` fact the record fails to track (the
+    // count), and for a new rule when any rule in force holds a negated
+    // condition, since a new rule has the potential to alter negation levels.
+    std::unordered_set<Node> new_rules;
+    bool                     rules_accounted = false;
+    bool                     negating_rule   = false;
+    if (incremental && _seminaive && !suppress_repetition && delta_valid)
     {
-        (void)f;
-        if (p == core.Causes)
+        size_t                   recorded_rules = 0;
+        std::unordered_set<Node> seen;
+        for (const auto& [f, p] : carried)
         {
-            rules_changed = true;
-            break;
+            if (p != core.Causes || !_pImpl->exists(f) || !seen.insert(f).second) continue;
+            ++recorded_rules;
+            if (!is_mentioned(f) && has_rule_form(f)) new_rules.insert(f);
+        }
+
+        const size_t rule_count = _pImpl->get_left(core.Causes).size();
+        rules_accounted         = removed_preds.count(core.Causes) == 0
+                               && rule_count >= _rules_at_last_run
+                               && rule_count - _rules_at_last_run <= recorded_rules;
+
+        if (rules_accounted && !new_rules.empty())
+        {
+            for (const Node rule : _pImpl->get_left(core.Causes))
+            {
+                if (is_mentioned(rule)) continue;
+                adjacency_set deductions;
+                const Node    condition = parse_fact(rule, deductions);
+                if (condition && condition != core.Causes && condition_contains_negation(condition, 1))
+                {
+                    negating_rule = true;
+                    break;
+                }
+            }
         }
     }
 
-    const size_t rule_count = _pImpl->get_left(core.Causes).size();
-    const bool   seed_only  = incremental
-                           && _seminaive
-                           && !suppress_repetition
-                           && delta_valid
-                           && !rules_changed
-                           && rule_count == _rules_at_last_run;
+    const bool seed_only = incremental
+                        && _seminaive
+                        && !suppress_repetition
+                        && delta_valid
+                        && rules_accounted
+                        && !negating_rule;
 
     if (incremental && !seed_only && !silent)
-        diagnostic("Incremental run not applicable (no previous run, bulk load, changed rule set, or non-semi-naive strategy) - running a full pass.");
+    {
+        if (lost_to_removal)
+            diagnostic("Incremental run not applicable (a removal took facts a run may have derived) - running a full pass.");
+        else
+            diagnostic("Incremental run not applicable (no previous run, bulk load, changed rule set, or non-semi-naive strategy) - running a full pass.");
+    }
 
     chrono::StopWatch watch;
     watch.start();
 
-    _print_deductions     = print_deductions;
+    _print_deductions     = print_deductions && !quiet;
     _export_derivations   = export_derivations;
     _skipped              = 0;
     _contradiction        = false;
@@ -358,7 +716,7 @@ void Reasoning::run(const bool print_deductions, const bool export_derivations, 
             }
         }
 
-        seminaive_violations = run_fixpoint_seminaive(silent, seed_only ? &carried : nullptr);
+        seminaive_violations = run_fixpoint_seminaive(silent, seed_only ? &carried : nullptr, &removed_preds, &new_rules);
 
         if (keeps_negation_records()) negations_lost = recheck_negations();
     }
@@ -566,12 +924,12 @@ void Reasoning::run(const bool print_deductions, const bool export_derivations, 
         out("Note: " + count + (_skipped == 1 ? " deduction was hidden." : " deductions were hidden."), true);
     }
 
-    if (_contradiction)
+    if (_contradiction && !_quiet)
     {
         diagnostic_finding("Found one or more contradictions!", true);
     }
 
-    if (_done && suppress_repetition)
+    if (_done && suppress_repetition && !_quiet)
     {
         out("Warning: Additional reasoning iterations are required, but have been suppressed.", true);
     }
@@ -598,11 +956,22 @@ void Reasoning::run(const bool print_deductions, const bool export_derivations, 
     // The graph is a fixpoint of these rules now, which is the precondition a
     // later incremental run relies on. Facts created from here on are new to
     // it, so start recording again.
-    _rules_at_last_run = _pImpl->get_left(core.Causes).size();
+    // A single pass that produced a result failed to reach the fixpoint --
+    // the warning above indicates this -- and a seeded run would never
+    // revisit what remained incomplete. The record thus remains invalid, and
+    // the next incremental request takes a full pass.
+    const bool fixpoint = !(suppress_repetition && _done);
+    _rules_at_last_run  = _pImpl->get_left(core.Causes).size();
     {
         std::lock_guard<std::mutex> lock(_mtx_delta_since_run);
-        _delta_since_run.clear();
-        _delta_valid = true;
+        drop_delta_record_locked(false);
+        _delta_valid = fixpoint;
+        ++_completed_runs;
+        // A single pass that derived something was unable to determine if
+        // additional passes would derive more (the warning above), and a
+        // single pass never re-tests the negation records, which the next
+        // full run performs.
+        _fixpoint_at_last_run = !(suppress_repetition && (_done || keeps_negation_records()));
     }
     arm_delta_recorder();
 
@@ -614,14 +983,28 @@ void Reasoning::run(const bool print_deductions, const bool export_derivations, 
                             << _total_contradictions << " contradictions found"
                             << known_contradiction_note() << "." << std::endl;
 
+    // A quiet run does not output a list. It keeps the facts within
+    // _defeated_negations, which the caller reads, and only generates the
+    // list when a message needs to carry it (below).
+    std::string lost_list;
     if (!negations_lost.empty())
     {
+        // A defeat reported inside a cluster is given back when the cluster
+        // is dropped (close_cluster_negations).
+        if (const std::string cluster = active_cluster_name(); !cluster.empty())
+        {
+            std::lock_guard<std::mutex> lock(_mtx_negation_records);
+            auto&                       reported = _reported_in_cluster[cluster];
+            reported.insert(reported.end(), negations_lost.begin(), negations_lost.end());
+            _any_reported_in_cluster.store(true, std::memory_order_release);
+        }
+
         // Outside check mode, the identical list triggers a warning: the
         // facts remain, and the run completes successfully.
         const std::string count = std::to_string(negations_lost.size());
-        if (_seminaive_check)
+        if (!_quiet && _seminaive_check)
             out_finding("Negation check: " + count + " fact(s) no longer justified -- a negated premise they were derived under now holds:", true);
-        else
+        else if (!_quiet)
             out_finding("Warning: " + count + " fact(s) no longer justified -- a negated premise they were derived under now holds, "
                                               "and nothing else derives them; they stay:",
                         true);
@@ -633,7 +1016,11 @@ void Reasoning::run(const bool print_deductions, const bool export_derivations, 
             std::string rule_text;
             string::node_to_string(this, fact_text, _lang, record.fact, 3);
             string::node_to_string(this, rule_text, _lang, record.rule, 3);
-            out_finding("  " + string::unmark_identifiers(fact_text) + "  (by " + string::unmark_identifiers(rule_text) + ")", true);
+            const std::string line = "  " + string::unmark_identifiers(fact_text) + "  (by " + string::unmark_identifiers(rule_text) + ")";
+            if (_quiet)
+                lost_list += "\n" + line;
+            else
+                out_finding(line, true);
         }
     }
 
@@ -649,7 +1036,11 @@ void Reasoning::run(const bool print_deductions, const bool export_derivations, 
                 + " extra pass(es) after the delta drained. The final graph is complete, but delta "
                   "seeding missed at least one derivation. Please report this rule set at https://github.com/acrion/zelph/issues.";
     }
-    if (!negations_lost.empty() && _seminaive_check)
+    // A quiet run yields the findings of the negation check rather than
+    // raising for them. Only the completeness violation still raises an
+    // error, and as no output was printed, its message carries the list
+    // directly.
+    if (!negations_lost.empty() && _seminaive_check && (!_quiet || !failure.empty()))
     {
         // There is no issue with the evaluation strategies presented here --
         // both produce identical facts. What check mode reports is that the
@@ -660,7 +1051,9 @@ void Reasoning::run(const bool print_deductions, const bool export_derivations, 
         if (!failure.empty()) failure += " ";
         failure += "Negation check: " + std::to_string(negations_lost.size())
                  + " fact(s) derived under a negated premise that has come to hold, and nothing else "
-                   "derives them (listed above). Facts only accumulate, so they stay. This happens when "
+                   "derives them"
+                 + (_quiet ? ":" + lost_list + "\n" : std::string(" (listed above). "))
+                 + "Facts only accumulate, so they stay. This happens when "
                    "a fact arrives after a negation was tested against its absence: a statement made "
                    "later, or a rule set that negates what it derives itself.";
     }
@@ -674,6 +1067,7 @@ void Reasoning::apply_rule(const Node& rule, Node condition)
     _nn_pred           = get_node("nn", "zelph");
     _nn_layers_pred    = get_node("nn-layers", "zelph");
     _closure_pred      = get_node("closure", "zelph");
+    _refuted_pred      = get_node(refuted_fact_name(), "zelph");
     _closure_one_plus  = get_node("one-or-more", "zelph");
     _closure_zero_plus = get_node("zero-or-more", "zelph");
 
@@ -692,6 +1086,7 @@ void Reasoning::apply_rule(const Node& rule, Node condition)
     else
     {
         condition = parse_fact(rule, ctx.rule_deductions);
+        ctx.rule  = rule;
     }
 
     if (condition && condition != core.Causes)
@@ -703,6 +1098,10 @@ void Reasoning::apply_rule(const Node& rule, Node condition)
         auto conditions = std::make_shared<std::vector<Node>>();
         conditions->push_back(condition);
 
+        // Each binding receives a single answer per query
+        // (Reasoning::answer), and the bindings answered are reset for
+        // every query.
+        if (rule == 0) _answered.clear();
         try
         {
             evaluate(RulePos({rule, conditions, 0}), ctx, 1);
@@ -713,6 +1112,10 @@ void Reasoning::apply_rule(const Node& rule, Node condition)
         }
 
         _pool->wait();
+        // Released instead of cleared: a cleared set keeps the buckets
+        // associated with the largest query, and every subsequent query would
+        // clear them once more.
+        if (rule == 0) decltype(_answered)().swap(_answered);
     }
 }
 
@@ -820,13 +1223,283 @@ void Reasoning::arm_delta_recorder()
         // drives zelph as a library and never enters a statement.
         if (_delta_since_run.size() >= _max_delta_entries)
         {
-            _delta_valid = false;
-            _delta_since_run.clear();
+            drop_delta_record_locked(false);
             _delta_since_run.shrink_to_fit();
             return;
         }
 
         _delta_since_run.emplace_back(f, p); });
+}
+
+void Reasoning::drop_delta_record_locked(const bool by_removal)
+{
+    _delta_valid = false;
+    _delta_since_run.clear();
+    _delta_index.clear();
+    _delta_repeated.clear();
+    _delta_revived.clear();
+    _delta_indexed = 0;
+    _delta_erased  = 0;
+    _removed_preds_since_run.clear();
+    _delta_lost_to_removal = by_removal;
+}
+
+// The record says "these facts are new since the last run, and the graph was
+// a fixpoint before them", thus every removal must preserve this truth. A
+// removed fact that the record lists had not been encountered by any run: its
+// entries vanish, ensuring that a rule constructed within a dropped cluster
+// does not trigger a full pass and that no seeding occurs from a fact that
+// has disappeared. A removed fact that was present at the last run leaves its
+// predicate in _removed_preds_since_run, which a seeded run must consider when
+// evaluating whether a negation could now be true. Neither mechanism covers a
+// derived fact whose premises still exist, which no seeded run will derive
+// again: such a removal gives the record up (`derived`, note_user_removal).
+void Reasoning::note_removal(const adjacency_set& removed, const bool derived)
+{
+    if (_pImpl->deriving()) return;
+
+    forget_negation_records(removed);
+
+    std::vector<Node> older;
+    {
+        std::lock_guard<std::mutex> lock(_mtx_delta_since_run);
+        if (!_delta_valid) return;
+        if (derived)
+        {
+            drop_delta_record_locked(true);
+            return;
+        }
+
+        for (; _delta_indexed < _delta_since_run.size(); ++_delta_indexed)
+        {
+            const Node f = _delta_since_run[_delta_indexed].first;
+            if (!_delta_index.try_emplace(f, _delta_indexed).second) _delta_repeated.insert(f);
+        }
+
+        for (const Node n : removed)
+        {
+            const auto it = _delta_index.find(n);
+            if (it == _delta_index.end())
+            {
+                older.push_back(n);
+                continue;
+            }
+
+            // A rule that the hook below entered because a removal brought it
+            // into force was present at the last run: removing it constitutes
+            // the removal of an older rule, which could have been the last
+            // mention of another, and merely erasing its entry would hide that
+            // fact.
+            if (_delta_revived.erase(n) != 0) older.push_back(n);
+
+            if (_delta_repeated.erase(n) != 0)
+            {
+                for (size_t i = it->second; i < _delta_since_run.size(); ++i)
+                {
+                    if (_delta_since_run[i].first != n) continue;
+                    _delta_since_run[i] = {0, 0};
+                    ++_delta_erased;
+                }
+            }
+            else
+            {
+                _delta_since_run[it->second] = {0, 0};
+                ++_delta_erased;
+            }
+            _delta_index.erase(it);
+        }
+    }
+
+    // The predicates are read outside the lock, which the fact-creation
+    // observer takes, and while the edges remain present. Only a statement
+    // that held counts, along with a rule: the removal of a rule pattern, a
+    // fact involving a variable, a pattern marking, or a conjunction or
+    // negation tag takes nothing from the data -- and in the core profile `~`
+    // serves as the predicate for every class fact, so counting the engine's
+    // own rule text would indicate a reduction in class facts whenever a rule
+    // is removed.
+    const Node        marking = rule_pattern_predicate(false);
+    std::vector<Node> predicates;
+    std::vector<Node> held_rules;
+    for (const Node n : older)
+    {
+        const Node p = predicate_of(n);
+        if (p == 0) continue;
+
+        // A `=>` fact that a removed statement held as one of its components
+        // was mentioned by that statement, and a mentioned rule is not in
+        // force: if the statement was present during the most recent run,
+        // the rule encountered none of the facts. Once the statement is
+        // eliminated, the rule may be in force again, and for a seeded run it
+        // becomes a new rule, so its `=>` enters the record just as the `=>`
+        // of a created rule does. The run decides, as it does for every
+        // recorded `=>`, whether the rule is in force: a mention that remains
+        // keeps it out. Without this mechanism, a dropped mention would bring
+        // the rule back into force without the classic pass that a new rule
+        // takes, and the rule would never meet the older facts.
+        FactStructurePtr structures;
+        if (!try_get_genuine_structure(n, structures) || !structures) structures = get_fact_structures(this, n, 3);
+        for (const FactStructure& fs : *structures)
+        {
+            const auto held = [&](const Node part)
+            {
+                if (part != n && removed.count(part) == 0 && predicate_of(part) == core.Causes) held_rules.push_back(part);
+            };
+            held(fs.subject);
+            held(fs.predicate);
+            for (const Node o : fs.objects)
+                held(o);
+        }
+
+        if (p != core.Causes)
+        {
+            if (p == core.IsA
+                && ((marking != 0 && _pImpl->has_left_edge(n, marking))
+                    || _pImpl->has_left_edge(n, core.Conjunction)
+                    || _pImpl->has_left_edge(n, core.Negation)))
+                continue;
+            if (!is_asserted_fact(n)) continue;
+        }
+        predicates.push_back(p);
+    }
+    if (predicates.empty() && held_rules.empty()) return;
+
+    std::lock_guard<std::mutex> lock(_mtx_delta_since_run);
+    if (!_delta_valid) return;
+    for (const Node p : predicates)
+        _removed_preds_since_run.insert(p);
+    for (const Node rule : held_rules)
+    {
+        if (_delta_since_run.size() >= _max_delta_entries)
+        {
+            drop_delta_record_locked(false);
+            return;
+        }
+        _delta_since_run.emplace_back(rule, core.Causes);
+        _delta_revived.insert(rule);
+    }
+}
+
+// When a rule is eliminated, its associated negation records are removed
+// alongside it. A record undergoes re-testing via its rule, but since a
+// removed rule lacks any remaining condition to evaluate, the record remained
+// in place for the rest of the session and was never reported. Every NAF
+// derivation from a dry run whose cluster held the rule left behind such a
+// record, even if the real run later re-derived the same fact using a rule
+// written afterwards. A list maintained by a cluster for its drop
+// (_reported_in_cluster) also holds records. Only a node with an edge to `=>`
+// can be a rule, hence a removal that does not eliminate a rule costs one
+// probe for each removed node, but only as long as records exist.
+void Reasoning::forget_negation_records(const adjacency_set& removed)
+{
+    {
+        std::lock_guard<std::mutex> lock(_mtx_negation_records);
+        if (_negation_records.empty() && _reported_in_cluster.empty()) return;
+    }
+
+    std::unordered_set<Node> rules;
+    for (const Node n : removed)
+        if (Zelph::Impl::is_hash(n) && _pImpl->has_right_edge(n, core.Causes)) rules.insert(n);
+    if (rules.empty()) return;
+
+    const auto of_removed_rule = [&rules](const NegationRecord& record)
+    { return rules.count(record.rule) != 0; };
+
+    std::lock_guard<std::mutex> lock(_mtx_negation_records);
+    std::erase_if(_negation_records, of_removed_rule);
+    for (auto& [name, reported] : _reported_in_cluster)
+        std::erase_if(reported, of_removed_rule);
+}
+
+// A name merge re-creates the facts and rules that were constructed on the
+// node it absorbed, assigning them fresh identifiers, and a record names its
+// fact, its rule, the condition part, and the bindings through their
+// respective IDs. Originally left unchanged, the record of `jim ~ impatient`
+// named a fact that no longer existed and bound X to a node that had been
+// removed, causing the re-test to discard it, while a later `jim waits nil`
+// defeated the conclusion without issuing a report. Each ID is now replaced
+// by the node to which the merge moved it. The next re-test covers every
+// record, since a merged predicate may enable a negated pattern to be
+// satisfied by facts it previously held.
+void Reasoning::follow_merge(const std::unordered_map<Node, Node>& moved)
+{
+    const auto moved_to = [&moved](Node n)
+    {
+        for (size_t hops = 0; hops < moved.size(); ++hops)
+        {
+            const auto it = moved.find(n);
+            if (it == moved.end()) break;
+            n = it->second;
+        }
+        return n;
+    };
+    const auto follow = [&moved_to](NegationRecord& record)
+    {
+        record.fact   = moved_to(record.fact);
+        record.rule   = moved_to(record.rule);
+        record.parent = moved_to(record.parent);
+        Variables bindings;
+        for (const auto& [variable, value] : record.bindings)
+            bindings[moved_to(variable)] = moved_to(value);
+        record.bindings = std::move(bindings);
+    };
+
+    // The list of what the most recent run reported, as returned by
+    // `zelph/defeated`, is carried forward through the merge. It kept the
+    // prior identifiers and named nodes that the merge had removed until the
+    // next run, and it was not accessed when no record existed, since a
+    // reported record departs alongside its report. Two pairs that the merge
+    // combines into a single entity are named once.
+    std::vector<std::pair<Node, Node>> defeated;
+    std::set<std::pair<Node, Node>>    named;
+    for (const auto& [fact, rule] : _defeated_negations)
+    {
+        const std::pair<Node, Node> pair{moved_to(fact), moved_to(rule)};
+        if (named.insert(pair).second) defeated.push_back(pair);
+    }
+    _defeated_negations = std::move(defeated);
+
+    std::lock_guard<std::mutex> lock(_mtx_negation_records);
+    if (_negation_records.empty() && _reported_in_cluster.empty()) return;
+    for (NegationRecord& record : _negation_records)
+        follow(record);
+    for (auto& [name, reported] : _reported_in_cluster)
+        for (NegationRecord& record : reported)
+            follow(record);
+    _check_touched_all = true;
+}
+
+void Reasoning::note_user_removal()
+{
+    std::lock_guard<std::mutex> lock(_mtx_delta_since_run);
+    if (_delta_valid) drop_delta_record_locked(true);
+}
+
+std::vector<Node> Reasoning::removed_predicates_since_run() const
+{
+    std::lock_guard<std::mutex> lock(_mtx_delta_since_run);
+    return {_removed_preds_since_run.begin(), _removed_preds_since_run.end()};
+}
+
+size_t Reasoning::delta_entries() const
+{
+    std::lock_guard<std::mutex> lock(_mtx_delta_since_run);
+    return _delta_since_run.size() - _delta_erased;
+}
+
+size_t Reasoning::completed_runs() const
+{
+    std::lock_guard<std::mutex> lock(_mtx_delta_since_run);
+    return _completed_runs;
+}
+
+bool Reasoning::unchanged_since_last_run() const
+{
+    {
+        std::lock_guard<std::mutex> lock(_mtx_delta_since_run);
+        if (!_fixpoint_at_last_run || !_delta_valid || _delta_since_run.size() != _delta_erased || !_removed_preds_since_run.empty()) return false;
+    }
+    return left_count(core.Causes) == _rules_at_last_run;
 }
 
 void Reasoning::begin_input_capture()
@@ -850,7 +1523,11 @@ void Reasoning::end_input_capture()
     // cross-run delta is not. run() installs its own observer for the
     // duration of evaluation and re-arms this one when it is finished.
     arm_delta_recorder();
+    settle_input_capture();
+}
 
+void Reasoning::settle_input_capture()
+{
     // Survivors ACCUMULATE into the focus set: focus mode answers "what
     // follows from what I entered", and "what I entered" grows with the
     // session. Imported scripts never reach this path (imports suspend
@@ -935,6 +1612,25 @@ std::shared_ptr<std::vector<Node>> Reasoning::optimize_order(const adjacency_set
     std::vector<Node> pending(conditions.begin(), conditions.end());
     Variables         simulated_vars = current_vars;
 
+    // The variables a term holds: collect_variables', along with those found
+    // in the members of a set pattern inside it, which unification binds by
+    // pairing the members and which collect_variables does not read in a
+    // rule's text. A condition whose variables all resided within a set
+    // pattern was scored as a bound atom, trivially connected, that binds
+    // nothing. The walk runs only where a set pattern may exist
+    // (Zelph::may_hold_set_patterns), once for each term.
+    const bool                                         set_patterns = may_hold_set_patterns();
+    std::unordered_map<Node, std::unordered_set<Node>> set_pattern_vars;
+    const auto                                         variables_of = [&](const Node nd, std::unordered_set<Node>& vars)
+    {
+        std::vector<Node> history;
+        collect_variables(this, nd, vars, depth, history);
+        if (!set_patterns) return;
+        const auto [it, fresh] = set_pattern_vars.try_emplace(nd);
+        if (fresh) collect_set_pattern_variables(this, nd, it->second);
+        vars.insert(it->second.begin(), it->second.end());
+    };
+
     // A term counts as "bound" for scoring purposes if the unification engine
     // can resolve it to a concrete node without scanning: atoms, bound
     // variables, and structured patterns whose variables are all bound in
@@ -945,11 +1641,10 @@ std::shared_ptr<std::vector<Node>> Reasoning::optimize_order(const adjacency_set
     {
         if (nd == 0) return false;
         if (Zelph::Impl::is_var(nd)) return vars_in_scope.count(nd) != 0;
-        if (!Zelph::Impl::is_hash(nd)) return true; // plain atom
+        if (!Zelph::Impl::is_hash(nd) && !set_patterns) return true; // plain atom
 
         std::unordered_set<Node> vars;
-        std::vector<Node>        history;
-        collect_variables(this, nd, vars, depth, history);
+        variables_of(nd, vars);
         for (Node v : vars)
             if (vars_in_scope.count(v) == 0) return false;
         return true;
@@ -1012,8 +1707,7 @@ std::shared_ptr<std::vector<Node>> Reasoning::optimize_order(const adjacency_set
             // relative to the +/-100, +/-50 and log2 terms.
             {
                 std::unordered_set<Node> cond_vars;
-                std::vector<Node>        history;
-                collect_variables(this, cond, cond_vars, depth, history);
+                variables_of(cond, cond_vars);
 
                 size_t new_vars  = 0;
                 bool   connected = cond_vars.empty(); // ground condition: trivially connected
@@ -1146,8 +1840,7 @@ std::shared_ptr<std::vector<Node>> Reasoning::optimize_order(const adjacency_set
             // planner could not see that later conditions become groundable.
             {
                 std::unordered_set<Node> cond_vars;
-                std::vector<Node>        history;
-                collect_variables(this, best_cond, cond_vars, depth, history);
+                variables_of(best_cond, cond_vars);
                 for (Node v : cond_vars)
                     simulated_vars[v] = 1; // dummy bind
             }
@@ -1373,10 +2066,9 @@ namespace
     // a name remains a template.
     Plan container_plan(const Zelph* const z, const Node node, const Recipe* const recipe, const Place& place, std::unordered_set<Node>& members)
     {
-        // Every container is kept without a recipe: the record of a
-        // contradiction names the facts that were matched, and a
-        // condition's container that is matched by its node
-        // (Reasoning::record_contradiction).
+        // Each container is kept without a recipe: the ground corner of a
+        // construction builds the rule a generator mentions, exactly as it
+        // was written (Reasoning::rebuild_rule).
         if (recipe == nullptr) return Plan::Keep;
 
         const bool firing = recipe->mode == RecipeMode::Firing;
@@ -1425,6 +2117,32 @@ namespace
             return collect_container_members(z, node, members) ? Plan::ConjunctionSet : Plan::Keep;
         }
         if (!collect_container_members(z, node, members)) return Plan::Keep;
+
+        // In a construction, a variable is not considered a member of a set
+        // constant, just as Zelph::set_constant_members does not include it
+        // in its count: the membership `X in {c d}` appearing in the
+        // generator's text is rule text that names the set, regardless of
+        // whether the rule being constructed treats it as a consequence or a
+        // condition, or whether the generator writes it beside that rule.
+        // Counted as a member, it rebuilt the set as `{a c d}` under the
+        // binding X = a, a set that no one authored, which a subsequent
+        // condition then matched: `(X p Y) => ((X in {c d}) => (X ok Y))`
+        // derived `a ok b`. The built rule now refers to `{c d}` exactly as
+        // originally written, and fact() refuses the membership
+        // `a in {c d}`, just as it would in a standalone rule.
+        //
+        // A firing reads the set in the same way. It met the set as a
+        // value beside its rule's own consequence `X in {c d}`, and
+        // `(X p Y) => (z has {c d}) (X in {c d})` derived `z has {a c d}`
+        // before refusing that consequence.
+        //
+        // A statement that holds a variable is interpreted identically
+        // (Zelph::is_pattern_member): next to a rule's condition `(X p z) in
+        // {(x p z) c}`, `(X q Y) => (z has {(x p z) c})` derived `z has @{(X p
+        // z)}`.
+        if (Zelph::is_hash(node))
+            std::erase_if(members, [z](const Node m)
+                          { return z->is_pattern_member(m); });
 
         // A set constant is its members, thus it is rebuilt whenever any of
         // them undergoes a change; a named one is a constant. What remains
@@ -1531,7 +2249,7 @@ namespace
 
         if (recipe.mode == RecipeMode::Firing)
         {
-            const adjacency_set relations = z->filter(recipe.statement, z->core.IsA, z->core.RelationTypeCategory);
+            const adjacency_set relations = z->relation_types_of(recipe.statement);
             const Node          rel       = relations.size() == 1 ? *relations.begin() : Node{0};
             const Node          relation  = Zelph::is_var(rel) ? zelph::string::get(*recipe.binding, rel, rel) : rel;
             walk_instantiation(z, head, recipe, Place{}, depth, seen, on_variable, on_container);
@@ -1813,6 +2531,26 @@ std::unordered_set<Node> zelph::network::statement_variables(const Zelph* const 
     return vars;
 }
 
+bool zelph::network::container_members_met(const Zelph* const z, const Node node, const Recipe& recipe, std::unordered_set<Node>& members, bool& rebuilt)
+{
+    rebuilt         = false;
+    const Plan plan = container_plan(z, node, &recipe, Place{}, members);
+    if (plan == Plan::SetConstantTemplate || plan == Plan::CollectionTemplate || plan == Plan::ConjunctionSet)
+    {
+        rebuilt = true;
+        return !members.empty();
+    }
+
+    // A conjunction set that the firing keeps as written, a comma list among
+    // them: each member appears in the instance exactly as it appears in the
+    // rule's text. Every other node preserved by the firing is an atom, a
+    // value, or a constant, and the firing writes none of its members. The
+    // tag decides before a member is read.
+    if (plan != Plan::Keep || !is_conjunction(z, node)) return false;
+    members.clear();
+    return collect_container_members(z, node, members);
+}
+
 bool zelph::network::keeps_rule_variable(const Zelph* const z, const Recipe& recipe, const int depth, std::unordered_set<Node>& in_values)
 {
     // A firing keeps a conjunction set as written, ensuring that any
@@ -1984,6 +2722,42 @@ Node zelph::network::instantiate_fact(Zelph* z, Node pattern, const Variables& v
         return pattern;
     }
 
+    // A refuted fact that a firing's consequence holds where it claims nothing
+    // -- specifically, the fact that a refutation marking names, an argument
+    // of an opaque predicate, or a part of a rule it mentions -- is accepted
+    // in its current form (Reasoning::refuted_consequence found it).
+    // Constructed via fact() at probability 1, it was rejected due to being
+    // known to be wrong, and this rejection ended the run.
+    //
+    // Only at the place where the prediction met it: the prediction walks
+    // neither the members of a container nor a composite predicate of the
+    // consequence, and at the point where the instantiation meets the
+    // identical fact there, the statement claims it. Taken wherever it
+    // appeared, the look-up made the rule
+    // "(X go Y) => (k says ((X p b) ~ refuted) {(X p b)})" produce a set
+    // holding the refuted fact following "¬(t p b)", without a word, whereas
+    // the typed statement is refused as known to be wrong.
+    if (recipe != nullptr && recipe->refuted != nullptr)
+    {
+        const Node existing = Zelph::Impl::create_hash(inst_relation, inst_subject, inst_objects);
+        if (std::any_of(recipe->refuted->begin(), recipe->refuted->end(), [&](const LookedUpFact& l)
+                        { return l.fact == existing && l.path == history; }))
+            return existing;
+    }
+
+    // A construction looks up a refuted fact that the rule it writes holds,
+    // just as the parser looks one up for a typed rule: after "¬(t p b)",
+    // the rule "(X go Y) => ((X p b) => (j r s))" ended its run with "known
+    // to be wrong", while the typed "(t p b) => (j r s)" is accepted. A
+    // condition based on the fact never matches, a marking of it within a
+    // condition reads its refutation, and a consequence tied to it
+    // constitutes a contradiction once the rule fires.
+    if (recipe != nullptr && recipe->mode == RecipeMode::Construction)
+    {
+        const Answer known = z->check_fact(inst_subject, inst_relation, inst_objects);
+        if (known.is_wrong()) return known.relation();
+    }
+
     // While a construction builds a rule, a fact emerging in this context is a
     // part of that rule, and the construction marks it as a pattern once it
     // keeps the rule (Reasoning::build_rule). A firing whose consequence
@@ -2066,8 +2840,14 @@ void zelph::network::collect_variables(Zelph* z, Node pattern, std::unordered_se
 
     // Atoms carry no variables and no structure (same classification as
     // the lock-free gate in get_fact_structures) -- historically this
-    // returned via an empty get_preferred_structure probe.
-    if (!Zelph::Impl::is_hash(pattern)) return;
+    // returned via an empty get_preferred_structure probe. The sole
+    // exception is a set pattern that a query or a program typed, whose
+    // variables a statement over it holds (Zelph::set_pattern_variables).
+    if (!Zelph::Impl::is_hash(pattern))
+    {
+        if (const auto stored = z->set_pattern_variables(pattern)) vars.insert(stored->begin(), stored->end());
+        return;
+    }
 
     // O(1) store path: the exact variable set recorded at creation. On
     // authoritative stores this is IDENTICAL to the walk below: the walk
@@ -2103,8 +2883,47 @@ void zelph::network::collect_variables(Zelph* z, Node pattern, std::unordered_se
     collect_variables(z, fs.predicate, vars, depth, history);
     for (Node o : fs.objects)
     {
+        // The membership's object is not entered, as in Zelph::fact.
+        if (fs.predicate == z->core.PartOf && !Zelph::Impl::is_hash(o) && !Zelph::Impl::is_var(o)) continue;
         collect_variables(z, o, vars, depth, history);
     }
 
     history.pop_back();
+}
+
+namespace
+{
+    void set_pattern_variables_below(Zelph* const z, const Node node, std::unordered_set<Node>& vars, std::unordered_set<Node>& seen)
+    {
+        if (node == 0 || Zelph::Impl::is_var(node) || !seen.insert(node).second) return;
+
+        const auto members_of = [&]
+        {
+            adjacency_set members;
+            if (!z->set_pattern_members(node, members)) return;
+            for (const Node m : members)
+            {
+                std::vector<Node> history;
+                collect_variables(z, m, vars, 1, history);
+                set_pattern_variables_below(z, m, vars, seen);
+            }
+        };
+
+        if (!Zelph::Impl::is_hash(node)) return members_of();
+        const auto structures = get_fact_structures(z, node, 1); // held: see Zelph::get_fact_objects
+        if (structures->empty()) return members_of();
+        for (const auto& fs : *structures)
+        {
+            set_pattern_variables_below(z, fs.subject, vars, seen);
+            set_pattern_variables_below(z, fs.predicate, vars, seen);
+            for (const Node o : fs.objects)
+                set_pattern_variables_below(z, o, vars, seen);
+        }
+    }
+}
+
+void zelph::network::collect_set_pattern_variables(Zelph* z, const Node pattern, std::unordered_set<Node>& vars)
+{
+    std::unordered_set<Node> seen;
+    set_pattern_variables_below(z, pattern, vars, seen);
 }

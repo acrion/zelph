@@ -1,3 +1,8 @@
+# Each name below represents a node within the language zelph,
+# regardless of the .lang setting used by the importer; upon
+# completion of the import, the importer's language is restored.
+.lang zelph
+
 # ---------------------------------------------------------------------------
 # Rule A0 — Trigger: seed internal addition with carry-in 0 for every + fact
 # ---------------------------------------------------------------------------

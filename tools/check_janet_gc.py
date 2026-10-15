@@ -1,20 +1,31 @@
 #!/usr/bin/env python3
 """Hold the zelph binary to finishing a Janet program that makes Janet collect.
 
-Janet 1.41.2 frees the table of its top-level dynamic bindings on the first
-garbage collection, and zelph keeps its :err binding there. Janet's event loop
-reads that table when it reports on a finished task, so a program that
-allocated enough to trigger a collection killed the process with SIGSEGV --
-after its last line of output, which made the run look finished.
-src/lib/patch_janet_gc.cmake makes the collector mark the table, and these
-cases hold the build to it.
+The pinned Janet release, 1.42.1, frees the table of its top-level dynamic
+bindings on the first garbage collection, as 1.41.2 did, and zelph keeps its
+:err binding there. Janet's event loop reads that table when it reports on a
+finished task, so a program that allocated enough to trigger a collection
+killed the process with SIGSEGV -- after its last line of output, which made
+the run look finished. src/lib/patch_janet_gc.cmake makes the collector mark
+the table, and the first two cases hold the build to it.
 
-Both cases died before the patch: a plain Janet script without any thread, and
-the hand-off that the Threads section of mkdocs/docs/janet.md recommends (a
-thread computes, a thread channel carries the result, the main thread writes
-it). A crash ends the process that meets it, which is why this asks the binary
-in a process of its own instead of the doctest suite, where the first failure
-would end every test after it.
+Both died before the patch: a plain Janet script without any thread, and the
+hand-off that the Threads section of mkdocs/docs/janet.md recommends (a thread
+computes, a thread channel carries the result, the main thread writes it).
+
+The last two run Janet from inside a running Janet program, through
+(zelph/import ...): a file that collects and allocates, imported from a
+script, and math imported after 30,000 allocated strings. In Janet 1.41.2,
+janet_dostring ran such a nested program on a fiber that no garbage collection
+root reached, so a collection inside it freed the fiber that was running: the
+first case exits with SIGSEGV every time, the second with SIGSEGV or a Janet
+error, depending on when the collector runs. Janet 1.42.0 roots every nested
+fiber (upstream pull request #1720), and these two cases hold the build to a
+release that does.
+
+A crash ends the process that meets it, which is why this asks the binary in a
+process of its own instead of the doctest suite, where the first failure would
+end every test after it.
 
 Exit codes: 0 every case holds, 1 one of them does not, 2 the question could
 not be put.
@@ -22,6 +33,7 @@ not be put.
 
 import argparse
 import os
+import pathlib
 import subprocess
 import sys
 import tempfile
@@ -30,6 +42,14 @@ import tempfile
 # once the run completes its allocations. The phrase catches a run that
 # terminates prematurely before finishing, the status captures one that fails
 # during exit, after the phrase, just as the hand-off did before the patch.
+#
+# A case can designate additional files, each consisting of a file name and
+# its associated content, which are generated alongside the file that the
+# binary runs. Within each content, DIR represents the directory containing
+# them, expressed using forward slashes to ensure a Janet string literal can
+# carry it correctly even on Windows.
+DIR = "{dir}"
+
 CASES = [
     (
         "a Janet script that allocates two million strings",
@@ -62,9 +82,28 @@ CASES = [
         ]) + "\n",
         "main wrote 50000",
     ),
+    (
+        "a script imports a file that collects and allocates 100,000 strings",
+        "outer.zph",
+        f"%(zelph/import \"{DIR}/inner.zph\")\n"
+        "%(print \"outer after import\")\n",
+        "outer after import",
+        [(
+            "inner.zph",
+            "%(do (gccollect) (def a @[]) (for i 0 100000 (array/push a (string i)))"
+            " (print \"inner len \" (length a)))\n",
+        )],
+    ),
+    (
+        "a script allocates 30,000 strings and then imports math",
+        "alloc-then-import.zph",
+        "%(do (def a @[]) (for i 0 30000 (array/push a (string i))) (zelph/import \"math\"))\n"
+        "%(zelph/out \"AFTER-IMPORT\")\n",
+        "AFTER-IMPORT",
+    ),
 ]
 
-# Sufficient in either scenario, requiring only a few seconds; a run that
+# Sufficient in every scenario, requiring only a few seconds; a run that
 # hangs constitutes a violation, not a stuck check.
 TIMEOUT_SECONDS = 600
 
@@ -89,10 +128,12 @@ def main():
     violations = []
 
     with tempfile.TemporaryDirectory(prefix="zelph_janet_gc_") as directory:
-        for name, file_name, body, phrase in CASES:
+        for name, file_name, body, phrase, *further in CASES:
+            files = (further[0] if further else []) + [(file_name, body)]
+            for written_name, content in files:
+                with open(os.path.join(directory, written_name), "w", encoding="utf-8") as handle:
+                    handle.write(content.replace(DIR, pathlib.Path(directory).as_posix()))
             script = os.path.join(directory, file_name)
-            with open(script, "w", encoding="utf-8") as handle:
-                handle.write(body)
 
             # The encoding is named explicitly, for the rationale provided by
             # check_exit_status.py.

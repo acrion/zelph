@@ -100,8 +100,9 @@ namespace zelph
         janet_fixarity(argc, 2);
         if (!s_instance) return janet_wrap_nil();
 
-        network::Node a = s_instance->resolve_janet_arg_no_create(argv[0]);
-        network::Node b = s_instance->resolve_janet_arg_no_create(argv[1]);
+        const std::string lang = s_instance->_n->published_lang();
+        network::Node     a    = s_instance->resolve_janet_arg_no_create(argv[0], lang);
+        network::Node     b    = s_instance->resolve_janet_arg_no_create(argv[1], lang);
         if (!a || !b) return janet_wrap_nil();
 
         // Synapse entry (or explicitly stored fact probability): its value.
@@ -369,6 +370,7 @@ namespace zelph
 
         std::vector<std::pair<network::Node, double>> out;
         out.reserve(static_cast<size_t>(len));
+        const std::string lang = s_instance->_n->published_lang();
 
         for (int32_t i = 0; i < len; ++i)
         {
@@ -386,7 +388,7 @@ namespace zelph
                 activation = janet_unwrap_number(pair[1]);
             }
 
-            network::Node n = s_instance->resolve_janet_arg_no_create(element);
+            network::Node n = s_instance->resolve_janet_arg_no_create(element, lang);
             if (!n) janet_panicf("%s: element %d could not be resolved to an existing node", what, i);
             out.emplace_back(n, activation);
         }

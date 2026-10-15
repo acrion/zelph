@@ -54,7 +54,9 @@ namespace
 // per match.
 void Reasoning::report_unusable_net(const Node net_node, const std::string& why)
 {
-    if (!_nn_reported.insert(net_node).second) return;
+    // Just as refuse_condition does, a quiet run leaves this message to the next run that
+    // prints.
+    if (_quiet || !_nn_reported.insert(net_node).second) return;
     diagnostic("Neural condition: net '" + format(net_node) + "' " + why + ".", true);
 }
 
@@ -362,16 +364,5 @@ void Reasoning::proceed_after_condition(const RulePos&             rule,
         return;
     }
 
-    // Normal query output / collection
-    std::lock_guard<std::mutex> lock(_mtx_output);
-    if (_query_results)
-    {
-        _query_results->push_back(vars);
-    }
-    else
-    {
-        std::string output;
-        string::condition_to_string(this, output, _lang, ctx_copy.current_condition, 3, *vars, rule.node);
-        out("Answer: " + string::unmark_identifiers(output), true);
-    }
+    answer(ctx_copy.current_condition, vars, rule.node);
 }

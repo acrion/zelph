@@ -165,6 +165,7 @@ namespace zelph::io
                 stats.right_chunk_count  = impl.getRightChunkCount();
                 stats.name_of_node_count = impl.getNameOfNodeChunkCount();
                 stats.node_of_name_count = impl.getNodeOfNameChunkCount();
+                stats.annotation_count   = impl.getAnnotationChunkCount();
             }
             // Measured after the reader is gone; see read_bin_index_data.
             stats.header_length_bytes = counting_input.bytes_read();
@@ -176,7 +177,8 @@ namespace zelph::io
             const uint64_t declared = static_cast<uint64_t>(stats.left_chunk_count)
                                     + stats.right_chunk_count
                                     + stats.name_of_node_count
-                                    + stats.node_of_name_count;
+                                    + stats.node_of_name_count
+                                    + stats.annotation_count;
             if (stats.header_length_bytes + declared * kMinimumChunkBytes > stats.file_size_bytes)
             {
                 // No fclose here: the catch(...) below owns the handle.
@@ -237,6 +239,7 @@ namespace zelph::io
                 data.stats.right_chunk_count      = impl.getRightChunkCount();
                 data.stats.name_of_node_count     = impl.getNameOfNodeChunkCount();
                 data.stats.node_of_name_count     = impl.getNodeOfNameChunkCount();
+                data.stats.annotation_count       = impl.getAnnotationChunkCount();
             }
             data.header_length_bytes = counting_input.bytes_read() - header_offset;
 
@@ -295,6 +298,20 @@ namespace zelph::io
                 }
                 ref.length = counting_input.bytes_read() - before;
                 data.node_of_name_chunks.push_back(std::move(ref));
+            }
+
+            data.annotation_chunks.reserve(data.stats.annotation_count);
+            for (uint32_t i = 0; i < data.stats.annotation_count; ++i)
+            {
+                uint64_t    before = counting_input.bytes_read();
+                BinChunkRef ref;
+                ref.offset = before;
+                {
+                    ::capnp::PackedMessageReader chunk_message(counting_input, options);
+                    ref.chunk_index = chunk_message.getRoot<zelph::network::AnnotationChunk>().getChunkIndex();
+                }
+                ref.length = counting_input.bytes_read() - before;
+                data.annotation_chunks.push_back(std::move(ref));
             }
 
             fclose(file);
@@ -406,6 +423,14 @@ namespace zelph::io
         write_chunk_array("nameOfNode", data.name_of_node_chunks);
         out << ",\n";
         write_chunk_array("nodeOfName", data.node_of_name_chunks);
+        // Only a file that includes the section lists it, so the index of
+        // every file other than that one reads as it did before the
+        // section was introduced.
+        if (!data.annotation_chunks.empty())
+        {
+            out << ",\n";
+            write_chunk_array("annotations", data.annotation_chunks);
+        }
         out << "\n}\n";
     }
 }

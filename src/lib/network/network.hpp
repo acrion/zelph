@@ -34,10 +34,15 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include <cstdint>
 #include <functional>
 #include <limits>
+#include <map>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <shared_mutex>
 #include <stdexcept>
+#include <string>
+#include <string_view>
+#include <utility>
 #include <vector>
 
 namespace zelph::network
@@ -279,6 +284,11 @@ namespace zelph::network
 
             _left.erase(node);
             _right.erase(node);
+
+            // Each deletion of a node goes through this point, making it
+            // the sole location that prevents annotations from surviving
+            // beyond their associated node.
+            erase_annotations(node);
         }
 
         void merge(Node from, Node into)
@@ -360,6 +370,9 @@ namespace zelph::network
                     }
                 }
             }
+
+            // Before the deletion below, which would erase them.
+            transfer_annotations(from, into);
 
             // Remove the 'from' node after transferring connections
             remove(from);
@@ -473,7 +486,16 @@ namespace zelph::network
             }
         }
 
-        Node create()
+        // Whether the active cluster records the new node. Zelph::node creates
+        // the engine's internal vocabulary without a record
+        // (Zelph::engine_vocabulary).
+        enum class Record
+        {
+            yes,
+            no
+        };
+
+        Node create(const Record record = Record::yes)
         {
             std::unique_lock<std::shared_mutex> lock_left(_smtx_left);
             std::unique_lock<std::shared_mutex> lock_right(_smtx_right);
@@ -481,12 +503,14 @@ namespace zelph::network
             while (_left.find(++_last) != _left.end())
                 ;
 
-            // The identifiers from recipe_floor up are part of rule-built
-            // collections (see is_recipe); a counter there would be read as
-            // one. In practice, 2^61 creates are unattainable.
-            if (_last >= recipe_floor)
+            // The identifiers from value_set_pattern_class onward are set
+            // patterns (see is_value_set_pattern) or, starting from
+            // recipe_floor upward, parts of rule-built collections (see
+            // is_recipe); a counter positioned there would be read as one of
+            // these. In practice, 2^60 creates are unattainable.
+            if (_last >= value_set_pattern_class)
             {
-                throw std::logic_error("Network::create: the node counter reached the ids reserved for rule-built collections");
+                throw std::logic_error("Network::create: the node counter reached the ids reserved for set patterns and rule-built collections");
             }
 
             if (is_var(_last))
@@ -496,7 +520,7 @@ namespace zelph::network
 
             _left[_last]  = adjacency_set{};
             _right[_last] = adjacency_set{};
-            note_created(_last);
+            if (record == Record::yes) note_created(_last);
             return _last;
         }
 
@@ -530,6 +554,39 @@ namespace zelph::network
                 }
 
                 id = recipe_floor | template_class | _last;
+            } while (_left.find(id) != _left.end());
+
+            _left[id]  = adjacency_set{};
+            _right[id] = adjacency_set{};
+            note_created(id);
+            return id;
+        }
+
+        // A set pattern that set() builds outside the template scope: the
+        // next counter value serves as its payload, belonging to the class of
+        // set patterns (see is_value_set_pattern), similar to how
+        // create_written_template operates. The class is what makes the
+        // collection a pattern. A save writes it with the node, and a load
+        // reads it back, while the record on the side that previously named
+        // such a collection was lost by every load, so that a statement over
+        // the pattern answered as data afterwards.
+        Node create_value_set_pattern()
+        {
+            std::unique_lock<std::shared_mutex> lock_left(_smtx_left);
+            std::unique_lock<std::shared_mutex> lock_right(_smtx_right);
+
+            Node id = 0;
+            do
+            {
+                while (_left.find(++_last) != _left.end())
+                    ;
+
+                if (_last >= value_set_pattern_class)
+                {
+                    throw std::logic_error("Network::create_value_set_pattern: the node counter outgrew the payload of a set pattern");
+                }
+
+                id = value_set_pattern_class | _last;
             } while (_left.find(id) != _left.end());
 
             _left[id]  = adjacency_set{};
@@ -578,8 +635,10 @@ namespace zelph::network
 
         // The classes associated with a node id, determined by
         // extracting bits 63..60:
-        //   000x  a counter (create): atoms, witnesses, the core nodes, and
+        //   0000  a counter (create): atoms, witnesses, the core nodes, and
         //         every collection that is in no class below
+        //   0001  a set pattern that set() built outside the template scope
+        //         (create_value_set_pattern)
         //   0010  a value recipe: the term a firing builds for a template
         //   0011  the template class, a rule's own collection: bit 59 set a
         //         construction's recipe, bit 59 clear a written template
@@ -592,6 +651,11 @@ namespace zelph::network
         static bool is_recipe(Node a)
         {
             return (a & 0xE000000000000000ull) == recipe_floor;
+        }
+
+        static bool is_value_set_pattern(Node a)
+        {
+            return (a & 0xF000000000000000ull) == value_set_pattern_class;
         }
 
         static bool is_value_recipe(Node a)
@@ -636,7 +700,7 @@ namespace zelph::network
                                 : (h & value_payload) | recipe_floor;
         }
 
-        void create(const Node a)
+        void create(const Node a, const Record record = Record::yes)
         {
             std::unique_lock<std::shared_mutex> lock_left(_smtx_left);
             std::unique_lock<std::shared_mutex> lock_right(_smtx_right);
@@ -653,7 +717,7 @@ namespace zelph::network
 
             _left[a]  = adjacency_set{};
             _right[a] = adjacency_set{};
-            note_created(a);
+            if (record == Record::yes) note_created(a);
         }
 
         static inline Node mix_bits(Node seed, Node value)
@@ -731,6 +795,17 @@ namespace zelph::network
             current_hash      = mix_bits(current_hash, mod(head1));
             current_hash      = mix_bits(current_hash, mod(head2));
             return (current_hash & mask_node) | mark_hash;
+        }
+
+        // ReadScope::subject_is_predicate applied to the two adjacency sets
+        // of `fact`, as the raw maps hold them (`to` = _right[fact], `from` =
+        // _left[fact]), for a caller that already holds both locks.
+        static bool subject_is_predicate(const Node fact, const Node relation, const adjacency_set& to, const adjacency_set& from)
+        {
+            adjacency_set objects;
+            for (const Node o : to)
+                if (o != relation && from.count(o) == 0) objects.insert(o);
+            return !objects.empty() && create_hash(relation, relation, objects) == fact;
         }
 
         // Exact-triple edge probe for a fact node: all membership checks of
@@ -911,6 +986,21 @@ namespace zelph::network
                 return _n->_left.find(a) != _n->_left.end();
             }
 
+            // Whether `fact`, which `relation` points to and which points
+            // back to it, is the fact whose subject is that relation as well
+            // as its predicate: `p p q`. The two roles share a single edge
+            // there, hence the edge pair cannot tell it from a fact that has
+            // only `relation` as its subject, like the declaration `p ~ ->`.
+            // The distinction was only possible through the count of the
+            // fact's outgoing edges, but that changed once something held
+            // the fact: a rule it is part of, or a statement concerning it,
+            // adds an additional edge. Its identifier is the hash of its
+            // triple, and that determines the difference.
+            bool subject_is_predicate(const Node fact, const Node relation) const
+            {
+                return Network::subject_is_predicate(fact, relation, left(fact), right(fact));
+            }
+
         private:
             static const adjacency_set& empty_set()
             {
@@ -1018,6 +1108,88 @@ namespace zelph::network
             return it == _weights.end() ? fallback : it->second;
         }
 
+        // --- Node annotations ---
+        //
+        // Values associated with a node via a key: the origin of a statement,
+        // the sentence that asserted it. They are not included in the graph:
+        // they do not generate a node, an edge, or a name, thus remaining
+        // invisible to queries and rules, and annotating a rule's node does not
+        // constitute a mention of the rule. Within each key, the values
+        // maintain the sequence of their insertion, each appearing at most
+        // once.
+        //
+        // An annotation travels with its node. A node identifier comes back -- a
+        // fact that gets deleted and asserted again hashes to the same
+        // identifier -- thus remove() clears the content a node carries, and
+        // merge() hands it to the surviving node. A network lacking
+        // annotations incurs a single atomic load in each of them. Writes occur
+        // exclusively on the main thread. The annotation lock is consistently
+        // the last one taken: remove() takes it while holding the adjacency
+        // locks, a name merge while holding the name locks.
+        using node_annotations = std::map<std::string, std::vector<std::string>, std::less<>>;
+
+        bool has_annotations() const
+        {
+            return _has_annotations.load(std::memory_order_acquire);
+        }
+
+        // Adds `value` beneath `key`; returns false if it is already
+        // present.
+        bool annotate(const Node node, const std::string& key, const std::string& value)
+        {
+            if (!exists(node))
+            {
+                throw std::runtime_error("Network::annotate: node " + std::to_string(node) + " does not exist");
+            }
+
+            std::unique_lock lock(_mtx_annotations);
+            auto&            values = _annotations[node][key];
+            if (std::find(values.begin(), values.end(), value) != values.end()) return false;
+            values.push_back(value);
+            _has_annotations.store(true, std::memory_order_release);
+            return true;
+        }
+
+        node_annotations annotations_of(const Node node) const
+        {
+            if (!has_annotations()) return {};
+            std::shared_lock lock(_mtx_annotations);
+            const auto       it = _annotations.find(node);
+            return it == _annotations.end() ? node_annotations{} : it->second;
+        }
+
+        // Removes `value` from `key`, or eliminates the whole key if `value`
+        // is null. Returns the count of values that were removed.
+        std::size_t unannotate(const Node node, const std::string_view key, const std::string* const value)
+        {
+            if (!has_annotations()) return 0;
+            std::unique_lock lock(_mtx_annotations);
+            const auto       it = _annotations.find(node);
+            if (it == _annotations.end()) return 0;
+            const auto key_it = it->second.find(key);
+            if (key_it == it->second.end()) return 0;
+
+            std::size_t removed = 0;
+            if (value == nullptr)
+            {
+                removed = key_it->second.size();
+                it->second.erase(key_it);
+            }
+            else
+            {
+                auto&      values = key_it->second;
+                const auto found  = std::find(values.begin(), values.end(), *value);
+                if (found == values.end()) return 0;
+                values.erase(found);
+                removed = 1;
+                if (values.empty()) it->second.erase(key_it);
+            }
+
+            if (it->second.empty()) _annotations.erase(it);
+            _has_annotations.store(!_annotations.empty(), std::memory_order_release);
+            return removed;
+        }
+
         // --- Node clusters (named workspaces) ---
         //
         // A cluster records the IDs of nodes created while it is active:
@@ -1035,11 +1207,15 @@ namespace zelph::network
         // still-named nodes. They are exactly as "created while active" as
         // any other node.
 
+        // The engine's own scratch clusters (Zelph::is_scratch_cluster_name).
+        static bool is_scratch_cluster_name(const std::string& name) { return name.starts_with("__"); }
+
         void set_active_cluster(const std::string& name)
         {
             std::lock_guard lock(_mtx_clusters);
             _active_cluster.store(&_clusters[name], std::memory_order_release);
             _active_unmarked.store(&_cluster_unmarked[name], std::memory_order_release);
+            _active_derived.store(&_cluster_derived[name], std::memory_order_release);
             _active_cluster_name = name;
         }
 
@@ -1048,7 +1224,109 @@ namespace zelph::network
             std::lock_guard lock(_mtx_clusters);
             _active_cluster.store(nullptr, std::memory_order_release);
             _active_unmarked.store(nullptr, std::memory_order_release);
+            _active_derived.store(nullptr, std::memory_order_release);
             _active_cluster_name.clear();
+        }
+
+        // The scratch cluster in which a firing writes a consequence
+        // (Reasoning::deduce), held outside the named clusters. It is opened
+        // once per such consequence, and as an entry within the named
+        // clusters, each opening allocated three map nodes and freed them upon
+        // merging, along with a lock for each of the activation, the
+        // restoration, and the merge. While open, it functions as the active
+        // cluster under its name, recording what set_active_cluster would
+        // cause it to record; keep_firing_journal merges it into the cluster
+        // that was previously active, just as merge_cluster does, and
+        // close_firing_journal hands it to the named clusters, where
+        // drop_cluster takes it. A refutation it records is directed to
+        // `_cluster_refuted` under its name, as previously. It is never
+        // included in any listing.
+        //
+        // When a cluster with that name is active, no opening occurs and the
+        // result is false.
+        bool open_firing_journal(const char* const name)
+        {
+            std::lock_guard lock(_mtx_clusters);
+            if (_active_cluster_name == name) return false;
+            _firing.previous          = _active_cluster.load(std::memory_order_acquire);
+            _firing.previous_unmarked = _active_unmarked.load(std::memory_order_acquire);
+            _firing.previous_derived  = _active_derived.load(std::memory_order_acquire);
+            _firing.previous_name     = _active_cluster_name;
+            _firing.name              = name;
+            _active_cluster.store(&_firing.created, std::memory_order_release);
+            _active_unmarked.store(&_firing.unmarked, std::memory_order_release);
+            _active_derived.store(&_firing.derived, std::memory_order_release);
+            _active_cluster_name = name;
+            return true;
+        }
+
+        // The previously active cluster resumes its active state and takes in
+        // what the journal recorded. Returns its name, "" in the case of the
+        // default cluster.
+        std::string keep_firing_journal()
+        {
+            std::lock_guard lock(_mtx_clusters);
+            restore_from_firing_journal();
+            const std::string& to = _firing.previous_name;
+            if (!to.empty())
+            {
+                for (const Node n : _firing.created)
+                    _firing.previous->insert(n);
+                for (const Node n : _firing.unmarked)
+                    _firing.previous_unmarked->insert(n);
+                keep_declarations_locked(_firing.declared, to, *_firing.previous);
+                if (const auto r = _cluster_refuted.find(_firing.name); r != _cluster_refuted.end())
+                {
+                    auto& target_refuted = _cluster_refuted[to];
+                    for (const auto& [fact, prior] : r->second)
+                        target_refuted.try_emplace(fact, prior);
+                }
+                if (_firing.derived) *_firing.previous_derived = true;
+            }
+            if (!_cluster_refuted.empty()) _cluster_refuted.erase(_firing.name);
+            clear_firing_journal();
+            return to;
+        }
+
+        // The previously active cluster resumes its active state, and what the
+        // journal recorded becomes the named cluster under its name, for
+        // drop_cluster.
+        void close_firing_journal()
+        {
+            std::lock_guard lock(_mtx_clusters);
+            restore_from_firing_journal();
+            auto& created = _clusters[_firing.name];
+            for (const Node n : _firing.created)
+                created.insert(n);
+            auto& unmarked = _cluster_unmarked[_firing.name];
+            for (const Node n : _firing.unmarked)
+                unmarked.insert(n);
+            if (!_firing.declared.empty())
+            {
+                auto& declared = _cluster_declared[_firing.name];
+                for (const auto& [declaration, predicate] : _firing.declared)
+                    declared.insert_or_assign(declaration, predicate);
+            }
+            bool& derived = _cluster_derived[_firing.name];
+            derived       = derived || _firing.derived;
+            clear_firing_journal();
+        }
+
+        std::vector<Node> firing_journal_nodes() const
+        {
+            std::lock_guard lock(_mtx_clusters);
+            return {_firing.created.begin(), _firing.created.end()};
+        }
+
+        // move_into_cluster, using the journal as the target.
+        void move_into_firing_journal(const std::vector<Node>& nodes)
+        {
+            std::lock_guard lock(_mtx_clusters);
+            for (auto& [other, recorded] : _clusters)
+                for (const Node n : nodes)
+                    recorded.erase(n);
+            for (const Node n : nodes)
+                _firing.created.insert(n);
         }
 
         // Every cluster forgotten and none active, much like a new engine:
@@ -1060,9 +1338,13 @@ namespace zelph::network
             std::lock_guard lock(_mtx_clusters);
             _active_cluster.store(nullptr, std::memory_order_release);
             _active_unmarked.store(nullptr, std::memory_order_release);
+            _active_derived.store(nullptr, std::memory_order_release);
             _active_cluster_name.clear();
             _clusters.clear();
             _cluster_unmarked.clear();
+            _cluster_refuted.clear();
+            _cluster_derived.clear();
+            _cluster_declared.clear();
         }
 
         // A cluster records what it CREATED, which is what lets a drop promise
@@ -1082,7 +1364,84 @@ namespace zelph::network
         {
             if (_active_unmarked.load(std::memory_order_acquire) == nullptr) return; // fast path
             std::lock_guard lock(_mtx_clusters);
-            if (auto* u = _active_unmarked.load(std::memory_order_acquire)) u->insert(n);
+            if (_recording_paused != 0) return;
+            if (auto* u = _active_unmarked.load(std::memory_order_acquire))
+            {
+                u->insert(n);
+
+                // A run that claims a pattern derives it with the same
+                // certainty as a run that creates a fact, and the drop takes
+                // the claim back.
+                if (deriving())
+                    if (bool* const d = _active_derived.load(std::memory_order_acquire)) *d = true;
+            }
+        }
+
+        // The revocation of `n`'s marking was undone through methods other
+        // than a drop, thus no journal can reinstate it once more
+        // (Zelph::restore_mention).
+        void forget_unmarked(const Node n)
+        {
+            std::lock_guard lock(_mtx_clusters);
+            for (auto& [name, unmarked] : _cluster_unmarked)
+                unmarked.erase(n);
+            _firing.unmarked.erase(n);
+        }
+
+        // Applying a refutation to a pre-existing fact constitutes the other
+        // change of that kind: the fact is placed into the refuted index and
+        // 0 is written on the edge leading to its predicate. Neither is a
+        // node, so nothing was recorded, and after a drop the fact stayed
+        // refuted while the marking that had refuted it was gone or a pattern
+        // again. The state that the cluster found is journaled, one time per
+        // fact, so that the drop can put it back. A neural weight set via the
+        // same store stays outside, just as names and merges do.
+        struct RefutationPrior
+        {
+            bool   refuted  = false; // the refuted index held the fact
+            bool   weighted = false; // the weight store held an entry for its edge
+            double weight   = 1.0;   // that entry
+        };
+
+        // `predicate` equals 0 for a node whose refutation writes no weight.
+        void note_refutation(const Node fact, const Node predicate, const bool refuted)
+        {
+            if (_active_cluster.load(std::memory_order_acquire) == nullptr) return; // fast path
+
+            RefutationPrior prior{refuted, false, 1.0};
+            if (predicate != 0)
+            {
+                std::shared_lock lock(_mtx_weights);
+                if (const auto it = _weights.find(create_hash(fact, predicate)); it != _weights.end())
+                {
+                    prior.weighted = true;
+                    prior.weight   = it->second;
+                }
+            }
+
+            std::lock_guard lock(_mtx_clusters);
+            if (_recording_paused != 0) return;
+            const auto* const created = _active_cluster.load(std::memory_order_acquire);
+            if (created == nullptr || created->count(fact) != 0) return; // the drop removes it
+            _cluster_refuted[_active_cluster_name].try_emplace(fact, prior);
+        }
+
+        // What note_refutation journaled while `name` remained active. Read
+        // it BEFORE invoking take_cluster, which drops it.
+        std::vector<std::pair<Node, RefutationPrior>> cluster_refutations(const std::string& name) const
+        {
+            std::lock_guard lock(_mtx_clusters);
+            const auto      it = _cluster_refuted.find(name);
+            if (it == _cluster_refuted.end()) return {};
+            return {it->second.begin(), it->second.end()};
+        }
+
+        // The entry for weight from a -> b has been eliminated: the edge
+        // now reads as 1 again.
+        void erase_weight(const Node a, const Node b)
+        {
+            std::unique_lock lock(_mtx_weights);
+            _weights.erase(create_hash(a, b));
         }
 
         // The pattern markings revoked while `name` was active, without
@@ -1095,6 +1454,49 @@ namespace zelph::network
             if (it == _cluster_unmarked.end()) return {};
             return {it->second.begin(), it->second.end()};
         }
+
+        // Whether a run derived facts into the cluster: a node was recorded
+        // within it while a derivation scope was open. A drop of such a
+        // cluster takes consequences whose premises might reside outside it,
+        // which a seeded run does not derive again (Reasoning::note_removal).
+        // Read it BEFORE take_cluster, which drops it.
+        bool cluster_derived(const std::string& name) const
+        {
+            std::lock_guard lock(_mtx_clusters);
+            const auto      it = _cluster_derived.find(name);
+            return it != _cluster_derived.end() && it->second;
+        }
+
+        // The provisional relation-type declarations that `name` recorded
+        // (note_declaration), each paired with its predicate. Read it BEFORE
+        // take_cluster or merge_cluster, which drop it.
+        std::vector<std::pair<Node, Node>> cluster_declarations(const std::string& name) const
+        {
+            std::lock_guard lock(_mtx_clusters);
+            const auto      it = _cluster_declared.find(name);
+            if (it == _cluster_declared.end()) return {};
+            return {it->second.begin(), it->second.end()};
+        }
+
+        // The recording has been suspended: within the active cluster,
+        // neither a newly created node nor a revoked marking is recorded.
+        // Nested pauses are accounted for; see Zelph::ClusterRecordingPause.
+        void pause_cluster_recording()
+        {
+            std::lock_guard lock(_mtx_clusters);
+            ++_recording_paused;
+        }
+        void resume_cluster_recording()
+        {
+            std::lock_guard lock(_mtx_clusters);
+            --_recording_paused;
+        }
+
+        // The scope of a run, opened by Reasoning::run; scopes are nested
+        // within one another.
+        void enter_derivation() { _derivations.fetch_add(1, std::memory_order_acq_rel); }
+        void leave_derivation() { _derivations.fetch_sub(1, std::memory_order_acq_rel); }
+        bool deriving() const { return _derivations.load(std::memory_order_acquire) != 0; }
 
         std::string active_cluster_name() const
         {
@@ -1135,9 +1537,234 @@ namespace zelph::network
             std::lock_guard lock(_mtx_clusters);
             for (auto& [name, nodes] : _clusters)
             {
-                if (nodes.erase(from) == 0) continue;
-                if (into != 0) nodes.insert(into);
+                if (nodes.erase(from) != 0) nodes.insert(into);
             }
+
+            // The journals of the drop also follow the node: a pattern marking
+            // that the cluster revoked, and the state that a refutation within
+            // the cluster found. Indexed by the prior identifier, they
+            // restored nothing once a name merge had re-created the fact, and
+            // the fact remained either claimed or refuted. A node that is folded
+            // into an existing one goes through fold_cluster_member.
+            for (auto& [name, unmarked] : _cluster_unmarked)
+            {
+                if (unmarked.erase(from) != 0) unmarked.insert(into);
+            }
+            for (auto& [name, declared] : _cluster_declared)
+            {
+                const auto it = declared.find(from);
+                if (it == declared.end()) continue;
+                const Node predicate = it->second;
+                declared.erase(it);
+                declared.insert_or_assign(into, predicate);
+            }
+            for (auto& [name, refuted] : _cluster_refuted)
+            {
+                const auto it = refuted.find(from);
+                if (it == refuted.end()) continue;
+                const RefutationPrior prior = it->second;
+                refuted.erase(it);
+                refuted.try_emplace(into, prior);
+            }
+        }
+
+        // A node, in relation to the drop of a cluster, is either a
+        // claim -- specifically an asserted fact -- or not, and either
+        // refuted or not.
+        struct FoldState
+        {
+            bool claimed = false;
+            bool refuted = false;
+        };
+
+        // Bookkeeping only, for a name merge that folds `from` into `into`, a
+        // node that was already present. The two become a single node
+        // henceforth, and what a drop takes back from it depends on what its
+        // two components were before the cluster: a part the cluster created
+        // was absent, a part whose state the cluster changed was in the state
+        // recorded in its journal, and any other part was in the state
+        // `*_state` gives, the one it held immediately before the fold.
+        //
+        // The survivor remains a member of the cluster that created `into`
+        // precisely when every component was created by some cluster. A
+        // component not created by any cluster represents knowledge
+        // originating from outside every cluster, which a drop never
+        // eliminates: if the cluster had created `into` and `from` arrived from
+        // outside, the drop removed the survivor along with everything built on
+        // the older node, including a rule written before the cluster.
+        //
+        // Two clusters, each having created a single component, cannot
+        // simultaneously own the survivor, because dropping either would take
+        // it, thus the cluster of `into` holds the survivor: `.name jim jon`
+        // folds the node that held the name `jon` into `jim`, and the survivor
+        // stays with the cluster that created `jim`. Dropping the other cluster
+        // keeps it, while dropping the owner also takes the other cluster's
+        // share. Previously, each cluster read the other's component as
+        // knowledge from outside, and the survivor outlived both drops.
+        //
+        // The journals subsequently contain what the drop must reverse on the
+        // survivor: a claim made by a cluster, provided no component was
+        // claimed outside every cluster, and a refutation made by a cluster,
+        // provided no component was refuted outside every cluster. Among two
+        // clusters, the one that made the claim or the refutation of `into`
+        // owns it, and otherwise the one that made that of `from`. A claim
+        // that the cluster keeping the survivor made of either part stays
+        // with that cluster, regardless of which of the two nodes the name was
+        // given to.
+        // A refutation that the keeping cluster made of either part stays with
+        // that cluster in the same way. The return value names the cluster whose drop
+        // takes the survivor's refutation back, being empty if no drop performs this,
+        // and nothing if neither part was refuted. `rehash_dependents` forwards it as
+        // `keeper` to the fold of the two refutation markings, which records the
+        // marking's survivor within that cluster exclusively, ensuring the marking
+        // goes exactly when the refutation ceases. According to the rule for nodes,
+        // the marking stayed with the cluster that created the marking of `into`, and
+        // after `.name jim jon`, the drop of a cluster that had refuted only
+        // `jim sleeps nil` took the refutation that the keeping cluster had
+        // established for `jon sleeps nil`.
+        // Previously, the journal entry of a refuted fact remained in place
+        // when a fact refuted outside the cluster was folded into it, and the
+        // drop then undid the outside refutation as well.
+        std::optional<std::string> fold_cluster_member(const Node from, const Node into, const FoldState from_state, const FoldState into_state, const std::optional<std::string>& keeper = std::nullopt)
+        {
+            // The impact of clusters on each component: the cluster responsible
+            // for its creation, the one that revoked its pattern marking, and
+            // the one that journaled a refutation of it, along with the state
+            // that refutation found.
+            struct Part
+            {
+                const std::string* created = nullptr;
+                const std::string* revoked = nullptr;
+                const std::string* refuted = nullptr;
+                RefutationPrior    prior;
+            };
+
+            std::lock_guard lock(_mtx_clusters);
+            Part            of_from;
+            Part            of_into;
+            for (auto& [name, nodes] : _clusters)
+            {
+                if (nodes.erase(from) != 0) of_from.created = &name;
+                if (nodes.count(into) != 0) of_into.created = &name;
+
+                auto& unmarked = _cluster_unmarked[name];
+                if (unmarked.erase(from) != 0) of_from.revoked = &name;
+                if (unmarked.erase(into) != 0) of_into.revoked = &name;
+
+                if (const auto declared = _cluster_declared.find(name); declared != _cluster_declared.end()) declared->second.erase(from);
+
+                auto& refuted = _cluster_refuted[name];
+                for (auto [n, part] : {std::pair{from, &of_from}, std::pair{into, &of_into}})
+                {
+                    if (const auto it = refuted.find(n); it != refuted.end())
+                    {
+                        part->refuted = &name;
+                        part->prior   = it->second;
+                        refuted.erase(it);
+                    }
+                }
+            }
+
+            const std::string* member = of_from.created != nullptr && of_into.created != nullptr ? of_into.created : nullptr;
+            if (keeper)
+            {
+                const auto kept = keeper->empty() ? _clusters.end() : _clusters.find(*keeper);
+                member          = kept != _clusters.end() ? &kept->first : nullptr;
+                for (auto& [name, nodes] : _clusters)
+                    if (&name != member) nodes.erase(into);
+                if (member != nullptr) kept->second.insert(into);
+            }
+            else if (member == nullptr)
+                for (auto& [name, nodes] : _clusters)
+                    nodes.erase(into);
+
+            const bool claimed_outside = (from_state.claimed && of_from.created == nullptr && of_from.revoked == nullptr)
+                                      || (into_state.claimed && of_into.created == nullptr && of_into.revoked == nullptr);
+            if ((from_state.claimed || into_state.claimed) && !claimed_outside)
+            {
+                const Part&              made  = into_state.claimed ? of_into : of_from;
+                const std::string* const owner = made.revoked != nullptr ? made.revoked : made.created;
+
+                // No entry is needed for a claim that the cluster keeping the
+                // survivor made of either part: the claim persists for as long
+                // as the survivor exists, and that cluster's drop removes the
+                // survivor. When `into` alone determined the owner, the claim
+                // went to the other cluster if that cluster had claimed
+                // `into`, and its drop revoked the claim that the keeping
+                // cluster had made itself.
+                const auto claimed_by_member = [member](const Part& part, const FoldState state)
+                { return state.claimed && (part.revoked != nullptr ? part.revoked : part.created) == member; };
+                if (member == nullptr || (!claimed_by_member(of_from, from_state) && !claimed_by_member(of_into, into_state)))
+                    _cluster_unmarked[*owner].insert(into);
+            }
+
+            const auto refuted_before = [](const Part& part, const FoldState state)
+            { return part.created == nullptr && (part.refuted != nullptr ? part.prior.refuted : state.refuted); };
+            if (!from_state.refuted && !into_state.refuted) return std::nullopt;
+            if (refuted_before(of_from, from_state) || refuted_before(of_into, into_state)) return std::string{};
+
+            const auto refuted_by_member = [member](const Part& part, const FoldState state)
+            { return state.refuted && (part.refuted != nullptr ? part.refuted : part.created) == member; };
+            if (member != nullptr && (refuted_by_member(of_from, from_state) || refuted_by_member(of_into, into_state))) return *member;
+
+            const Part&              made  = into_state.refuted ? of_into : of_from;
+            const std::string* const owner = made.refuted != nullptr ? made.refuted : made.created;
+            if (owner != member) _cluster_refuted[*owner].emplace(into, of_into.refuted != nullptr ? of_into.prior : of_from.prior);
+            return *owner;
+        }
+
+        // The relation-type `declaration` of `predicate`, which is implicitly
+        // created by fact() for the first fact of a predicate and stored in
+        // the active cluster as provisional, is removed along with that fact
+        // by a drop unless something outside the record still uses it
+        // (Zelph::keep_shared_declarations), and is passed onward as
+        // specified by keep_declarations_locked. A firing's journal records
+        // it in the identical manner.
+        void note_declaration(const Node declaration, const Node predicate)
+        {
+            if (_active_cluster.load(std::memory_order_acquire) == nullptr) return; // fast path
+            std::lock_guard lock(_mtx_clusters);
+            if (_recording_paused != 0) return;
+            auto* const created = _active_cluster.load(std::memory_order_acquire);
+            if (created == nullptr) return;
+
+            auto* const declared = created == &_firing.created ? &_firing.declared : &_cluster_declared[_active_cluster_name];
+            created->insert(declaration);
+            declared->insert_or_assign(declaration, predicate);
+            if (deriving())
+                if (bool* const d = _active_derived.load(std::memory_order_acquire)) *d = true;
+        }
+
+        // Bookkeeping exclusively: `nodes` exit the cluster that originally
+        // recorded them and are recorded solely in `name`, so that a drop of
+        // `name` removes precisely those nodes (Zelph::drop_query_text).
+        // An empty `name` is the default cluster: the nodes are then
+        // recorded in none (zelph/dedup-rule). `provisional` names the
+        // provisional declarations among `nodes` whose record has already
+        // been removed (cluster_declarations).
+        void move_into_cluster(const std::string& name, const std::vector<Node>& nodes, const std::vector<std::pair<Node, Node>>& provisional = {})
+        {
+            std::lock_guard lock(_mtx_clusters);
+            for (auto& [other, recorded] : _clusters)
+                for (const Node n : nodes)
+                    recorded.erase(n);
+
+            // A provisional declaration is placed in the location where
+            // keeping the cluster that recorded it would put it.
+            ankerl::unordered_dense::map<Node, Node> moved(provisional.begin(), provisional.end());
+            for (auto& [other, declared] : _cluster_declared)
+                for (const Node n : nodes)
+                    if (const auto it = declared.find(n); it != declared.end())
+                    {
+                        moved.insert_or_assign(it->first, it->second);
+                        declared.erase(it);
+                    }
+
+            if (name.empty()) return;
+            auto& target = _clusters[name];
+            for (const Node n : nodes)
+                target.insert(n);
+            keep_declarations_locked(moved, name, target);
         }
 
         // Removes the bookkeeping and hands the node list to the caller
@@ -1153,10 +1780,14 @@ namespace zelph::network
             {
                 _active_cluster.store(nullptr, std::memory_order_release);
                 _active_unmarked.store(nullptr, std::memory_order_release);
+                _active_derived.store(nullptr, std::memory_order_release);
                 _active_cluster_name.clear();
             }
             _clusters.erase(it);
             _cluster_unmarked.erase(name);
+            _cluster_refuted.erase(name);
+            _cluster_derived.erase(name);
+            _cluster_declared.erase(name);
             return nodes;
         }
 
@@ -1184,15 +1815,37 @@ namespace zelph::network
                     for (Node n : u->second)
                         target_unmarked.insert(n);
                 }
+
+                // And the refutations: the prior state of the fact
+                // belonging to the target is the older one, thus it is
+                // kept.
+                if (const auto r = _cluster_refuted.find(from); r != _cluster_refuted.end())
+                {
+                    auto& target_refuted = _cluster_refuted[to];
+                    for (const auto& [fact, prior] : r->second)
+                        target_refuted.try_emplace(fact, prior);
+                }
+
+                // So does the flag indicating that a run derived into it: the
+                // target now holds those derivations.
+                if (const auto d = _cluster_derived.find(from); d != _cluster_derived.end() && d->second)
+                    _cluster_derived[to] = true;
+
+                if (const auto dcl = _cluster_declared.find(from); dcl != _cluster_declared.end())
+                    keep_declarations_locked(dcl->second, to, target);
             }
             if (_active_cluster.load(std::memory_order_acquire) == &it->second)
             {
                 _active_cluster.store(nullptr, std::memory_order_release);
                 _active_unmarked.store(nullptr, std::memory_order_release);
+                _active_derived.store(nullptr, std::memory_order_release);
                 _active_cluster_name.clear();
             }
             _clusters.erase(it);
             _cluster_unmarked.erase(from);
+            _cluster_refuted.erase(from);
+            _cluster_derived.erase(from);
+            _cluster_declared.erase(from);
             return true;
         }
 
@@ -1212,13 +1865,100 @@ namespace zelph::network
         // Nodes and edges that carry no weight cost nothing here.
         ankerl::unordered_dense::map<Node, double> _weights;
 
+        // See "Node annotations". An entry exists only for annotated nodes,
+        // and every key within an entry must be associated with at least one
+        // value.
+        ankerl::unordered_dense::map<Node, node_annotations> _annotations;
+        mutable std::shared_mutex                            _mtx_annotations;
+        std::atomic<bool>                                    _has_annotations{false};
+
         Node                                                      _last{Node()};
         Node                                                      _last_var{Node()};
         std::map<std::string, ankerl::unordered_dense::set<Node>> _clusters;
         std::map<std::string, ankerl::unordered_dense::set<Node>> _cluster_unmarked;
-        std::atomic<ankerl::unordered_dense::set<Node>*>          _active_cluster{nullptr};
-        std::atomic<ankerl::unordered_dense::set<Node>*>          _active_unmarked{nullptr};
-        std::string                                               _active_cluster_name;
+        std::map<std::string, bool>                               _cluster_derived;
+
+        // See note_declaration: each cluster maintains a link from
+        // every provisional declaration it has recorded to its
+        // corresponding predicate.
+        std::map<std::string, ankerl::unordered_dense::map<Node, Node>> _cluster_declared;
+        std::atomic<ankerl::unordered_dense::set<Node>*>                _active_cluster{nullptr};
+        std::atomic<ankerl::unordered_dense::set<Node>*>                _active_unmarked{nullptr};
+        std::atomic<bool*>                                              _active_derived{nullptr};
+        std::atomic<int>                                                _derivations{0};
+        int                                                             _recording_paused{0}; // guarded by _mtx_clusters
+        std::string                                                     _active_cluster_name;
+
+        std::map<std::string, ankerl::unordered_dense::map<Node, RefutationPrior>> _cluster_refuted;
+
+        // See open_firing_journal. Guarded by _mtx_clusters; the containers
+        // keep their capacity across each successive consequence.
+        struct FiringJournal
+        {
+            ankerl::unordered_dense::set<Node>       created;
+            ankerl::unordered_dense::set<Node>       unmarked;
+            ankerl::unordered_dense::map<Node, Node> declared; // see note_declaration
+            bool                                     derived{false};
+            ankerl::unordered_dense::set<Node>*      previous{nullptr}; // the cluster active upon its opening
+            ankerl::unordered_dense::set<Node>*      previous_unmarked{nullptr};
+            bool*                                    previous_derived{nullptr};
+            std::string                              previous_name;
+            std::string                              name;
+        };
+        FiringJournal _firing;
+
+        // What the restoration of the scratch's ConstructionScratch did: the
+        // default cluster is turned off, and a named cluster is turned on once
+        // more.
+        void restore_from_firing_journal()
+        {
+            const bool named = !_firing.previous_name.empty();
+            _active_cluster.store(named ? _firing.previous : nullptr, std::memory_order_release);
+            _active_unmarked.store(named ? _firing.previous_unmarked : nullptr, std::memory_order_release);
+            _active_derived.store(named ? _firing.previous_derived : nullptr, std::memory_order_release);
+            _active_cluster_name = _firing.previous_name;
+        }
+
+        // The provisional declarations of a cluster kept into `to`, whose
+        // record `target` already holds them. The cluster that created the
+        // predicate keeps the declaration as part of its own written content,
+        // an ordinary part of what it wrote -- it goes alongside the
+        // predicate. Any other cluster keeps it as provisional, just as the
+        // originating cluster did. `to` is empty for the default cluster,
+        // where no records are kept under any circumstances.
+        //
+        // A typed rule, a zelph/mention thunk, and a zelph/rule-text thunk
+        // execute within the scratch `__rule`, while a construction or a
+        // firing that writes a nested consequence runs in an independent
+        // scratch. When one of them gave a predicate that the user's cluster
+        // had created its first fact, the declaration remained unrecorded, and
+        // a drop of the cluster met it as something constructed upon the
+        // predicate: the drop took the cascading path, thereby disarming the
+        // fact stores.
+        void keep_declarations_locked(const ankerl::unordered_dense::map<Node, Node>& declared, const std::string& to, const ankerl::unordered_dense::set<Node>& target)
+        {
+            if (declared.empty() || to.empty()) return;
+            for (const auto& [declaration, predicate] : declared)
+                if (target.count(predicate) == 0) _cluster_declared[to].insert_or_assign(declaration, predicate);
+        }
+
+        // A large journal is released instead of being cleared: clearing keeps
+        // the buckets, and each subsequent consequence would clear them once
+        // more.
+        void clear_firing_journal()
+        {
+            constexpr std::size_t kept = 64;
+            if (_firing.created.bucket_count() > kept)
+                decltype(_firing.created)().swap(_firing.created);
+            else if (!_firing.created.empty())
+                _firing.created.clear();
+            if (_firing.unmarked.bucket_count() > kept)
+                decltype(_firing.unmarked)().swap(_firing.unmarked);
+            else if (!_firing.unmarked.empty())
+                _firing.unmarked.clear();
+            if (!_firing.declared.empty()) decltype(_firing.declared)().swap(_firing.declared);
+            _firing.derived = false;
+        }
 
         mutable std::mutex        _mtx_clusters;
         mutable std::shared_mutex _mtx_weights;
@@ -1234,6 +1974,36 @@ namespace zelph::network
         void                                note_removal(const Node n)
         {
             if (_watched->count(n) != 0) _touched.insert(n);
+        }
+
+        void erase_annotations(const Node node)
+        {
+            if (!_has_annotations.load(std::memory_order_acquire)) return;
+            std::unique_lock lock(_mtx_annotations);
+            if (_annotations.erase(node) != 0) _has_annotations.store(!_annotations.empty(), std::memory_order_release);
+        }
+
+        // For each key, the entries listed under `from` that differ from
+        // those under `into` follow them.
+        void transfer_annotations(const Node from, const Node into)
+        {
+            if (!_has_annotations.load(std::memory_order_acquire)) return;
+            std::unique_lock lock(_mtx_annotations);
+            const auto       it = _annotations.find(from);
+            if (it == _annotations.end()) return;
+
+            node_annotations moved = std::move(it->second);
+            _annotations.erase(it);
+
+            node_annotations& target = _annotations[into];
+            for (auto& [key, values] : moved)
+            {
+                auto& kept = target[key];
+                for (auto& value : values)
+                {
+                    if (std::find(kept.begin(), kept.end(), value) == kept.end()) kept.push_back(std::move(value));
+                }
+            }
         }
 
 #ifdef NDEBUG
@@ -1254,13 +2024,21 @@ namespace zelph::network
         static constexpr Node recipe_key_seed   = 0x6b65793a72656369ull;
         static constexpr Node recipe_id_seed    = 0x7265636970653a31ull;
 
+        static constexpr Node value_set_pattern_class = 0x1000000000000000ull; // bit 60 by itself: a set pattern built as a value
+
         // Called from all three node-materialization paths. Lock order is
         // always adjacency locks -> _mtx_clusters, never the reverse.
         void note_created(Node n)
         {
             if (_active_cluster.load(std::memory_order_acquire) == nullptr) return; // fast path
             std::lock_guard lock(_mtx_clusters);
-            if (auto* c = _active_cluster.load(std::memory_order_acquire)) c->insert(n);
+            if (_recording_paused != 0) return;
+            if (auto* c = _active_cluster.load(std::memory_order_acquire))
+            {
+                c->insert(n);
+                if (deriving())
+                    if (bool* const d = _active_derived.load(std::memory_order_acquire)) *d = true;
+            }
         }
 
         typename decltype(_weights)::iterator find_weight(Node a, Node b, Node& hash)

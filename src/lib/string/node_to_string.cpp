@@ -39,6 +39,21 @@ namespace zelph::string
 {
     int                  format_fact_level = 0;
     std::recursive_mutex mtx;
+
+    namespace
+    {
+        thread_local int premise_renderings = 0;
+    }
+
+    PremiseRendering::PremiseRendering()
+    {
+        ++premise_renderings;
+    }
+
+    PremiseRendering::~PremiseRendering()
+    {
+        --premise_renderings;
+    }
 }
 
 using namespace zelph::string;
@@ -357,7 +372,16 @@ void zelph::string::node_to_string(const network::Zelph* const z, std::string& r
             if (x != pred && l.count(x) != 0)
                 return true;
 
-        return false;
+        // A fact in which the subject coincides with its predicate has no
+        // other subject: its identifier is the hash of that reading
+        // (Network::ReadScope::subject_is_predicate), and without this check
+        // the derivation line printed "sleeps sleeps nil ⇐ (ann waits nil)"
+        // bare, beside "(sleeps p nil) ⇐ (ann waits nil)".
+        if (l.count(pred) == 0) return false;
+        network::adjacency_set objects;
+        for (const network::Node o : l)
+            if (o != pred && r.count(o) == 0) objects.insert(o);
+        return !objects.empty() && network::Zelph::create_hash(pred, pred, objects) == nd;
     };
 
     const bool resolved_is_stmt = is_statement_node(resolved);
@@ -671,6 +695,22 @@ void zelph::string::node_to_string(const network::Zelph* const z, std::string& r
     std::unordered_set<network::Node> elements;
     std::unordered_set<network::Node> variable_elements;
 
+    // A set pattern under bindings that resolve each member becomes the
+    // set constant it matched (Zelph::set_pattern_members), and it prints
+    // as that specific set. Printed as the collection with the bindings
+    // applied, a justification or an answer named a collection the graph
+    // does not hold, and when parsed again, the line built one.
+    if (!variables.empty() && !network::Zelph::is_hash(resolved))
+    {
+        network::adjacency_set members;
+        if (z->set_pattern_members(resolved, members))
+        {
+            network::Node              denoted = 0;
+            std::vector<network::Node> resolve_history;
+            if (network::resolve_set_pattern(z, members, variables, denoted, resolve_history) == network::Resolve::Ok) resolved = denoted;
+        }
+    }
+
     // A ground member of a data collection qualifies as an element when its
     // membership holds as data, via the two criteria a query enforces on every
     // candidate fact (Unification) and `.explain` evaluates for each premise
@@ -744,10 +784,25 @@ void zelph::string::node_to_string(const network::Zelph* const z, std::string& r
                 // this remains true even when that very membership is the
                 // fact being rendered: a collection remains the same node
                 // regardless of what it holds, in contrast to a set constant.
-                if (s != 0 && objs.count(resolved) > 0)
+                //
+                // A fact whose predicate is the membership contains no
+                // member: the adjacency of that membership lists the fact
+                // beside its objects, and the renderer interpreted it as a
+                // container. The consequence of "(X p Y) => (z (X in @{c d})
+                // w)" printed as `@{X}`, and the rule as "(X p Y) => @{X}".
+                //
+                // A statement that holds a variable does not constitute an
+                // element of a set constant, just as a variable itself does
+                // not (Zelph::is_pattern_member): `(X p z) in {(x p z) c}`
+                // echoed the set it references as `@{c (x p z) (X p z)}`. The
+                // identifier test occurs first, so a collection, which is
+                // never a set constant, reads nothing further.
+                if (s != 0 && objs.count(resolved) > 0 && z->predicate_of(resolved) != rel)
                 {
                     if (network::Zelph::is_var(s))
                         variable_elements.insert(s);
+                    else if (network::Zelph::is_hash(resolved) && network::Zelph::is_hash(s) && z->is_pattern_member(s) && z->is_set_constant(resolved))
+                        continue;
                     else if (holds_as_member(rel))
                         elements.insert(s);
                 }
@@ -869,6 +924,21 @@ void zelph::string::node_to_string(const network::Zelph* const z, std::string& r
             }
         }
     }
+    // A set pattern -- the literal of a query or a program, a member of which
+    // holds a variable -- outputs each member that its literal wrote, whether
+    // ground or variable: the echo corresponds to the line that re-enters as
+    // the identical query. When printed as data, it lost a member either way:
+    // `{a X} can nil` echoed `{a} can nil`, which re-entered as an assertion,
+    // and under a `¬`, whose operand is a pattern, `{Y a}` lost its ground
+    // member.
+    else if (network::adjacency_set written;
+             (!elements.empty() || !variable_elements.empty()) && !network::Zelph::is_hash(resolved)
+             && !z->is_rule_template(resolved) && z->set_pattern_members(resolved, written))
+    {
+        elements.clear();
+        for (const network::Node member : written)
+            elements.insert(resolve_var(member));
+    }
     else if (!variable_elements.empty())
     {
         if (elements.empty())
@@ -915,22 +985,77 @@ void zelph::string::node_to_string(const network::Zelph* const z, std::string& r
         const bool as_rule_conditions = is_conjunction && !rendered_as_top && parent != 0
                                      && z->parse_relation(parent) == z->core.Causes;
 
+        // A comma list that a statement or another comma list holds prints
+        // as the exact comma list it was written as. The brace notation, when
+        // read back, becomes a set constant, another node:
+        // "x says (a p b, c q d)" printed "x says {(a p b) (c q d)}". A rule's
+        // condition set named as data keeps the brace form, just like a set
+        // constant does, which re-enters as itself, and the list's own
+        // memberships and tag print it as the container they are about.
+        const bool as_written_list = is_conjunction && !rendered_as_top && parent != 0 && !as_rule_conditions && !z->is_set_constant(resolved) && [&]
+        {
+            for (const network::Node holder : z->get_right(resolved))
+            {
+                network::adjacency_set consequences;
+                if (z->predicate_of(holder) == z->core.Causes && z->parse_fact(holder, consequences) == resolved) return false;
+            }
+            if (z->check_fact(parent, z->core.IsA, {z->core.Conjunction}).is_known()) return true;
+            // An answer and a derivation line render a pattern along with
+            // its bindings, so the parts of the holder are read via them:
+            // "S ~ conjunction" printed the list's own tag as a comma list.
+            network::adjacency_set holder_objects;
+            const network::Node    holder_subject   = resolve_var(z->parse_fact(parent, holder_objects));
+            const network::Node    holder_predicate = resolve_var(z->predicate_of(parent));
+            if (holder_predicate == 0) return false;
+            if (holder_predicate == z->core.PartOf && std::any_of(holder_objects.begin(), holder_objects.end(), [&](const network::Node o)
+                                                                  { return resolve_var(o) == resolved; }))
+                return false;
+            return holder_predicate != z->core.IsA || holder_subject != resolved;
+        }();
+        const bool as_list = as_rule_conditions || as_written_list;
+
         // A query's condition list, typed on a separate line, displays the
         // way it is typed: "A, B", with the members bare. Enclosing the
         // line in outer parentheses transforms it into a term awaiting
         // completion of its statement, while the brace form reads back as a
         // set literal, which constitutes data.
         const bool as_typed_conditions = is_conjunction && typed_condition;
-        const bool comma_list          = as_rule_conditions || as_typed_conditions;
+        const bool comma_list          = as_list || as_typed_conditions;
+
+        // A single condition presented as a comma-separated list is not a comma
+        // list: `((X p Y)) => !` read back as a rule with a solitary condition
+        // not enclosed in a set, a different rule, and one where contradictions
+        // are never recorded. The set is displayed in its explicit form,
+        // `(*{(X p Y)} ~ conjunction)`, which builds that set again.
+        const bool explicit_set = as_list && sorted_elements.size() == 1;
 
         // A COLLECTION prints with its own marker, because that is what it
         // is: a container with an identity, which `{...}` re-entered would
         // not rebuild. A rule's conjunction set keeps the bare brace -- it
         // is rule structure rather than a value, and the rule renders around
         // it.
-        const bool bare_brace = z->is_set_constant(resolved) || is_conjunction;
+        //
+        // A set pattern -- the literal of a query or a Janet program whose
+        // member holds a variable -- keeps the bare brace as well: it is the
+        // construct that `{...}` builds, and `@{...}` re-entered built a
+        // collection, which matches by its identity.
+        //
+        // A rule's collection is rendered with the marker, which a rule
+        // interprets akin to the brace, except as a consequence of a `=>`
+        // itself: a rule cannot have a set as its consequence, and `(X p Y)
+        // => {(X q Y)}` constitutes a query, which echoed as `(X p Y) =>
+        // @{(X q Y)}`. There, it prints the brace, the literal form of a
+        // query.
+        const auto as_consequence = [&]
+        {
+            if (parent == 0 || z->predicate_of(parent) != z->core.Causes) return false;
+            network::adjacency_set consequences;
+            return z->parse_fact(parent, consequences) != resolved && consequences.count(resolved) != 0;
+        };
+        const bool bare_brace = z->is_set_constant(resolved) || is_conjunction
+                             || (z->is_rule_template(resolved) ? as_consequence() && z->is_set_pattern(resolved) : z->is_set_pattern(resolved));
 
-        result     = as_typed_conditions ? "" : (as_rule_conditions ? "(" : (bare_brace ? "{" : "@{"));
+        result     = as_typed_conditions ? "" : (explicit_set ? "(*{" : (as_list ? "(" : (bare_brace ? "{" : "@{")));
         bool first = true;
 
         // A rendering that already carries a scheme's own delimiters is
@@ -951,7 +1076,7 @@ void zelph::string::node_to_string(const network::Zelph* const z, std::string& r
             // the bare S-P-O shape the surface syntax is written in. Inside
             // braces the space is the separator and a member carrying one
             // has to be bracketed.
-            if (!comma_list
+            if ((!comma_list || explicit_set)
                 && !elem_ctx.self_delimited
                 && !elem_str.empty()
                 && elem_str.find(' ') != std::string::npos
@@ -972,7 +1097,11 @@ void zelph::string::node_to_string(const network::Zelph* const z, std::string& r
             result += elem_str;
             first = false;
         }
-        result += as_typed_conditions ? "" : (as_rule_conditions ? ")" : "}");
+        if (explicit_set)
+            result += "} " + string::mark_identifier(z->get_formatted_name(z->core.IsA, lang)) + " "
+                    + string::mark_identifier(z->get_formatted_name(z->core.Conjunction, lang)) + ")";
+        else
+            result += as_typed_conditions ? "" : (as_list ? ")" : "}");
 
         return;
     }
@@ -1051,15 +1180,19 @@ void zelph::string::node_to_string(const network::Zelph* const z, std::string& r
         }
     }
 
-    // A path condition and a neural condition are also facts,
-    // `((S p O) closure mode)` and `((P) nn net)`, and when positioned as
-    // conditions, they print the way they are typed there: `S p⁺ O`,
-    // `S p∗ O`, `≈net(P)`. In all other contexts, they print as the facts
-    // they are. The premises of a justification are not treated as
-    // conditions; instead, the deduction line names the facts that a firing
-    // has uncovered.
+    // A path condition and a neural condition are also considered facts,
+    // expressed as `((S p O) closure mode)` and `((P) nn net)`, and are
+    // displayed exactly as input: `S p⁺ O`, `S p∗ O`, `≈net(P)`. When outside a
+    // condition slot -- that is, when the node appears independently, or when a
+    // statement holds it, or when it stands in a rule that statement mentions
+    // -- the fact's spelling uses the names `closure` and `nn` in the current
+    // language, whereas outside the zelph language these are distinct nodes,
+    // causing the printed line to be re-entered as a different statement. The
+    // premises of a deduction or a proof are not treated as conditions;
+    // instead, they name the facts that a firing has uncovered
+    // (PremiseRendering).
     ConditionSugar sugar;
-    if (in_condition_slot && condition_sugar(z, resolved, lang, sugar))
+    if ((in_condition_slot || premise_renderings == 0) && condition_sugar(z, resolved, lang, sugar))
     {
         auto operand_history = std::make_shared<std::unordered_set<network::Node>>(*history);
         operand_history->insert(resolved);

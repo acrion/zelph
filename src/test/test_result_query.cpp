@@ -294,3 +294,34 @@ TEST_CASE("? prefix: a rule with a condition operator is asserted as a typed rul
         interactive.process("S ok O");
         CHECK(collect_answers(collector) == std::vector<std::string>{"t ok k"}); });
 }
+
+// A focus on a rule's arrow names the rule, so "?" asserts that rule just as
+// it asserts one written without the focus. The guard against a condition
+// operator reads the grammar's tree, and that is where the arrow is read as
+// the arrow: read as a focus, the line was refused for the "¬" within the
+// rule's own condition, and without such an operator, each typing put
+// several rules in force, none of which were checked for a twin.
+TEST_CASE("? prefix: a rule with the focus on its arrow is asserted as a typed rule is")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        SUBCASE("a condition operator in the rule's own condition")
+        {
+            interactive.process("t go k");
+
+            CHECK_NOTHROW(interactive.process("? (X go Y, ¬(X p b)) *=> (X ok Y)"));
+
+            collector.clear();
+            interactive.process("S ok O");
+            CHECK(collect_answers(collector) == std::vector<std::string>{"t ok k"});
+        }
+        SUBCASE("typed twice under other names, one rule")
+        {
+            interactive.process("? (X go Y) *=> (X ok Y)");
+            interactive.process("? (A go B) *=> (A ok B)");
+
+            collector.clear();
+            interactive.process(".list-rules");
+            CHECK(count_outputs_containing(collector, "=>") == 1);
+        } });
+}

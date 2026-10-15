@@ -86,6 +86,18 @@ static bool unify_condition(
     std::vector<Variables>* const       forks,
     bool                                bound);
 
+static bool unify_members(
+    const Zelph* const                  _n,
+    const adjacency_set&                rule_members,
+    const adjacency_set&                graph_members,
+    Variables&                          local_bindings,
+    const Variables&                    global_bindings,
+    std::vector<std::pair<Node, Node>>& history,
+    int                                 depth,
+    ReasoningProfiler* const            _prof,
+    const StandIns* const               stand_ins,
+    std::vector<Variables>* const       forks);
+
 // Whether `node`, the condition associated with a `=>` fact,
 // constitutes a set of conditions instead of a single one: a
 // collection, or a set constant in which the conditions were written
@@ -95,31 +107,43 @@ static bool is_condition_set_node(const Zelph* const n, const Node node)
     return node != 0 && !Zelph::Impl::is_var(node) && n->is_condition_set(node);
 }
 
-static bool condition_set_below(const Zelph* const n, const Node node, std::unordered_set<Node>& seen)
+// `conditions`: the conditions of a rule are taken into account, provided
+// they form a set.
+static bool condition_set_below(const Zelph* const n, const Node node, std::unordered_set<Node>& seen, const bool conditions)
 {
-    if (!Zelph::Impl::is_hash(node) || Zelph::Impl::is_var(node) || !seen.insert(node).second) return false;
+    if (node == 0 || Zelph::Impl::is_var(node)) return false;
+    if (!Zelph::Impl::is_hash(node)) return n->is_set_pattern(node);
+    if (!seen.insert(node).second) return false;
     const auto structures = get_fact_structures(n, node, 1); // held: the cache might not be
+    if (structures->empty()) return n->is_set_pattern(node);
     for (const auto& fs : *structures)
     {
-        if (fs.predicate == n->core.Causes && is_condition_set_node(n, fs.subject)) return true;
-        if (condition_set_below(n, fs.subject, seen) || condition_set_below(n, fs.predicate, seen)) return true;
+        if (conditions && fs.predicate == n->core.Causes && is_condition_set_node(n, fs.subject)) return true;
+        if (condition_set_below(n, fs.subject, seen, conditions) || condition_set_below(n, fs.predicate, seen, conditions)) return true;
         for (const Node o : fs.objects)
-            if (condition_set_below(n, o, seen)) return true;
+            if (condition_set_below(n, o, seen, conditions)) return true;
     }
     return false;
 }
 
-bool zelph::network::holds_condition_set(const Zelph* const n, const Node node)
+bool zelph::network::holds_member_matched_set(const Zelph* const n, const Node node)
 {
     std::unordered_set<Node> seen;
-    return condition_set_below(n, node, seen);
+    return condition_set_below(n, node, seen, true);
+}
+
+bool zelph::network::holds_set_pattern(const Zelph* const n, const Node node)
+{
+    std::unordered_set<Node> seen;
+    return condition_set_below(n, node, seen, false);
 }
 
 // Recursive Unification Algorithm with Cycle Detection
 //
-// `forks` gathers the alternative pairings of a set of conditions
-// (unify_condition); `bound` holds true when `rule_node` represents the value a
-// variable is bound to, rather than a node within the pattern.
+// `forks` gathers the alternate pairings derived from a set of conditions
+// (unify_condition) and of a set pattern; `bound` is true precisely when
+// `rule_node` represents the value to which a variable is bound, as opposed
+// to denoting a node inside the pattern.
 static bool unify_nodes(
     const Zelph* const                  _n,
     Node                                rule_node,
@@ -234,6 +258,15 @@ static bool unify_nodes(
         // 2. Direct identity
         if (rule_node == graph_node)
         {
+            // A set pattern that meets itself corresponds to what a query or
+            // a command wrote, which is no data: it matches set constants
+            // (step 3).
+            if (!bound && !Zelph::Impl::is_hash(rule_node) && _n->is_set_pattern(rule_node))
+            {
+                U_LOG(depth, "  -> A set pattern is not data. Fail.");
+                result = false;
+                break;
+            }
             if (_n->logging_active())
             {
                 PROF(unify_identity_hits.fetch_add(1, std::memory_order_relaxed));
@@ -247,6 +280,25 @@ static bool unify_nodes(
         auto rule_structs = get_fact_structures(_n, rule_node, depth);
         if (rule_structs->empty())
         {
+            // A set pattern, `{(X enters C) (C ~ card)}`, constitutes yet
+            // another set under each binding (Zelph::set_pattern_members).
+            // Compared by identity, like an atom, it matched solely itself;
+            // it matches a set constant whose members are paired one-to-one
+            // with its own members. A set constant holding a pattern is none
+            // of these: it is not data. A value bound to a variable
+            // represents the node it denotes (`bound`), just as it does
+            // everywhere else.
+            adjacency_set rule_members;
+            adjacency_set graph_members;
+            if (!bound && _n->set_pattern_members(rule_node, rule_members) && Zelph::Impl::is_hash(graph_node)
+                && get_fact_structures(_n, graph_node, depth)->empty() && _n->set_constant_members(graph_node, graph_members)
+                && !_n->is_set_pattern(graph_node))
+            {
+                U_LOG(depth, "  Comparing the set " + U_NODE(rule_node) + " with " + U_NODE(graph_node) + " by their members");
+                result = unify_members(_n, rule_members, graph_members, local_bindings, global_bindings, history, depth, _prof, stand_ins, forks);
+                break;
+            }
+
             U_LOG(depth, "  -> Rule node is atom, but not identical. Fail.");
             result = false;
             break;
@@ -279,6 +331,43 @@ static bool unify_nodes(
 
                 // C. Objects
                 if (rs.objects.empty() != gs.objects.empty()) continue;
+
+                // A fact containing multiple objects states the pattern for
+                // each way its objects match the pattern's: `(a p b c)`
+                // states `(a p Y)` where Y equals b and also where Y equals
+                // c. By taking just the first match, a join that needed the
+                // alternative found nothing, and the outcome depended on the
+                // order in which the conditions were evaluated. Every
+                // distinct match is kept, the first one here and the
+                // remaining ones as forks (see unify_condition). A fact with
+                // a single object leaves a single way, which the loop below
+                // takes.
+                if (forks != nullptr && gs.objects.size() > 1)
+                {
+                    const std::vector<Node> r_objs(rs.objects.begin(), rs.objects.end());
+                    std::vector<Variables>  outcomes;
+                    const auto              assign = [&](const auto& self, const std::size_t i, const Variables& bindings) -> void
+                    {
+                        if (i == r_objs.size())
+                        {
+                            if (std::find(outcomes.begin(), outcomes.end(), bindings) == outcomes.end()) outcomes.push_back(bindings);
+                            return;
+                        }
+                        for (const Node g_obj : gs.objects)
+                        {
+                            Variables try_obj = bindings;
+                            if (unify_nodes(_n, r_objs[i], g_obj, try_obj, global_bindings, history, depth + 1, _prof, stand_ins, forks, bound))
+                                self(self, i + 1, try_obj);
+                        }
+                    };
+                    assign(assign, 0, attempt);
+                    if (outcomes.empty()) continue;
+                    forks->insert(forks->end(), std::next(outcomes.begin()), outcomes.end());
+                    local_bindings = std::move(outcomes.front());
+                    U_LOG(depth, "    -> Structure Match SUCCESS");
+                    result = true;
+                    goto end_loop;
+                }
 
                 bool      objects_match = true;
                 Variables obj_bindings  = attempt;
@@ -337,12 +426,8 @@ static bool unify_nodes(
 // members, with each member of the pattern paired with a distinct member of the
 // graph.
 //
-// Several pairings may fit, `(X p Y, X p Z)` against `(a p b, a p c)`, and the
-// rest of the pattern could apply solely to one of these. The first is taken,
-// while every other one is handed to `forks` as the bindings it reaches,
-// enabling `extract_bindings` to resume from that point. A value a variable is
-// bound to represents itself (`bound`), just as in all other contexts: the
-// anchors take it as that node.
+// A value a variable is bound to represents itself (`bound`), just as in all
+// other contexts: the anchors take it as that node.
 static bool unify_condition(
     const Zelph* const                  _n,
     Node                                rule_node,
@@ -363,6 +448,29 @@ static bool unify_condition(
         return unify_nodes(_n, rule_node, graph_node, local_bindings, global_bindings, history, depth, _prof, stand_ins, forks, bound);
 
     U_LOG(depth, "Comparing the conditions " + U_NODE(rule_node) + " vs " + U_NODE(graph_node) + " by their members");
+    return unify_members(_n, rule_members, graph_members, local_bindings, global_bindings, history, depth, _prof, stand_ins, forks);
+}
+
+// Each member within a pattern's set, paired with a distinct member from
+// the graph's set: the conditions of a held rule (unify_condition) and the
+// members of a set pattern (unify_nodes).
+//
+// Several pairings may fit, `(X p Y, X p Z)` against `(a p b, a p c)`, and the
+// rest of the pattern could apply solely to one of these. The first is taken,
+// while every other one is handed to `forks` as the bindings it reaches,
+// enabling `extract_bindings` to resume from that point.
+static bool unify_members(
+    const Zelph* const                  _n,
+    const adjacency_set&                rule_members,
+    const adjacency_set&                graph_members,
+    Variables&                          local_bindings,
+    const Variables&                    global_bindings,
+    std::vector<std::pair<Node, Node>>& history,
+    const int                           depth,
+    ReasoningProfiler* const            _prof,
+    const StandIns* const               stand_ins,
+    std::vector<Variables>* const       forks)
+{
     if (rule_members.size() != graph_members.size()) return false;
 
     const std::vector<Node> pattern(rule_members.begin(), rule_members.end());
@@ -409,14 +517,17 @@ static bool unify_condition(
 //   Missing   all variables are bound, but the denoted fact does not exist
 //             -> the condition cannot match at all (fail fast)
 //
-// NOTE on multi-object facts: lookup uses check_fact and therefore EXACT
-// object-set semantics -- the same interpretation that instantiate_fact()
-// and the termination guard (consequences_already_exist) apply to fully
-// bound patterns. extract_bindings' greedy subset matching of objects is
-// deliberately NOT replicated here: a graph fact carrying additional objects
-// beyond the pattern's is a different node and is not found. If that corner
-// case ever becomes relevant, returning Unbound instead of Missing below
-// restores the scan-based (subset-matching) behaviour.
+// NOTE on facts having multiple objects: the lookup uses check_fact, thus
+// identifying the fact that matches precisely the pattern's objects -- the
+// reading that instantiate_fact() and the termination guard
+// (consequences_already_exist) take for a consequence. A condition takes the
+// subset reading: a statement within it is stated by a fact that includes
+// additional objects too, as `(a p b c)` states `(a p b)` (unify_nodes). The
+// exact lookup therefore decides only when no ground fact with more than one
+// object can exist (Zelph::may_hold_wider_statements). As soon as one may
+// exist, the caller does not treat the grounded node as the sole candidate
+// nor interpret a missing one as a failure, and the partial anchors climb
+// from the statement's atoms.
 
 enum class GroundResult
 {
@@ -448,6 +559,9 @@ static GroundResult ground_pattern(Zelph* n, Node pattern, const Variables& vars
 
     if (!Zelph::Impl::is_hash(pattern))
     {
+        // A set pattern signifies each set that its members match
+        // (unify_nodes).
+        if (n->is_set_pattern(pattern)) return GroundResult::Unbound;
         out = pattern; // plain atom
         return GroundResult::Grounded;
     }
@@ -469,9 +583,10 @@ static GroundResult ground_pattern(Zelph* n, Node pattern, const Variables& vars
     if (fs.predicate == 0)
     {
         history.pop_back();
-        // Hash node without decomposable structure (e.g. a set node):
-        // concrete iff it contains no variables.
-        if (n->var_in_closure(pattern)) return GroundResult::Unbound;
+        // A hash node lacking a decomposable structure (for instance, a set
+        // node): concrete precisely when it contains no variables and is not
+        // a set pattern either.
+        if (n->var_in_closure(pattern) || n->is_set_pattern(pattern)) return GroundResult::Unbound;
         out = pattern;
         return GroundResult::Grounded;
     }
@@ -600,6 +715,16 @@ static void collect_partial_anchors(
             // variables at any depth (template leak) is not a data node;
             // anchoring on it would break the identity argument.
             if (n->var_in_closure(bound)) return;
+            // A statement that a variable is bound to is compared through
+            // its structure (unify_nodes), meaning a fact containing
+            // additional objects matches it as well: while one may exist,
+            // the climb starts at the statement's atoms rather than at the
+            // statement itself.
+            if (n->may_hold_wider_statements() && n->predicate_of(bound) != 0)
+            {
+                collect_partial_anchors(n, bound, parent_rule, vars, chain, visited, depth_left, log_depth, out, stand_ins);
+                return;
+            }
         }
         out.push_back({bound, chain});
         return;
@@ -607,14 +732,20 @@ static void collect_partial_anchors(
 
     if (!Zelph::Impl::is_hash(pattern))
     {
-        if (pattern != parent_rule)
+        // A set pattern is capable of matching other sets, not itself,
+        // through unify_nodes.
+        if (pattern != parent_rule && !n->is_set_pattern(pattern))
             out.push_back({pattern, chain}); // concrete atom in the pattern
         return;
     }
 
-    if (!n->var_in_closure(pattern))
+    // The same applies to a concrete statement within the pattern: while a
+    // fact involving additional objects may exist, it does not serve as an
+    // anchor, but its atoms do.
+    if (!n->var_in_closure(pattern)
+        && (!n->may_hold_wider_statements() || n->predicate_of(pattern) == 0 || holds_member_matched_set(n, pattern)))
     {
-        if (pattern != parent_rule && !holds_condition_set(n, pattern))
+        if (pattern != parent_rule && !holds_member_matched_set(n, pattern))
             out.push_back({pattern, chain}); // fully concrete subterm
         return;
     }
@@ -632,7 +763,14 @@ static void collect_partial_anchors(
         // A composite predicate holding a variable, `(A r s)`, does not
         // function as a filter either: no data statement includes an edge
         // directed toward the pattern's own node.
-        const Node p = Zelph::Impl::is_var(fs.predicate) || n->var_in_closure(fs.predicate) ? Node{0} : fs.predicate;
+        // Nor does a concrete statement function as a filter when a fact
+        // with additional objects may be present: a candidate whose
+        // predicate is `(a r s s2)` states the pattern's `(a r s)`
+        // (unify_nodes) without referencing it.
+        const Node p = Zelph::Impl::is_var(fs.predicate) || n->var_in_closure(fs.predicate)
+                            || (n->may_hold_wider_statements() && n->predicate_of(fs.predicate) != 0)
+                         ? Node{0}
+                         : fs.predicate;
 
         chain.insert(chain.begin(), p);
         // The conditions of a rule held here, when they form a set, match other
@@ -686,7 +824,7 @@ static bool climb_partial_anchor(
                     // Subject, not predicate -- unless the two are the same
                     // node, which collapses f's outgoing adjacency to one
                     // entry. Same test as Zelph::collect_anchored_facts.
-                    if (scope.left(f).count(filter) != 0 && scope.right(f).size() > 1) continue;
+                    if (scope.left(f).count(filter) != 0 && scope.right(f).size() > 1 && !scope.subject_is_predicate(f, filter)) continue;
                 }
                 next.insert(f);
             }
@@ -697,6 +835,18 @@ static bool climb_partial_anchor(
 
     out = std::move(frontier);
     return true;
+}
+
+// The predicate within a structured subject that holds a variable --
+// R in `(X R Y)`, `(A r s)` in `(X (A r s) Y)` -- refers to no node
+// that a data statement targets, hence, as a hint, it would reject
+// every candidate, even if R is bound: the hint is the pattern's own
+// node, not a binding.
+static Node subject_predicate_hint(const Zelph* n, const Node subject, const int log_depth)
+{
+    const auto subject_structs = get_fact_structures(n, subject, log_depth);
+    const Node inner           = subject_structs->empty() ? Node{0} : subject_structs->front().predicate;
+    return inner == 0 || Zelph::Impl::is_var(inner) || n->var_in_closure(inner) ? Node{0} : inner;
 }
 
 zelph::network::PatternInfo zelph::network::build_pattern_info(const Zelph* n, const Node condition, const int log_depth)
@@ -716,19 +866,32 @@ zelph::network::PatternInfo zelph::network::build_pattern_info(const Zelph* n, c
     pi.relation             = fs.predicate;
     pi.subject              = fs.subject;
     pi.objects              = fs.objects;
-
-    {
-        // The predicate within a structured subject that holds a variable --
-        // R in `(X R Y)`, `(A r s)` in `(X (A r s) Y)` -- refers to no node
-        // that a data statement targets, hence, as a hint, it would reject
-        // every candidate, even if R is bound: the hint is the pattern's own
-        // node, not a binding.
-        const auto subject_structs = get_fact_structures(n, pi.subject, log_depth);
-        const Node inner           = subject_structs->empty() ? Node{0} : subject_structs->front().predicate;
-        pi.subject_pred_hint       = inner == 0 || Zelph::Impl::is_var(inner) || n->var_in_closure(inner) ? Node{0} : inner;
-    }
+    pi.subject_pred_hint    = subject_predicate_hint(n, pi.subject, log_depth);
 
     return pi;
+}
+
+bool zelph::network::ground_condition_matches(Zelph* n, const Node subject, const Node predicate, const adjacency_set& objects)
+{
+    // A question containing a variable is not a ground condition, and no
+    // fact that holds one is claimed (Zelph::is_asserted_fact), so the exact
+    // probe has already answered it. The matcher would read the question as
+    // a pattern and find any matching fact -- yet only once a fact with
+    // additional objects may exist, as its callers ask it solely under
+    // those circumstances.
+    if (n->var_in_closure(subject) || n->var_in_closure(predicate)
+        || std::any_of(objects.begin(), objects.end(), [n](const Node o)
+                       { return n->var_in_closure(o); }))
+        return false;
+
+    PatternInfo pattern;
+    pattern.relation          = predicate;
+    pattern.subject           = subject;
+    pattern.objects           = objects;
+    pattern.subject_pred_hint = subject_predicate_hint(n, subject, 1);
+
+    Unification match(n, std::move(pattern), 0, std::make_shared<Variables>(), std::make_shared<Variables>(), /*pool*/ nullptr, 1, /*profiler*/ nullptr);
+    return match.Next() != nullptr;
 }
 
 // A `=>` fact holding a variable is rule text, not data, regardless of where
@@ -740,6 +903,23 @@ zelph::network::PatternInfo zelph::network::build_pattern_info(const Zelph* n, c
 static bool is_rule_text(const Zelph* n, const Node fact, const FactStructure& fs, const Zelph::VariableReading reading)
 {
     return fs.predicate == n->core.Causes && n->var_in_closure(fact, reading);
+}
+
+// What the engine writes about a rule or a contradiction is not data either
+// (Zelph::is_bookkeeping). Each contradiction record had a condition `S ~ Y`
+// bound to it, so a rule whose consequence refuted a claimed fact met the
+// record of every contradiction it caused as a new candidate, and the run
+// never ended. Asked only of a candidate that matched: a scan pays nothing
+// for the others, and the extraction counters remain unchanged.
+//
+// A scan performed by a prune additionally bypasses a rule's own text,
+// which other scans read: the prune eliminates the content it matches, and
+// `.prune-facts S ~ conjunction` stripped each rule of its condition set.
+static bool is_engine_bookkeeping(const Zelph* n, const FactStructure& fs)
+{
+    if (fs.predicate != n->core.IsA && fs.predicate != n->core.PartOf) return false;
+    if (n->is_bookkeeping(fs.subject, fs.predicate, fs.objects)) return true;
+    return n->prune_scan() && n->is_rule_text_fact(fs.subject, fs.predicate, fs.objects);
 }
 
 Unification::Unification(
@@ -796,6 +976,12 @@ Unification::Unification(
         // the anchors; therefore `.anchors off`, the reference used to
         // validate anchor lookups, also disables it.
         _subject_pred_hint = _n->use_anchors() ? pattern.subject_pred_hint : Node{0};
+        // Nor does a statement serve as the hint when a fact containing more
+        // objects could exist: a candidate subject with predicate
+        // `(a r s s2)` states the pattern's `(a r s)` (unify_nodes) without
+        // referencing it.
+        if (_subject_pred_hint != 0 && Zelph::Impl::is_hash(_subject_pred_hint) && _n->may_hold_wider_statements() && _n->predicate_of(_subject_pred_hint) != 0)
+            _subject_pred_hint = 0;
 
         // A subject or an object that represents a bucket's term is matched
         // and anchored on as that term. One that represents any term stays,
@@ -843,7 +1029,8 @@ Unification::Unification(
             }
             _relation_variable = relation;
         }
-        else if (_n->var_in_closure(relation))
+        else if (_n->var_in_closure(relation)
+                 || (Zelph::Impl::is_hash(relation) && _n->may_hold_wider_statements() && _n->predicate_of(relation) != 0))
         {
             // A COMPOSITE predicate carrying a variable -- `(X (Y r s) Z)` --
             // is a pattern, exactly as a structured subject is, and the two
@@ -854,6 +1041,13 @@ Unification::Unification(
             // The candidate set is the one a relation VARIABLE gets; what
             // separates the two is that extract_bindings unifies the pattern
             // against each candidate instead of binding one variable to it.
+            //
+            // A concrete statement positioned there is interpreted identically
+            // when a fact involving multiple objects could exist
+            // (Zelph::may_hold_wider_statements): `x (a p c) Z` is stated by
+            // `x (a p b c) y`, just as a statement located elsewhere within a
+            // condition is, whereas the relation it names as it stands holds
+            // only `x (a p c) y`.
             if (_seed_fact != 0)
             {
                 _relation_list.insert(_seed_predicate);
@@ -940,13 +1134,22 @@ Unification::Unification(
         {
             Node              grounded = 0;
             std::vector<Node> ground_history;
+            // While a fact involving multiple objects may be present
+            // (Zelph::may_hold_wider_statements), the grounded statement is
+            // not the sole node that the subject can match, since
+            // `(a p b c)` states `(a p b)` as well, and the absence of one
+            // does not fail the condition: the partial anchors below climb
+            // from its atoms.
+            const bool wider = _n->may_hold_wider_statements();
             switch (ground_pattern(_n, _subject, *_variables, _log_depth, grounded, ground_history, _stand_ins))
             {
             case GroundResult::Grounded:
+                if (wider && _n->predicate_of(grounded) != 0) break;
                 _subject_grounded = grounded;
                 U_LOG(_log_depth, "subject pattern grounded to " + U_NODE(grounded));
                 break;
             case GroundResult::Missing:
+                if (wider) break;
                 U_LOG(_log_depth, "subject pattern grounding: denoted fact missing -> condition cannot match");
                 _relation_list.clear();
                 return;
@@ -1182,7 +1385,9 @@ Unification::Unification(
                                            if (fs.predicate != fixed_rel) continue;
                                            if (is_rule_text(_n, fact, fs, _candidates)) continue;
 
-                                           for (auto& r : extract_bindings(fs.subject, fs.objects, fixed_rel, _log_depth))
+                                           auto bindings = extract_bindings(fs.subject, fs.objects, fixed_rel, _log_depth);
+                                           if (!bindings.empty() && is_engine_bookkeeping(_n, fs)) continue; // not data either
+                                           for (auto& r : bindings)
                                            {
                                                std::lock_guard<std::mutex> l(_queue_mtx);
                                                _match_queue.push(std::move(r));
@@ -1398,12 +1603,14 @@ bool Unification::increment_fact_index()
                 // snapshot are rejected later by extract_bindings via
                 // contains_variable_shallow, exactly as in the full-scan path.
                 //
-                // A node within the pattern that holds the conditions of a rule
-                // as a set matches the rules with the same members, not merely
-                // itself (unify_condition), and does not serve as an anchor; a
-                // bound value stands for the node it is. `own`: the node
-                // belongs to the pattern, `by_members`: it is a set of
-                // conditions that is matched by its members.
+                // A node in the pattern that holds the conditions of a rule as
+                // a set matches rules sharing identical members, rather than
+                // just the node itself (unify_condition), a node that holds a
+                // set pattern matches set constants (unify_nodes), and neither
+                // serves as an anchor; a bound value represents the node it
+                // refers to. `own`: the node belongs to the pattern,
+                // `by_members`: it is a set of conditions that is matched by
+                // its members.
                 auto is_concrete_lookup_node = [&](Node nd, const bool own, const bool by_members) -> bool
                 {
                     if (nd == 0 || matches_any(nd)) return false;
@@ -1421,7 +1628,14 @@ bool Unification::increment_fact_index()
                         return false;
                     }
 
-                    if (own && (by_members || holds_condition_set(_n, nd)))
+                    if (own && (by_members || holds_member_matched_set(_n, nd)))
+                        return false;
+
+                    // Nor does a statement serve as an anchor while a fact
+                    // involving additional objects may exist: its adjacency
+                    // holds only the facts that hold it as it stands, and a
+                    // broader fact also matches it (see anchor_role below).
+                    if (Zelph::Impl::is_hash(nd) && _n->may_hold_wider_statements() && _n->predicate_of(nd) != 0)
                         return false;
 
                     return true;
@@ -1596,9 +1810,15 @@ bool Unification::increment_fact_index()
         // has_left_edge answers no for every ordinary candidate, so the
         // outgoing-degree lookup is paid only for the rare fact that really
         // does have the relation as its subject.
+        //
+        // A statement or a rule that holds such a fact adds to its outgoing
+        // edges, and the fact vanished from every scan of its predicate as
+        // soon as anything held it, so the hash of its triple decides where
+        // the degree does not.
     } while (!_snapshot_prefiltered
              && _n->has_left_edge(*_fact_index, *_relation_index)
-             && _n->_pImpl->right_count_of(*_fact_index) > 1);
+             && _n->_pImpl->right_count_of(*_fact_index) > 1
+             && !_n->read_scope().subject_is_predicate(*_fact_index, *_relation_index));
 
     return true;
 }
@@ -1674,7 +1894,9 @@ std::shared_ptr<Variables> Unification::Next()
                     if (fs.predicate != *_relation_index) continue;
                     if (is_rule_text(_n, fact, fs, _candidates)) continue;
 
-                    for (auto& r : extract_bindings(fs.subject, fs.objects, *_relation_index, _log_depth))
+                    auto bindings = extract_bindings(fs.subject, fs.objects, *_relation_index, _log_depth);
+                    if (!bindings.empty() && is_engine_bookkeeping(_n, fs)) continue; // not data either
+                    for (auto& r : bindings)
                     {
                         if (!first)
                             first = std::move(r);
@@ -1845,6 +2067,25 @@ std::vector<std::shared_ptr<Variables>> Unification::extract_bindings(
             }
             return results;
         }
+    }
+
+    // A set pattern that a query or a program typed holds its variables
+    // within members that no structure accesses, so a statement over it
+    // passed the checks above: after `{(X enters C) (C ~ card)} can nil`, the
+    // statement the query left in the graph answered `S can nil` as data, and
+    // with this set serving as its predicate, a predicate variable bound the
+    // set. The object of a membership is its content and remains unexamined,
+    // just as in Zelph::fact.
+    if (_n->set_pattern_variables(subject) || _n->set_pattern_variables(relation)
+        || (relation != _n->core.PartOf && std::any_of(objects.begin(), objects.end(), [this](const Node o)
+                                                       { return _n->set_pattern_variables(o) != nullptr; })))
+    {
+        if (_n->logging_active())
+        {
+            PROF(template_rejects.fetch_add(1, std::memory_order_relaxed));
+            U_LOG(depth, "extract_bindings REJECT: a set pattern holds a variable");
+        }
+        return results;
     }
 
     // --- Enumerate all valid injective matchings of rule objects to fact objects ---

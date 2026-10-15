@@ -661,6 +661,8 @@ namespace zelph::network
         return 0;
     }
 
+    inline Resolve resolve_set_pattern(const Zelph* n, const adjacency_set& members, const Variables& vars, Node& out, std::vector<Node>& history);
+
     // `containing` true additionally accepts a fact that carries objects
     // BEYOND the pattern's, which is what unification matched (see
     // containing_fact). Only the proof reconstruction passes it.
@@ -678,6 +680,28 @@ namespace zelph::network
 
         if (!Zelph::is_hash(pattern))
         {
+            // A set pattern denotes the set constant that unify_nodes paired
+            // it with. When treated as the atom it is, the statement a query
+            // left within the graph resolved to itself, and `.node` and
+            // `.explain` without an argument addressed it rather than the
+            // answer.
+            adjacency_set members;
+            if (!vars.empty() && n->set_pattern_members(pattern, members))
+            {
+                // A set pattern may serve as a member of itself, either directly or
+                // indirectly via another set pattern contained within its members: a
+                // program expresses this membership using `zelph/fact`, and the engine
+                // accepts it as a valid member just like any other. Resolved via its
+                // members, the pattern would be resolved again without end. Encountered a
+                // second time, it stays unresolved, as a cyclic structure does below.
+                for (const Node visited : history)
+                    if (visited == pattern) return Resolve::Unbound;
+                history.push_back(pattern);
+                const Resolve r = resolve_set_pattern(n, members, vars, out, history);
+                history.pop_back();
+                return r;
+            }
+
             out = pattern; // plain atom
             return Resolve::Ok;
         }
@@ -747,6 +771,25 @@ namespace zelph::network
         }
 
         return Resolve::Missing;
+    }
+
+    // A set pattern (Zelph::set_pattern_members) denotes the set constant
+    // over what its members denote, which is the set that unify_nodes
+    // associates with it. If two members refer to the same node, they match
+    // no set, as unify_nodes establishes a one-to-one pairing between the
+    // members.
+    inline Resolve resolve_set_pattern(const Zelph* n, const adjacency_set& members, const Variables& vars, Node& out, std::vector<Node>& history)
+    {
+        adjacency_set denoted;
+        for (const Node m : members)
+        {
+            Node          d = 0;
+            const Resolve r = resolve_pattern(n, m, vars, d, history);
+            if (r != Resolve::Ok) return r;
+            denoted.insert(d);
+        }
+        out = Zelph::create_hash(denoted);
+        return denoted.size() == members.size() && n->exists(out) ? Resolve::Ok : Resolve::Missing;
     }
 
     // Convenience for display code: the denoted node, or the pattern itself

@@ -101,6 +101,55 @@ TEST_CASE("self-predicate: a user fact with subject == predicate is queryable")
         CHECK(any_output_contains(collector, "axiom")); });
 }
 
+TEST_CASE("self-predicate: a fact whose subject is its predicate stays queryable when something holds it")
+{
+    // The candidate filters took a fact whose only outgoing edge is the
+    // predicate for this shape, and any other fact for one that merely has
+    // the predicate as its subject. Whenever a statement or rule that holds
+    // the fact adds an outgoing edge, the fact vanished from queries:
+    // following `x says (p p q)`, a single-core `S p O` answered nothing, and
+    // a rule whose condition is `p p q` never fired.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("p p q");
+        SUBCASE("a statement holds it as an object") { interactive.process("x says (p p q)"); }
+        SUBCASE("a statement holds it as its subject") { interactive.process("(p p q) noted yes"); }
+        SUBCASE("a rule holds it as its condition") { interactive.process("(p p q) => (k ok y)"); }
+        interactive.run(true, false, false);
+
+        for (const char* query : {"S p O", "p p O", "S p q", "p P O", "S P q"})
+        {
+            collector.clear();
+            interactive.process(query);
+            CHECK(answers_contain(collector, "p p q"));
+        }
+
+        // The `p ~ ->` declaration has `p` as its subject as well, and
+        // remains a declaration, which `S p O` does not answer.
+        collector.clear();
+        interactive.process("S p O");
+        CHECK(collect_answers(collector) == std::vector<std::string>{"p p q"});
+
+        collector.clear();
+        interactive.process("(p p q) => (m ok y)");
+        interactive.run(true, false, false);
+        collector.clear();
+        interactive.process("M ok Y");
+        CHECK(answers_contain(collector, "m ok y"));
+
+        // A pattern in which the fact serves as the subject reaches it from
+        // that subject, and the count of how often the predicate is used
+        // includes it.
+        interactive.process("(p p q) noted yes");
+        collector.clear();
+        interactive.process("(p p Q) noted Y");
+        CHECK(answers_contain(collector, "(p p q) noted yes"));
+
+        collector.clear();
+        interactive.process(".list-predicate-usage");
+        CHECK(any_output_contains(collector, "p 1")); });
+}
+
 TEST_CASE("self-predicate: a rule fires on a subject == predicate fact")
 {
     run_both_modes([](auto& collector, auto& interactive)
@@ -113,6 +162,83 @@ TEST_CASE("self-predicate: a rule fires on a subject == predicate fact")
         collector.clear();
         interactive.process("S found O");
         CHECK(answers_contain(collector, "p found q")); });
+}
+
+TEST_CASE("self-predicate: a rule derives a fact whose subject is its predicate")
+{
+    // A firing read the predicate in its consequence via a filter that
+    // excluded the subject, which in this case was also the predicate: it
+    // found none and skipped the consequence, meaning the rule never fired,
+    // regardless of whether it was typed that way or had become so through a
+    // name merge -- `.name jim sleeps` over
+    // `(ann waits nil) => (jim sleeps nil)`. A binding that put one node in
+    // both roles was always derived; the consequence was the shape that
+    // failed.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        std::string query;
+        std::string expected;
+        SUBCASE("ground")
+        {
+            interactive.process("(ann waits nil) => (sleeps sleeps nil)");
+            query    = "S sleeps O";
+            expected = "sleeps sleeps nil";
+        }
+        SUBCASE("a variable in the object")
+        {
+            interactive.process("(X waits nil) => (sleeps sleeps X)");
+            query    = "S sleeps O";
+            expected = "sleeps sleeps ann";
+        }
+        SUBCASE("a variable as the subject and the predicate")
+        {
+            interactive.process("(X waits nil) => (X X nil)");
+            query    = "ann ann O";
+            expected = "ann ann nil";
+        }
+        SUBCASE("made so by a name merge")
+        {
+            interactive.process("(ann waits nil) => (jim sleeps nil)");
+            interactive.process(".name jim sleeps");
+            query    = "S sleeps O";
+            expected = "sleeps sleeps nil";
+        }
+        // A variable that no condition binds results in a new node at a
+        // firing, created only where no existing fact already satisfies the
+        // consequence. This verification skips a consequence that asserts
+        // nothing, and it read the predicate via the filter that excludes the
+        // subject: it took this consequence as one lacking a predicate, and
+        // thus the rule derived nothing. The second run makes no second node.
+        SUBCASE("a fresh variable in the object over two runs")
+        {
+            interactive.process("(X waits nil) => (sleeps sleeps W)");
+            interactive.process("ann waits nil");
+            interactive.run(true, false, false);
+            query    = "S sleeps O";
+            expected = "sleeps sleeps ??";
+        }
+        interactive.process("ann waits nil");
+        interactive.run(true, false, false);
+
+        collector.clear();
+        interactive.process(query);
+        CHECK(collect_answers(collector) == std::vector<std::string>{expected}); });
+}
+
+TEST_CASE("self-predicate: a derivation line puts such a consequence in parentheses")
+{
+    // A derivation line encloses its consequence within parentheses, and a
+    // consequence whose subject matches its predicate was printed without
+    // them: "sleeps sleeps nil ⇐ (ann waits nil)" beside
+    // "(sleeps p nil) ⇐ (ann waits nil)".
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, ".deductions all\n(ann waits nil) => (sleeps sleeps nil)\n(ann waits nil) => (sleeps p nil)");
+        collector.clear();
+        interactive.process("ann waits nil");
+        interactive.run(true, false, false);
+        CHECK(any_output_contains(collector, "(sleeps p nil) ⇐ (ann waits nil)"));
+        CHECK(any_output_contains(collector, "(sleeps sleeps nil) ⇐ (ann waits nil)")); });
 }
 
 TEST_CASE("self-predicate: an ordinary fact is still not read as its own predicate")

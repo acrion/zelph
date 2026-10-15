@@ -93,6 +93,12 @@ namespace zelph::console
         // where "waiting for more lines" turns into "there are none".
         void finish_input();
 
+        // Throws when the session holds a partial load, naming `name` as
+        // what was refused: the check of each command that removes graph
+        // content, for a binding that also removes it or tells what a
+        // removal would take or leave.
+        void require_full_graph_mode(const std::string& name) const;
+
         /**
          * @brief Imports a zelph script file, processing it line by line.
          *

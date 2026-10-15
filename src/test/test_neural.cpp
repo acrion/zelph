@@ -936,6 +936,34 @@ s2 marked yes
         CHECK(node_count(collector, interactive) == before); });
 }
 
+// Printed on its own -- the node `(zelph/rules)` hands out for a neural
+// condition -- the condition printed as the fact it represents,
+// `(A relG B) nn gnet`, where `nn` is designated in the current language.
+// Outside the zelph language, that name becomes a different node, and the line,
+// written back as the rule's condition, built a second rule beside the first.
+// It appears exactly as it is typed.
+TEST_CASE("neural: the condition printed by itself re-enters as the same condition, in every language")
+{
+    for (const char* lang : {"en", "zelph"})
+    {
+        CAPTURE(lang);
+        zelph::io::OutputCollector  collector;
+        zelph::console::Interactive interactive(collector.sink());
+        interactive.process(std::string(".lang ") + lang);
+        interactive.process("(A relG B, ≈gnet(A relG B)) => (A ok B)");
+
+        collector.clear();
+        interactive.process("%(zelph/out (string (first ((first (zelph/rules)) :neural))))");
+        const std::string printed = last_out_text(collector);
+        CHECK(printed == "≈gnet(A relG B)");
+
+        interactive.process("(A relG B, " + printed + ") => (A ok B)");
+        collector.clear();
+        interactive.process(".list-rules");
+        CHECK(count_outputs_containing(collector, "=>") == 1);
+    }
+}
+
 // "X go Y, ≈net(a r b)" built `a r b` as data on its way to querying the net
 // about it, and `S r O` answered it from then on. Underneath the operator it
 // is a pattern, and the query serves as an examination of what the net holds

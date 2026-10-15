@@ -53,12 +53,14 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 // "operationally indistinguishable to the engine", which is the property
 // that makes skipping the second rule safe.
 
+#include "adjacency_set.hpp"
 #include "network_types.hpp"
 
 #include <zelph_export.h>
 
 #include <cstdint>
 #include <string>
+#include <vector>
 
 namespace zelph::network
 {
@@ -74,6 +76,12 @@ namespace zelph::network
     // The decision: same rule up to a bijective renaming of the variables.
     bool rules_alpha_equivalent(const Zelph* z, Node a, Node b);
 
+    // The part of rule `b` occupying the position where `part` stands in rule
+    // `a`, given two alpha-equivalent rules: the condition, the `=>` predicate,
+    // or the consequence that the bijection pairs with `part`. 0 if `part` is
+    // none of these or the rules do not match.
+    Node corresponding_part(const Zelph* z, Node a, Node b, Node part);
+
     // Whether a rule's own collection or a conjunction set appears
     // beneath the fact or set constant `n`, accessed via facts and set
     // constants: the part of a rule's text that the template-variable
@@ -87,6 +95,21 @@ namespace zelph::network
     // a rule's own collection, or as the subject or an object of a fact, or
     // as a member of a set constant, that is one of these.
     bool is_rule_statement(const Zelph* z, Node rel);
+
+    // Why a rule cannot be written, when one of the facts produced by its
+    // consequences -- a consequence itself or a fact nested within one --
+    // features a predicate that is a variable not bound by any condition;
+    // empty otherwise. No such predicate is provided when the rule fires: a
+    // single consequence of this nature yielded nothing, and a variable that
+    // also stood as a subject or an object got a new node, which then stood
+    // as a relation type unnamed by anyone and printed as "->". A rule
+    // located within a consequence is not entered (a generator binds the
+    // variables of its inner rule during the construction of that rule), and
+    // a negated condition binds nothing.
+    //
+    // Before writing anything, each rule builder queries it: the builders in
+    // Janet, and zelph_rule in the C ABI.
+    std::string unbound_predicate(const Zelph* z, std::vector<Node> conditions, const adjacency_set& consequences);
 
     // The number of facts that is_rule_statement has inspected in this
     // process. Each climb visits every fact that holds the node it starts

@@ -32,6 +32,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include <algorithm>
 #include <cstddef>
 #include <exception>
+#include <functional>
 #include <stdexcept>
 #include <string>
 #include <unordered_set>
@@ -72,6 +73,9 @@ namespace zelph::console
             }
         }
 
+        // A node connected by an edge constitutes a fact or a part of one (see
+        // note_user_removal).
+        if (_n->left_count(nd) != 0 || _n->right_count(nd) != 0) _n->note_user_removal();
         const size_t removed = _n->remove_node(nd);
         _n->out("Removed node " + std::to_string(nd) + " and " + std::to_string(removed - 1)
                     + " node(s) it was part of (names cleaned).",
@@ -278,7 +282,10 @@ namespace zelph::console
                          " \".prune-nodes A (A P31 C, C P279∗ Q6999)\"."));
         }
 
-        if (target_var == 0 && pattern_vars.empty())
+        // A set pattern contains variables within its constituents, which
+        // are not inspected by collect_variables, and behaves as any
+        // pattern involving variables when matched.
+        if (target_var == 0 && pattern_vars.empty() && !network::holds_set_pattern(_n, pattern_fact))
         {
             discard_pattern();
 
@@ -293,23 +300,16 @@ namespace zelph::console
             // is_asserted_fact is the reading the whole read surface settled
             // on (0d0d0a6); .explain keeps the structural probe because it
             // REPORTS the state instead of acting on it.
-            const bool present = _n->check_fact(pattern_fact).is_known();
-            const bool exists  = present && _n->is_asserted_fact(pattern_fact);
-            if (exists)
-            {
-                // The claim goes, and whatever holds the statement goes along
-                // with it; a statement that is also included within a rule --
-                // whether as its condition, its consequence, or embedded within
-                // one of those -- continues to serve as the rule's pattern (see
-                // Reasoning::withdraw_claims).
-                const network::adjacency_set parts = _n->rule_parts();
-                if (parts.count(pattern_fact) != 0)
-                    _n->withdraw_claims({pattern_fact}, parts);
-                else
-                    _n->remove_node(pattern_fact);
-            }
+            //
+            // Neither the engine's bookkeeping nor a rule's own text
+            // amounts to a claim: the variable form skips both,
+            // just like a scan of a prune does (Zelph::is_bookkeeping,
+            // Zelph::is_rule_text_fact).
+            const bool                           present = _n->check_fact(pattern_fact).is_known();
+            const network::Reasoning::PrunedFact pruned  = present ? _n->prune_fact(pattern_fact) : network::Reasoning::PrunedFact{};
+            const bool                           exists  = pruned.outcome != network::Reasoning::FactPrune::none;
 
-            const std::string what = exists ? "1" : "0";
+            const std::string what = std::to_string(pruned.count);
             if (facts_mode)
                 _n->out("Pruned " + what + " matching facts.", true);
             else
@@ -325,7 +325,7 @@ namespace zelph::console
             // step: a pattern belongs to a rule, a refutation is a claim in
             // its own right, and a pattern with variables in its closure was
             // never a statement about anything.
-            if (present && !exists)
+            if (present && !exists && !_n->is_core_declaration(pattern_fact))
             {
                 if (_n->is_refuted_fact(pattern_fact))
                     _n->diagnostic("That statement is held as REFUTED -- the graph claims it does not "
@@ -336,6 +336,19 @@ namespace zelph::console
                     _n->diagnostic("That statement exists only as a rule's own pattern, or as one a query wrote "
                                    "beneath a condition operator, not as data -- the prune commands remove "
                                    "claims. Use .node to get its ID and .remove to delete graph structure.",
+                                   true);
+                // A fourth reason and a fifth, which is_asserted_fact does not
+                // give: the engine's internal bookkeeping concerning a rule or
+                // a contradiction, and a rule's own text.
+                else if (_n->is_bookkeeping(pattern_fact))
+                    _n->diagnostic("That statement is the engine's own bookkeeping -- the mark of a rule's pattern, "
+                                   "a contradiction record or one of its members -- not data, and the prune commands "
+                                   "remove claims. Use .node to get its ID and .remove to delete graph structure.",
+                                   true);
+                else if (_n->is_rule_text_fact(pattern_fact))
+                    _n->diagnostic("That statement is part of a rule's text -- a condition set's tag or one of its "
+                                   "members -- not a claim, and the prune commands remove claims. Use .node to get "
+                                   "its ID and .remove to delete graph structure.",
                                    true);
                 else
                     _n->diagnostic("That statement carries variables, so nobody claimed it -- the prune "
@@ -378,10 +391,63 @@ namespace zelph::console
                 if (pattern_vars.size() > 1)
                 {
                     discard_pattern();
-                    throw std::runtime_error("Command .prune-nodes: exactly one variable is allowed (the subject or a single object) -- "
+                    throw std::runtime_error("Command .prune-nodes: exactly one variable is allowed -- "
                                              "it names what gets deleted, or name it yourself with \".prune-nodes <variable> (<conditions>)\". "
                                              "Use .prune-facts to remove facts without deleting nodes.");
                 }
+
+                // When there is no variable present, there is no entity
+                // for a name to refer to: the variables of a rule the set
+                // holds belong to that rule.
+                if (pattern_vars.empty())
+                {
+                    discard_pattern();
+                    throw std::runtime_error("Command .prune-nodes: the pattern has no variable outside the rules it mentions, "
+                                             "so nothing in it says what gets deleted.");
+                }
+
+                // A variable serving as the predicate within a fact the
+                // pattern nests binds a relation, just as one at the top
+                // level does, and its binding carries along every fact
+                // belonging to that relation: `.prune-nodes (a X b) q c`
+                // deleted p, `e p f` included. It is refused at any level,
+                // just as at the top; named, the variable says that this is
+                // meant.
+                const network::Node                variable = *pattern_vars.begin();
+                std::unordered_set<network::Node>  seen;
+                std::function<bool(network::Node)> as_predicate = [&](const network::Node nd)
+                {
+                    if (nd == 0 || network::Network::is_var(nd) || !seen.insert(nd).second) return false;
+                    network::adjacency_set parts;
+                    if (_n->set_pattern_members(nd, parts)) return std::any_of(parts.begin(), parts.end(), as_predicate);
+                    // Only the pattern's own structure is walked: the members
+                    // of a set pattern, the subject and objects of a fact. An
+                    // atom like `c` in `X q c` or `Q5` in `X P31 Q5` ends the
+                    // traversal: interpreted as a fact, it handed on every
+                    // adjacent node, and the walk covered the whole graph.
+                    const network::Node relation = _n->predicate_of(nd);
+                    if (relation == 0 || _n->is_named_any(nd)) return false;
+                    if (relation == variable) return true;
+                    parts.insert(_n->parse_fact(nd, parts));
+                    return std::any_of(parts.begin(), parts.end(), as_predicate);
+                };
+                if (as_predicate(pattern_fact))
+                {
+                    discard_pattern();
+                    throw std::runtime_error("Command .prune-nodes: relation (predicate) must be fixed, inside a nested fact or a set as at the top -- "
+                                             "the variable would delete the relation and every fact of it. To mean that, name it: "
+                                             "\".prune-nodes <variable> (<pattern>)\".");
+                }
+
+                // The single variable determines what is removed, regardless
+                // of its location. Whether in subject or object position, the
+                // matched fact specifies this; when embedded within a fact or
+                // a set, it is the variable's binding, read as the named form
+                // reads it. Read by position, `.prune-nodes (X p b) q c`
+                // deleted c, the object, and `.prune-nodes {(X enters c)}
+                // holds k` deleted k.
+                network::adjacency_set objects;
+                if (_n->parse_fact(pattern_fact, objects) != variable && objects.count(variable) == 0) target_var = variable;
             }
 
             size_t removed_facts = 0;

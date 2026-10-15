@@ -97,6 +97,8 @@ A `.bin` file is internally organised into four sections of numbered chunks:
 
 Each section is divided into multiple chunks. For example, `wikidata-20260309-all-pruned-small.bin` contains 27 left chunks, 27 right chunks, 13 nameOfNode chunks, and 13 nodeOfName chunks (80 chunks in total).
 
+A network that includes [node annotations](janet.md#node-annotations) embeds them within a fifth section positioned after the others, which `.stat-file` lists as "Annotation Chunks"; a partial load skips reading this section.
+
 ### Inspecting a `.bin` File Before Loading
 
 Use `.stat-file` to get a quick overview of a file's chunk counts without loading it:
@@ -367,9 +369,7 @@ Three consequences worth knowing:
 * **It is bound to the file it sits adjacent to.** A closure derived from one
   network fails to represent another, so the sidecar is only applicable to the
   `.bin` whose name it appends.
-* **A version bump silently discards old sidecars.** The format version was
-  incremented to 2 on 3 August 2026; files produced prior to that are disregarded and
-  reconstructed instead of being misinterpreted.
+* **A version bump silently discards old sidecars.** The format version was incremented to 2 on 3 August 2026 and to 3 on 13 October 2026, at which point a predicate’s own declaration `P ~ ->` ceased to be interpreted as a pair of its index; files produced by an earlier version are ignored and rebuilt rather than being misinterpreted.
 
 ## Generation of the Pruned Files
 

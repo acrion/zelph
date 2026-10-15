@@ -432,6 +432,31 @@ namespace zelph::console
             }
         } capture_guard{as_module ? _n : nullptr};
 
+        // Language: the .lang of a module governs its own lines and ends
+        // with them. Previously, it remained active past the import, meaning
+        // a module could not name its vocabulary in a fixed language
+        // without also shifting the importer into that language. A session
+        // keeps its .lang, just as typed lines do. RAII once more, ensuring
+        // that a module terminating due to an error gives the language back
+        // as well.
+        struct ModuleLanguage
+        {
+            network::Reasoning* n;
+            std::string         importer;
+            bool                restored = false;
+            explicit ModuleLanguage(network::Reasoning* r)
+                : n(r)
+                , importer(r ? r->get_lang() : std::string())
+            {
+            }
+            void restore()
+            {
+                if (n && !restored) n->set_lang(importer);
+                restored = true;
+            }
+            ~ModuleLanguage() { restore(); }
+        } module_language{as_module ? _n : nullptr};
+
         // A session announces itself only where the name it was given is not
         // the file it found -- `zelph english` running the standard library's
         // example, `zelph report` running `report.zph`. A piped session prints
@@ -517,6 +542,11 @@ namespace zelph::console
 
         module_id_claim.committed = true;
 
+        // The module postponed the session's inference run until its own
+        // end. Since that run and its output belong to the importer, the
+        // language is restored before it.
+        module_language.restore();
+
         if (warn_about_writes && _n->count() > nodes_before)
         {
             _n->error("WARNING: '" + file + "' added " + std::to_string(_n->count() - nodes_before)
@@ -586,7 +616,7 @@ namespace zelph::console
         if (_repl_state->auto_run)
         {
             _repl_state->auto_run = false;
-            _n->out("Auto-run has been disabled due to loading a large dataset.", true);
+            _n->out("Auto-run has been disabled, as every .load disables it: inference after each input line can be slow on a loaded network. Use .auto-run to enable it again.", true);
         }
 
         if (cmd.size() == 2)
@@ -774,7 +804,8 @@ namespace zelph::console
         uint64_t           total_chunks = static_cast<uint64_t>(stats.left_chunk_count)
                                         + static_cast<uint64_t>(stats.right_chunk_count)
                                         + static_cast<uint64_t>(stats.name_of_node_count)
-                                        + static_cast<uint64_t>(stats.node_of_name_count);
+                                        + static_cast<uint64_t>(stats.node_of_name_count)
+                                        + static_cast<uint64_t>(stats.annotation_count);
 
         _n->out_stream() << "Serialized File Statistics:" << std::endl;
         _n->out_stream() << "------------------------" << std::endl;
@@ -784,6 +815,9 @@ namespace zelph::console
         _n->out_stream() << "Right Chunks: " << stats.right_chunk_count << std::endl;
         _n->out_stream() << "Name-of-Node Chunks: " << stats.name_of_node_count << std::endl;
         _n->out_stream() << "Node-of-Name Chunks: " << stats.node_of_name_count << std::endl;
+        // Only a file that includes the section reports it, as .index-file
+        // does.
+        if (stats.annotation_count != 0) _n->out_stream() << "Annotation Chunks: " << stats.annotation_count << std::endl;
         _n->out_stream() << "Total Chunks: " << total_chunks << std::endl;
         _n->out_stream() << "------------------------" << std::endl;
         // The counts come from the header; nothing here read a chunk. That is
@@ -853,6 +887,15 @@ namespace zelph::console
         if (!file.ends_with(".bin"))
             throw std::runtime_error("Command .save: filename must end with '.bin'");
 
+        // A `=>` fact written by zelph/fact or zelph_fact undergoes
+        // verification prior to a save, just as it does before a run
+        // (Reasoning::settle_fact_rules): a save within the block that wrote
+        // it, or a zelph_save before the next run, wrote a rule still in force
+        // to the file unchecked, and a load read it back as a rule already
+        // present in the graph, which no subsequent validation eliminates. A
+        // refusal is the error of the save, and nothing is written.
+        if (const std::string refused = _n->settle_fact_rules(); !refused.empty()) throw std::runtime_error(refused);
+
         _n->save_to_file(file);
         _n->diagnostic("Saved network to " + file, true);
     }
@@ -868,6 +911,13 @@ namespace zelph::console
         const std::string& file = cmd[1];
         if (!file.ends_with(".bin"))
             throw std::runtime_error("Command .save-predicates: filename must end with '.bin'");
+
+        // A slice carries the rules over its predicates, so the raw `=>` facts
+        // are validated first, just as with .save: a .save-predicates line in
+        // a module that the block imports wrote a rule still in force and
+        // stored it in the file without verification, and a load retrieved it
+        // as a rule the graph already held.
+        if (const std::string refused = _n->settle_fact_rules(); !refused.empty()) throw std::runtime_error(refused);
 
         // A predicate is a NODE, and a fact is a node, so a fact can be a
         // predicate -- `.list-predicate-usage` lists `a p b` among the

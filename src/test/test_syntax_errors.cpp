@@ -25,6 +25,9 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #include "test_helpers.hpp"
 
+#include <exception>
+#include <filesystem>
+#include <fstream>
 #include <string>
 
 using namespace zelph::test;
@@ -365,6 +368,81 @@ TEST_CASE("syntax errors: an unparenthesised rule names the node in both roles")
         collector.clear();
         interactive.process("(R is transitive, A R B, B R C) => (A R C)");
         CHECK_FALSE(any_event_contains(collector, "both the predicate and an object")); });
+}
+
+TEST_CASE("syntax errors: a keyword block is named, not by the blank line that ends it")
+{
+    // A handler's error was reported with the line that dispatched its
+    // block -- the blank one -- as `Error in line ""`, at the end of input
+    // with no line present, and after a handler had imported a file with
+    // an empty keyword name. A string the handler threw followed a prefix
+    // identifying the mechanism, and an error value different from a string
+    // had its text entirely discarded. The block is named in the way a
+    // statement spanning lines is (as demonstrated in the test below): by
+    // the content that was typed.
+    namespace fs          = std::filesystem;
+    const fs::path script = fs::temp_directory_path() / "zelph_test_keyword_error_import.zph";
+    {
+        std::ofstream f(script);
+        f << "mod ~ loaded\n";
+    }
+
+    const auto message_of = [](const auto& action)
+    {
+        try
+        {
+            action();
+        }
+        catch (const std::exception& ex)
+        {
+            return std::string(ex.what());
+        }
+        return std::string("(no error)");
+    };
+
+    run_both_modes([&](auto& collector, auto& interactive)
+                   {
+        (void)collector;
+        interactive.process(R"js(%(zelph/register-keyword "errkw" (fn [t] (error "refused"))))js");
+
+        SUBCASE("the blank line that dispatches it")
+        {
+            interactive.process("errkw John is");
+            CHECK_THROWS_WITH_AS(interactive.process(""), doctest::Contains("Error in line \"errkw John is\""), std::runtime_error);
+        }
+        SUBCASE("the end of input names it too")
+        {
+            interactive.process("errkw John is");
+            CHECK_THROWS_WITH_AS(interactive.finish_input(), doctest::Contains("Error in line \"errkw John is\""), std::runtime_error);
+        }
+        SUBCASE("a long block is named by its first line")
+        {
+            interactive.process("errkw John is");
+            interactive.process("happy.");
+            CHECK_THROWS_WITH_AS(interactive.process(""), doctest::Contains("Error in line \"errkw John is …\""), std::runtime_error);
+        }
+        SUBCASE("a string error carries no technical prefix")
+        {
+            interactive.process("errkw John is");
+            CHECK(message_of([&] { interactive.process(""); }) == "Error in line \"errkw John is\": refused");
+        }
+        SUBCASE("a non-string error value keeps its text")
+        {
+            interactive.process(R"js(%(zelph/register-keyword "errst" (fn [t] (error {:msg "refused"}))))js");
+            interactive.process("errst John is");
+            const std::string message = message_of([&] { interactive.process(""); });
+            CHECK(message.find("Janet error in handler for keyword 'errst'") != std::string::npos);
+            CHECK(message.find("refused") != std::string::npos);
+        }
+        SUBCASE("a handler that imported a file is still named")
+        {
+            interactive.process(R"js(%(zelph/register-keyword "errimp" (fn [t] (zelph/import ")js" + script.generic_string() + R"js(") (error "refused after import"))))js");
+            interactive.process("errimp go");
+            CHECK(message_of([&] { interactive.process(""); }) == "Error in line \"errimp go\": refused after import");
+        } });
+
+    std::error_code ec;
+    fs::remove(script, ec);
 }
 
 TEST_CASE("syntax errors: a statement spanning lines is named whole, not by its last line")

@@ -51,6 +51,11 @@
 # the natural numeral (ONE WORLD; refer to the facade below), hence
 # &7 / &2 = &3 is the natural module's division.
 
+# Each name below represents a node within the language zelph,
+# regardless of the .lang setting used by the importer; upon
+# completion of the import, the importer's language is restored.
+.lang zelph
+
 # Default arithmetic substrate; import a different provider of
 # "arithmetic" (or claim the ID via .provides) BEFORE this module to override:
 .import binary-arithmetic
@@ -61,13 +66,15 @@
   nonnegative value (one world for the nonnegative integers, see the
   facade below), (neg zint N) for a negative one. Input-layer
   convenience like zelph/number, to which the magnitude is delegated; a
-  negative zero such as -0 or -00 canonicalizes to the natural zero."
+  negative zero such as -0 or -00 canonicalizes to the natural zero.
+  neg and zint are the nodes of language zelph, whatever .lang says, so
+  a literal denotes the same node in every language."
   [s]
   (if (string/has-prefix? "-" s)
     (let [m (zelph/number (string/slice s 1))]
       (if (= m (zelph/number "0"))
         m
-        (zelph/fact "neg" "zint" m)))
+        (zelph/fact (zelph/resolve "neg" "zelph") (zelph/resolve "zint" "zelph") m)))
     (zelph/number s)))
 
 # Exclude the module's operators from the self-fact display sugar --

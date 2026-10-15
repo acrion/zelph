@@ -56,14 +56,40 @@ namespace zelph::test::wikidata_dump
         return "\"" + lang + "\":{\"language\":\"" + lang + "\",\"value\":\"" + value + "\"}";
     }
 
+    // A single statement inside the claims array of `property`, with
+    // `object` serving as its item value. A non-empty `hash` is placed within
+    // the main snak.
+    inline std::string statement(const std::string& property, const std::string& object, const std::string& hash = "")
+    {
+        return "{\"mainsnak\":{\"snaktype\":\"value\",\"property\":\"" + property + "\""
+             + (hash.empty() ? "" : ",\"hash\":\"" + hash + "\"")
+             + ",\"datavalue\":{\"value\":{\"entity-type\":\"item\",\"numeric-id\":" + object.substr(1)
+             + ",\"id\":\"" + object + "\"},\"type\":\"wikibase-entityid\"},\"datatype\":\"wikibase-item\"},"
+                                       "\"type\":\"statement\",\"id\":\"S$1\",\"rank\":\"normal\"}";
+    }
+
+    // A statement where the main snak lacks a value; `snaktype` is set to
+    // "somevalue" or "novalue".
+    inline std::string statement_without_value(const std::string& property, const std::string& snaktype)
+    {
+        return "{\"mainsnak\":{\"snaktype\":\"" + snaktype + "\",\"property\":\"" + property
+             + "\",\"datatype\":\"wikibase-item\"},\"type\":\"statement\",\"id\":\"S$0\",\"rank\":\"normal\"}";
+    }
+
+    // The claims array of `property`, holding `statements` in order.
+    inline std::string claims_of(const std::string& property, const std::vector<std::string>& statements)
+    {
+        std::string array;
+        for (const std::string& s : statements)
+            array += (array.empty() ? "" : ",") + s;
+        return "\"" + property + "\":[" + array + "]";
+    }
+
     // A single claim within a dump line: `property` having the item
     // `object` as its assigned value, in the shape the importer reads.
     inline std::string claim(const std::string& property, const std::string& object)
     {
-        return "\"" + property + "\":[{\"mainsnak\":{\"snaktype\":\"value\",\"property\":\"" + property
-             + "\",\"datavalue\":{\"value\":{\"entity-type\":\"item\",\"numeric-id\":" + object.substr(1)
-             + ",\"id\":\"" + object + "\"},\"type\":\"wikibase-entityid\"},\"datatype\":\"wikibase-item\"},"
-                                       "\"type\":\"statement\",\"id\":\"S$1\",\"rank\":\"normal\"}]";
+        return claims_of(property, {statement(property, object)});
     }
 
     // A dump line for an item or a property, shaped like the real dump: the

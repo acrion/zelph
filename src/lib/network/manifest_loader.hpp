@@ -110,10 +110,19 @@ namespace zelph::network
         // A version-1 sidecar therefore holds an edge per fact that has one
         // of the indexed facts as ITS subject, and none for a self-fact, so
         // it is rejected rather than trusted -- the next closure rebuilds it.
+        //
+        // Version 3: a relation-type declaration `P ~ ->` does not
+        // constitute a pair of P's own index. The extraction process
+        // examined solely a second bidirectional node, and the
+        // declaration's subject corresponds to the predicate itself,
+        // meaning a version-2 sidecar holds the pair (P, ->) and is
+        // therefore rejected instead of being trusted.
+        constexpr uint32_t pidx_version = 3;
+
         struct PidxHeader
         {
             char     magic[4]; // "ZPIX"
-            uint32_t version;  // 2
+            uint32_t version;  // pidx_version
             uint64_t predicate;
             uint64_t node_count;
             uint64_t last;

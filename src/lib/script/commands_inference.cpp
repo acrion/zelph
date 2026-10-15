@@ -40,27 +40,62 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 using namespace zelph;
 
+namespace
+{
+    // The commands `.run`, `.run-once`, and `.run-delta` accept a single
+    // optional parameter, `quiet`. Any other argument is rejected:
+    // previously, the commands would disregard all arguments, meaning that
+    // `.run quiet` would execute a loud pass, and so would a misspelling of
+    // the argument.
+    //
+    // `derived` connects with `quiet`, in either sequence: the run then
+    // retains every fact it derives for (zelph/run :quiet :derived) to
+    // return, and a run that prints has no recipient to return them to.
+    struct RunArguments
+    {
+        bool quiet   = false;
+        bool derived = false;
+    };
+
+    RunArguments run_arguments(const std::vector<std::string>& cmd)
+    {
+        RunArguments arguments;
+        for (std::size_t i = 1; i < cmd.size(); ++i)
+        {
+            bool* const flag = cmd[i] == "quiet" ? &arguments.quiet : cmd[i] == "derived" ? &arguments.derived
+                                                                                          : nullptr;
+            if (flag == nullptr || *flag) throw std::runtime_error("Usage: " + cmd[0] + " [quiet] [derived]");
+            *flag = true;
+        }
+        if (arguments.derived && !arguments.quiet) throw std::runtime_error(cmd[0] + ": derived needs quiet");
+        return arguments;
+    }
+}
+
 namespace zelph::console
 {
-    void CommandExecutor::Impl::cmd_run(const std::vector<std::string>&)
+    void CommandExecutor::Impl::cmd_run(const std::vector<std::string>& cmd)
     {
+        const RunArguments arguments = run_arguments(cmd);
         require_full_graph_mode(".run");
-        _n->run(_repl_state->deduction_mode != DeductionMode::Off, false, false);
-        _n->diagnostic("Ready.", true);
+        _n->run(_repl_state->deduction_mode != DeductionMode::Off, false, false, false, false, arguments.quiet, arguments.derived);
+        if (!arguments.quiet) _n->diagnostic("Ready.", true);
     }
 
-    void CommandExecutor::Impl::cmd_run_once(const std::vector<std::string>&)
+    void CommandExecutor::Impl::cmd_run_once(const std::vector<std::string>& cmd)
     {
+        const RunArguments arguments = run_arguments(cmd);
         require_full_graph_mode(".run-once");
-        _n->run(_repl_state->deduction_mode != DeductionMode::Off, false, true);
-        _n->diagnostic("Ready.", true);
+        _n->run(_repl_state->deduction_mode != DeductionMode::Off, false, true, false, false, arguments.quiet, arguments.derived);
+        if (!arguments.quiet) _n->diagnostic("Ready.", true);
     }
 
-    void CommandExecutor::Impl::cmd_run_delta(const std::vector<std::string>&)
+    void CommandExecutor::Impl::cmd_run_delta(const std::vector<std::string>& cmd)
     {
+        const RunArguments arguments = run_arguments(cmd);
         require_full_graph_mode(".run-delta");
-        _n->run(_repl_state->deduction_mode != DeductionMode::Off, false, false, false, true);
-        _n->diagnostic("Ready.", true);
+        _n->run(_repl_state->deduction_mode != DeductionMode::Off, false, false, false, true, arguments.quiet, arguments.derived);
+        if (!arguments.quiet) _n->diagnostic("Ready.", true);
     }
 
 #ifndef __EMSCRIPTEN__

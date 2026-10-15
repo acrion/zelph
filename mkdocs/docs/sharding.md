@@ -47,6 +47,8 @@ A `.bin` file is a sequence of [Cap'n Proto](https://capnproto.org/) packed mess
 
 Each section is split into chunks of up to 1,000,000 entries.
 
+A network storing [node annotations](janet.md#node-annotations) includes a fifth section following `nodeOfName`, `annotations`, containing one entry for each node and key pair. A file lacking annotations contains no such section, and `.stat-file` and `.index-file` report the section only when present, thus reflecting prior behaviour for all files that do not include it. A partial load and a manifest skip reading it, the shard emitter carries only the four sections listed above, and an engine older than the section stops after those four and loads the file without its annotations.
+
 The two name sections are grouped by language and sorted within it: `nameOfNode` by node ID, `nodeOfName` by the name string. Their chunk boundaries are therefore key ranges, and a chunk can be located by its key.
 
 The `left` and `right` sections are **not** sorted. They are written in the order the nodes stand in the in-memory map, which for an imported network is roughly the order in which they were created; only the adjacency list inside each entry is sorted. `left=0` thus means "the first million nodes that were created", not an ID range, and there is no way to tell from a node ID which adjacency chunk holds it — that is what a [node route index](#route-selectors) is for.

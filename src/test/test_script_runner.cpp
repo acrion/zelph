@@ -124,6 +124,26 @@ TEST_CASE("zelph/run-script: a second run sees an edited dependency")
         CHECK_FALSE(any_output_contains(collector, "tag=v1")); });
 }
 
+// A `.janet` file processed by `.import` constitutes an evaluation in
+// itself, meaning the raw `=>` facts it produces are validated upon
+// completion. One that is executed via `zelph/run-script` from a block is
+// part of that block, and the block performs the verification when it ends.
+TEST_CASE("janet script: a raw `=>` the script writes is checked when the script ends")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        const auto dir = make_script_dir("fact-rule");
+        write_file(dir / "rule.janet", R"js((zelph/fact (zelph/fact 'X "waits" "nil") "=>" (zelph/fact 'X 'U "nil")))js");
+        const std::string refusal = "zelph/fact: The predicate of \"X U nil\" in the rule's consequence is the variable U";
+
+        SUBCASE(".import") { CHECK_THROWS_WITH(interactive.process(".import " + (dir / "rule.janet").generic_string()), doctest::Contains(refusal)); }
+        SUBCASE("zelph/run-script within a block") { CHECK_THROWS_WITH(interactive.process(call(dir / "rule.janet")), doctest::Contains(refusal)); }
+
+        collector.clear();
+        interactive.process(".list-rules");
+        CHECK(any_output_contains(collector, "No rules found")); });
+}
+
 // ---------------------------------------------------------------------------
 // zelph/import from Janet: statement processing re-entered from inside the VM.
 //
@@ -178,4 +198,25 @@ TEST_CASE("zelph/import: the same rule imported twice from Janet stays one rule"
 
         interactive.process(R"js(%(string "TWIN-DERIVED-" (zelph/exists "isaac" "descendantof" "abraham")))js");
         CHECK(any_output_contains(collector, "TWIN-DERIVED-true")); });
+}
+
+// A module that a block imports is accountable to the session for its run, and
+// that run occurs within the block: a raw `=>` fact that the block authored
+// before the import fired within it, with `-> -> nil` obtained as a derived
+// result before the block ended. The run checks first, and is refused.
+TEST_CASE("zelph/import: the run a module owes checks the block's raw `=>` facts first")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        const auto dir = make_script_dir("import-fact-rule");
+        write_file(dir / "mod.zph", "ann waits nil\n");
+
+        CHECK_THROWS_WITH(interactive.process(R"js(%(do (zelph/fact (zelph/fact 'X "waits" "nil") "=>" (zelph/fact 'W 'W "nil")) (zelph/import ")js"
+                                              + (dir / "mod.zph").generic_string() + R"js(")))js"),
+                          doctest::Contains("zelph/import: zelph/fact: The predicate of \"W W nil\""));
+
+        collector.clear();
+        interactive.process("S P nil");
+        CHECK(any_output_contains(collector, "Answer: ann waits nil"));
+        CHECK_FALSE(any_output_contains(collector, "-> ->")); });
 }

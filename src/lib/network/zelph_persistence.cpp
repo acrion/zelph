@@ -71,7 +71,7 @@ std::string Zelph::Impl::pidx_path(const Node predicate) const
 #ifndef __EMSCRIPTEN__
 bool Zelph::Impl::try_load_pidx(const Node predicate, std::vector<IndexPair>& out) const
 {
-    if (!_pidx_io_enabled.load(std::memory_order_acquire) || _pidx_base.empty())
+    if (!pidx_io_allowed(predicate))
         return false;
 
     const std::string path = pidx_path(predicate);
@@ -84,7 +84,7 @@ bool Zelph::Impl::try_load_pidx(const Node predicate, std::vector<IndexPair>& ou
         detail::PidxHeader h{};
         if (fread(&h, sizeof(h), 1, file) == 1
             && std::memcmp(h.magic, "ZPIX", 4) == 0
-            && h.version == 2
+            && h.version == detail::pidx_version
             && h.predicate == predicate
             && h.node_count == _pidx_node_count
             && h.last == _pidx_last
@@ -117,7 +117,7 @@ bool Zelph::Impl::try_load_pidx(const Node predicate, std::vector<IndexPair>& ou
 #ifndef __EMSCRIPTEN__
 void Zelph::Impl::try_save_pidx(const Node predicate, const std::vector<IndexPair>& pairs) const
 {
-    if (!_pidx_io_enabled.load(std::memory_order_acquire) || _pidx_base.empty())
+    if (!pidx_io_allowed(predicate))
         return;
 
     const std::string path = pidx_path(predicate);
@@ -130,7 +130,7 @@ void Zelph::Impl::try_save_pidx(const Node predicate, const std::vector<IndexPai
 
     detail::PidxHeader h{};
     std::memcpy(h.magic, "ZPIX", 4);
-    h.version    = 2;
+    h.version    = detail::pidx_version;
     h.predicate  = predicate;
     h.node_count = _pidx_node_count;
     h.last       = _pidx_last;
@@ -181,6 +181,7 @@ void Zelph::Impl::clear_loaded_state()
     invalidate_relation_type_set();
     forget_clusters();
     note_load();
+    Zelph::advance_content_epoch();
 
     std::unique_lock<std::shared_mutex> lock_left(_smtx_left);
     std::unique_lock<std::shared_mutex> lock_right(_smtx_right);
@@ -198,6 +199,22 @@ void Zelph::Impl::clear_loaded_state()
     _older_rule_literals.clear();
     _older_negations = false;
     _names_loaded_partially.store(false, std::memory_order_relaxed);
+
+    std::unique_lock<std::shared_mutex> lock_set_patterns(_set_patterns_mtx);
+    _set_patterns.clear();
+    _has_set_patterns.store(false, std::memory_order_release);
+    // A file that has been loaded may include a fact involving multiple
+    // objects (Zelph::may_hold_wider_statements), unless its header says
+    // otherwise (loadSmallData).
+    _may_hold_wider_statements.store(true, std::memory_order_release);
+
+    std::unique_lock<std::shared_mutex> lock_opaque(_opaque_mtx);
+    _opaque_predicates.clear();
+    _has_opaque_predicates.store(false, std::memory_order_release);
+
+    std::unique_lock<std::shared_mutex> lock_annotations(_mtx_annotations);
+    _annotations.clear();
+    _has_annotations.store(false, std::memory_order_release);
 }
 #endif
 
@@ -213,6 +230,15 @@ void Zelph::Impl::loadSmallData(const ZelphImpl::Reader& impl)
     }
     _last     = impl.getLast();
     _last_var = impl.getLastVar();
+
+    // The session that saved the network knew whether it held a fact
+    // involving multiple objects, and the file explicitly states this.
+    // Absent this knowledge, each load presumed such a fact, causing a
+    // statement inside a condition to be interpreted via facts that could
+    // state it with multiple objects: `.explain` of the documentation's
+    // polynomial identity performed tenfold the work of the session that
+    // saved the network and ran out of its budget.
+    if (impl.getSingleObjectFacts()) _may_hold_wider_statements.store(false, std::memory_order_release);
 }
 #endif
 
@@ -371,6 +397,35 @@ void Zelph::Impl::loadNodeOfNameChunks(kj::BufferedInputStreamWrapper& bufferedI
     #ifdef NDEBUG
     io::OutputStream(_output, io::OutputChannel::Diagnostic, false) << std::endl;
     #endif
+}
+#endif
+
+#ifndef __EMSCRIPTEN__
+// Read by a whole-file load after the name sections; a partial load halts
+// before them. The store is vacant at this point (clear_loaded_state), and the
+// file holds each key of a node exactly once, with distinct values.
+void Zelph::Impl::loadAnnotationChunks(kj::BufferedInputStreamWrapper& bufferedInput, const ::capnp::ReaderOptions& options, const uint32_t annotationChunkCount)
+{
+    std::unique_lock<std::shared_mutex> lock(_mtx_annotations);
+    // Raised before the first entry is stored: each reader and each removal
+    // returns immediately on a false flag, so a false flag must signify an
+    // empty store. A chunk that encounters failure after prior readings
+    // retains the previously read entries in the store, just as it
+    // preserves earlier sections within the graph, and the flag continues
+    // to describe those entries.
+    if (annotationChunkCount != 0) _has_annotations.store(true, std::memory_order_release);
+    for (uint32_t i = 0; i < annotationChunkCount; ++i)
+    {
+        ::capnp::PackedMessageReader chunkMessage(bufferedInput, options);
+        for (const auto entry : chunkMessage.getRoot<AnnotationChunk>().getEntries())
+        {
+            const auto key    = entry.getKey();
+            auto&      values = _annotations[entry.getNode()][std::string(key.cStr(), key.size())];
+            for (const auto value : entry.getValues())
+                values.emplace_back(value.cStr(), value.size());
+        }
+    }
+    _has_annotations.store(!_annotations.empty(), std::memory_order_release);
 }
 #endif
 
@@ -1002,6 +1057,7 @@ void Zelph::Impl::saveToFile(const std::string& filename, const ankerl::unordere
     impl.setLastVar(_last_var);
     impl.setTemplateIds(_older_rule_literals.empty());
     impl.setNegationConditions(!_older_negations);
+    impl.setSingleObjectFacts(!_may_hold_wider_statements.load(std::memory_order_acquire));
 
     const bool filtering = keep != nullptr;
 
@@ -1094,6 +1150,26 @@ void Zelph::Impl::saveToFile(const std::string& filename, const ankerl::unordere
     size_t rightChunkCount = (rightKept + chunkSize - 1) / chunkSize;
     impl.setLeftChunkCount(static_cast<uint32_t>(leftChunkCount));
     impl.setRightChunkCount(static_cast<uint32_t>(rightChunkCount));
+
+    // Annotations are associated with their respective nodes, meaning a
+    // filtered save outputs only those belonging to the kept nodes. Each key
+    // has a single entry, with nodes ordered by ID; read again below, where
+    // no modifications could have occurred: every write occurs on the main
+    // thread, the very thread responsible for saving.
+    std::vector<Node> annotated;
+    size_t            annotationEntries = 0;
+    {
+        std::shared_lock lock_annotations(_mtx_annotations);
+        for (const auto& [node, keys] : _annotations)
+        {
+            if (!kept(node)) continue;
+            annotated.push_back(node);
+            annotationEntries += keys.size();
+        }
+    }
+    std::sort(annotated.begin(), annotated.end());
+    const size_t annotationChunkCount = (annotationEntries + chunkSize - 1) / chunkSize;
+    impl.setAnnotationChunkCount(static_cast<uint32_t>(annotationChunkCount));
 
     ::capnp::writePackedMessage(output, mainMessage);
 
@@ -1242,6 +1318,45 @@ void Zelph::Impl::saveToFile(const std::string& filename, const ankerl::unordere
             ::capnp::writePackedMessage(output, chunkMessage);
         }
     }
+
+    // Chunk the annotations, after every section that an older engine
+    // processes: it halts just before them.
+    if (annotationChunkCount != 0)
+    {
+        std::shared_lock lock_annotations(_mtx_annotations);
+
+        std::vector<std::pair<Node, const node_annotations::value_type*>> entries;
+        entries.reserve(annotationEntries);
+        for (const Node node : annotated)
+        {
+            for (const auto& entry : _annotations.find(node)->second)
+                entries.emplace_back(node, &entry);
+        }
+
+        for (size_t chunkIdx = 0; chunkIdx < annotationChunkCount; ++chunkIdx)
+        {
+            const size_t first    = chunkIdx * chunkSize;
+            const size_t thisSize = std::min(chunkSize, entries.size() - first);
+
+            ::capnp::MallocMessageBuilder chunkMessage(firstSegmentWords(thisSize));
+            auto                          chunk = chunkMessage.initRoot<AnnotationChunk>();
+            chunk.setChunkIndex(static_cast<uint32_t>(chunkIdx));
+
+            auto list = chunk.initEntries(static_cast<::capnp::uint>(thisSize));
+            for (size_t i = 0; i < thisSize; ++i)
+            {
+                const auto& [node, entry] = entries[first + i];
+                const auto& [key, values] = *entry;
+                auto written              = list[static_cast<::capnp::uint>(i)];
+                written.setNode(node);
+                written.setKey(::capnp::Text::Reader(key.data(), key.size()));
+                auto texts = written.initValues(static_cast<::capnp::uint>(values.size()));
+                for (size_t j = 0; j < values.size(); ++j)
+                    texts.set(static_cast<::capnp::uint>(j), ::capnp::Text::Reader(values[j].data(), values[j].size()));
+            }
+            ::capnp::writePackedMessage(output, chunkMessage);
+        }
+    }
 }
 #endif
 
@@ -1296,6 +1411,7 @@ bool Zelph::Impl::loadFromFile(const std::string& filename, bool& negation_condi
         uint32_t rightChunkCount      = impl.getRightChunkCount();
         uint32_t nameOfNodeChunkCount = impl.getNameOfNodeChunkCount();
         uint32_t nodeOfNameChunkCount = impl.getNodeOfNameChunkCount();
+        uint32_t annotationChunkCount = impl.getAnnotationChunkCount();
 
         // Following the header, on which a file that is not a network fails:
         // in such a case, the session's graph remains unchanged. From this
@@ -1307,12 +1423,17 @@ bool Zelph::Impl::loadFromFile(const std::string& filename, bool& negation_condi
         state_cleared = true;
         loadSmallData(impl);
 
-        io::OutputStream(_output, io::OutputChannel::Diagnostic, true) << "Loading: left chunks=" << leftChunkCount << ", right chunks=" << rightChunkCount
-                                                                       << ", nameOfNode chunks=" << nameOfNodeChunkCount << ", nodeOfName chunks=" << nodeOfNameChunkCount;
+        {
+            io::OutputStream line(_output, io::OutputChannel::Diagnostic, true);
+            line << "Loading: left chunks=" << leftChunkCount << ", right chunks=" << rightChunkCount
+                 << ", nameOfNode chunks=" << nameOfNodeChunkCount << ", nodeOfName chunks=" << nodeOfNameChunkCount;
+            if (annotationChunkCount != 0) line << ", annotation chunks=" << annotationChunkCount;
+        }
 
         loadLeftRightChunks(bufferedInput, options, leftChunkCount, rightChunkCount);
         loadNameOfNodeChunks(bufferedInput, options, nameOfNodeChunkCount);
         loadNodeOfNameChunks(bufferedInput, options, nodeOfNameChunkCount);
+        loadAnnotationChunks(bufferedInput, options, annotationChunkCount);
 
         io::OutputStream(_output, io::OutputChannel::Diagnostic, true) << "String pool size after load: " << _string_pool.size();
 
@@ -1324,6 +1445,10 @@ bool Zelph::Impl::loadFromFile(const std::string& filename, bool& negation_condi
         _pidx_node_count = _left.size();
         _pidx_last       = _last;
         _pidx_last_var   = _last_var;
+        {
+            std::unique_lock lock(_pred_idx_mtx);
+            _pidx_changed.clear();
+        }
         _pidx_io_enabled.store(true, std::memory_order_release);
         return template_ids;
     }

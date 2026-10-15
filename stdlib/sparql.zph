@@ -1371,6 +1371,11 @@
               125 (-- depth)))  # }
           (not= depth 0)))))
 
+# Each query is evaluated within this cluster. Once the query has been
+# answered, sparql-handler drops the cluster, and it refuses to run while a
+# cluster with this name exists.
+(def scratch-cluster "sparql:query")
+
 (defn sparql-handler [text]
   (if (sparql-incomplete? text)
     :incomplete
@@ -1392,8 +1397,25 @@
           :prefix (put prefixes (part 1) (part 2))
           :select (set select-node part)))
 
+      # The query constructs patterns -- one fact for each triple, the
+      # conjunction set that joins them, its associated tag, the variables
+      # involved, and the nodes that a bare term names for the first time --
+      # and these are what the query asks, not what it found. Formed within
+      # the caller's cluster, they stayed in the graph: a two-triple SELECT
+      # added nine nodes, and `S ~ conjunction` answered the query's
+      # conjunction as data. Evaluated in a cluster of its own, they are
+      # dropped with the answer, and the caller's cluster is active again
+      # afterwards, even if the evaluation does not succeed.
+      (def prev (zelph/cluster))
+      (when (or (= prev scratch-cluster)
+                (some (fn [[name _]] (= name scratch-cluster)) (zelph/clusters)))
+        (error (string "SPARQL: a cluster named \"" scratch-cluster "\" exists already, "
+                       "and the query would drop it: each query is evaluated in a "
+                       "cluster of that name, which is dropped with the answer.")))
+      (zelph/cluster scratch-cluster)
       (def [projected proj-vars]
-        (prof "total eval" (fn [] (eval-select select-node prefixes))))
+        (defer (do (zelph/cluster prev) (zelph/cluster-drop scratch-cluster))
+          (prof "total eval" (fn [] (eval-select select-node prefixes)))))
       (format-results projected proj-vars))))
 
 (zelph/register-keyword "sparql" sparql-handler)

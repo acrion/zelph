@@ -121,7 +121,7 @@ namespace zelph::console
         if (_repl_state->auto_run)
         {
             _repl_state->auto_run = false;
-            _n->out("Auto-run has been disabled due to importing a large dataset.", true);
+            _n->out("Auto-run has been disabled, as every .wikidata-qualifiers disables it: inference after each input line can be slow on the network it extends. Use .auto-run to enable it again.", true);
         }
 
         chrono::StopWatch watch;

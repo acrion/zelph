@@ -46,6 +46,7 @@ namespace zelph::io
         uint32_t right_chunk_count   = 0;
         uint32_t name_of_node_count  = 0;
         uint32_t node_of_name_count  = 0;
+        uint32_t annotation_count    = 0; // zero in every file that lacks node annotations
         uint64_t file_size_bytes     = 0;
         uint64_t header_length_bytes = 0;
     };
@@ -74,6 +75,7 @@ namespace zelph::io
         std::vector<BinChunkRef> right_chunks;
         std::vector<BinChunkRef> name_of_node_chunks;
         std::vector<BinChunkRef> node_of_name_chunks;
+        std::vector<BinChunkRef> annotation_chunks;
     };
 
     /// The header only, which is what makes this instant on an 88 GB file.

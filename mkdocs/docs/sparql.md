@@ -50,6 +50,8 @@ like a query with no results.
 
 Results are printed as tab-separated rows. For nodes that carry names, both the Wikidata ID and the English label are shown when available, e.g. `Q703534 (employee)`.
 
+Every query is evaluated within a cluster of its own, `sparql:query`, which is dropped alongside the answer, ensuring that a query leaves nothing in the graph: neither its patterns nor the nodes that a bare term names for the first time. The caller’s cluster is active again afterwards. A query is refused if a cluster bearing that name is currently present, as the drop would remove that cluster too.
+
 ## Supported Subset
 
 | Feature                         | Notes                                                                                             |

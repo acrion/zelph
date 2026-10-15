@@ -74,6 +74,12 @@ namespace zelph
     // everything read afterwards is a use-after-free. The crash then surfaces
     // wherever the callee next touches its own stack, arbitrarily far from
     // here, and moves or disappears with any change to allocation timing.
+    // This behaviour persisted through Janet 1.41.2: starting with 1.42.0,
+    // the upstream pull request #1720 introduced a change where
+    // janet_continue_no_check now roots a nested fiber during execution,
+    // meaning the fiber here is rooted twice -- a state that is balanced, as
+    // each janet_gcunroot removes precisely one root, and this condition is
+    // harmless.
     //
     // Found as a segfault on `.import decimal-arithmetic` followed by
     // `.import symbolic-core`: building a rule allocates enough to trigger a
@@ -120,11 +126,71 @@ namespace zelph
         return !_scoped_variables.empty();
     }
 
+    // A struct, a table, a tuple, and an array print as `(pp value)` prints
+    // them -- displayed on a single line, with a dictionary cut after 30
+    // entries and an array after 160 -- while the text is limited to
+    // kEchoBytes bytes: the value of `(use module)` is the session's
+    // environment table, which stores every docstring, and Janet's internal
+    // truncation still leaves several thousand bytes of it. Janet's
+    // description named only the type and an address, `<struct 0x…>`. The cut
+    // backs off to the start of a UTF-8 character and indicates the total
+    // length of the entire text. Every other value keeps its original
+    // description, so a string appears in full and enclosed in quotes, just as
+    // before.
     std::string ScriptEngine::Impl::format_janet(Janet j)
     {
-        JanetString   desc = janet_description(j);
-        JanetByteView view = {desc, janet_string_length(desc)};
-        return std::string(reinterpret_cast<const char*>(view.bytes), view.len);
+        switch (janet_type(j))
+        {
+        case JANET_STRUCT:
+        case JANET_TABLE:
+        case JANET_TUPLE:
+        case JANET_ARRAY:
+        {
+            constexpr std::size_t kEchoBytes   = 1000;
+            constexpr std::size_t kRenderBytes = std::size_t{1} << 16;
+
+            // Rendered one level at a time, progressing deeper, until a
+            // deeper pass yields no change or the text exceeds kRenderBytes.
+            // Janet's printer writes a part once for each location that holds
+            // it, causing the text of a value with shared components to
+            // expand exponentially with depth: a tuple holding the same tuple
+            // twice forty levels deep results in 2^40 leaves, and rendering
+            // it entirely never finished. A text remaining within
+            // kRenderBytes comes out as a single pass at maximum depth prints
+            // it. When exceeding that limit, the levels beneath the last pass
+            // print as `...`, and the marker indicates the text surpasses
+            // kRenderBytes rather than displaying its length, which is not
+            // known.
+            JanetBuffer* const pretty = janet_buffer(0);
+            std::string        text;
+            bool               complete = false;
+            for (int depth = 1; depth <= JANET_RECURSION_GUARD && !complete && text.size() <= kRenderBytes; ++depth)
+            {
+                pretty->count = 0;
+                janet_pretty(pretty, depth, JANET_PRETTY_ONELINE, j);
+                std::string deeper(reinterpret_cast<const char*>(pretty->data), static_cast<std::size_t>(pretty->count));
+                complete = deeper == text;
+                text     = std::move(deeper);
+            }
+
+            if (text.size() > kEchoBytes)
+            {
+                std::size_t cut = kEchoBytes;
+                while (cut > 0 && (static_cast<unsigned char>(text[cut]) & 0xC0) == 0x80)
+                    --cut;
+                const std::string total = !complete && text.size() > kRenderBytes ? "more than " + std::to_string(kRenderBytes) : std::to_string(text.size());
+                text.resize(cut);
+                text += " ... (" + total + " bytes, cut)";
+            }
+            return text;
+        }
+        default:
+        {
+            JanetString   desc = janet_description(j);
+            JanetByteView view = {desc, janet_string_length(desc)};
+            return std::string(reinterpret_cast<const char*>(view.bytes), view.len);
+        }
+        }
     }
 
     void ScriptEngine::Impl::log_janet_call(const std::string& func_name, int32_t argc, Janet* argv, bool is_entry, Janet ret) const
@@ -175,7 +241,7 @@ namespace zelph
             // removal: whether a statement named variables at all determines if
             // it constitutes a query (ScriptEngine::process_janet).
             std::lock_guard<std::mutex> lock(_state_mutex);
-            if (_statement && !_building_rule) _statement->asks = true;
+            if (_statement && (!_building_rule || _mentioning)) _statement->asks = true;
             if (const auto it = _scoped_variables.find(s_sym); it != _scoped_variables.end() && _n->exists(it->second)) return it->second;
 
             network::Node v = _n->var();
@@ -190,6 +256,15 @@ namespace zelph
     // Returns 0 if the node does not exist. Used by zelph/exists, zelph/sources, zelph/targets.
     network::Node ScriptEngine::Impl::resolve_janet_arg_no_create(Janet arg) const
     {
+        return resolve_janet_arg_no_create(arg, _n->published_lang());
+    }
+
+    // A binding that resolves several strings reads the language once and
+    // passes it here, ensuring all of them are names in one language: read per
+    // string, a thread inquired about a fact half in the language before a
+    // switch on the main thread and half in the language following it.
+    network::Node ScriptEngine::Impl::resolve_janet_arg_no_create(Janet arg, const std::string& lang) const
+    {
         if (janet_checktype(arg, JANET_ABSTRACT) || janet_checktype(arg, JANET_NUMBER))
         {
             return zelph_unwrap_node(arg);
@@ -199,8 +274,11 @@ namespace zelph
             const uint8_t* str  = janet_unwrap_string(arg);
             std::string    wstr = reinterpret_cast<const char*>(str);
 
-            // Check regular named nodes
-            network::Node n = _n->get_node(wstr, _n->lang());
+            // Check regular named nodes. A string names an atom, not a
+            // variable, as seen in zelph/resolve and zelph/lookup: the display
+            // name of a rule's variable made `(zelph/mentioned "X" "~" "dog")`
+            // yield an answer concerning the rule `(X ~ dog) => (X ~ pet)`.
+            network::Node n = _n->get_node(wstr, lang, true);
             if (n) return n;
 
             // Check core nodes (e.g. "~", "=>", "in", "..")

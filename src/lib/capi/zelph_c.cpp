@@ -31,6 +31,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include "network/fact_structure.hpp"
 #include "network/neural.hpp"
 #include "network/reasoning.hpp"
+#include "network/rule_identity.hpp"
 
 #include <algorithm>
 #include <atomic>
@@ -305,7 +306,104 @@ int32_t zelph_fact(zelph_engine*     engine,
             set.insert(objects[i]);
         }
 
-        *out_fact = engine->interactive.graph()->fact(subject, predicate, set);
+        auto* graph = engine->interactive.graph();
+
+        // A refuted marking of a ground fact constitutes a refutation,
+        // which possesses its own call, just as it does in Janet: written
+        // here, the marking took a claimed fact out of every query without a
+        // word. A marking whose fact holds a variable is a pattern, and this
+        // is the mechanism by which a caller requests refutations.
+        if (const zelph::network::Node refuted = graph->get_node(zelph::network::Zelph::refuted_fact_name(), "zelph");
+            refuted != 0 && predicate == graph->core.IsA && set.size() == 1 && *set.begin() == refuted
+            && graph->predicate_of(subject) != 0 && !graph->var_in_closure(subject))
+            throw std::runtime_error("zelph_fact: \"(" + graph->format(subject) + ") ~ refuted\" claims that the fact does not hold, "
+                                     "and that claim is written zelph_refute(engine, subject, predicate, objects, ...), which refuses it "
+                                     "for a fact the graph claims. A marking whose fact holds a variable is a pattern and may be built "
+                                     "to query refutations.");
+
+        // The claim below may be refused, and the statement will likewise not
+        // be written (Zelph::refuse_claim_of_marked_parts).
+        graph->refuse_claim_of_marked_parts(subject, predicate, set);
+
+        // A `=>` fact whose consequence features a predicate that no condition
+        // binds is checked by the next run, as zelph/fact notes one
+        // (Reasoning::note_fact_rule): an inner rule of a generator maintains
+        // this structure until the call that holds it. Likewise checked is a
+        // mention of the rule authored by zelph_mention, which the claim below
+        // puts in force, and a refusal retracts the claim alone.
+        const bool unbound_rule = predicate == graph->core.Causes && !zelph::network::unbound_predicate(graph, {subject}, set).empty();
+        const zelph::network::Answer known_rule   = unbound_rule ? graph->check_fact(subject, predicate, set) : zelph::network::Answer(zelph::network::Node{0});
+        const bool                   note_rule    = unbound_rule && !known_rule.is_known();
+        const bool                   out_of_force = unbound_rule && known_rule.is_known() && !graph->is_rule_in_force(known_rule.relation());
+        *out_fact = graph->fact(subject, predicate, set);
+        if (*out_fact && note_rule) graph->note_fact_rule(*out_fact, "zelph_fact");
+
+        // `zelph_fact` is an assertion, thus it claims the statement and the
+        // facts nested in it, just as `zelph/fact` does within a
+        // Janet block. The ground condition of a loaded rule, asserted here,
+        // otherwise stayed a pattern, and the rule never fired.
+        if (*out_fact)
+        {
+            graph->unmark_rule_pattern(*out_fact);
+            graph->claim_marked_parts(*out_fact, subject, predicate, set);
+        }
+        if (*out_fact && out_of_force && graph->is_rule_in_force(*out_fact)) graph->note_fact_rule(*out_fact, "zelph_fact", true);
+        return succeed(); });
+}
+
+int32_t zelph_refute(zelph_engine*     engine,
+                     const zelph_node  subject,
+                     const zelph_node  predicate,
+                     const zelph_node* objects,
+                     const size_t      object_count,
+                     zelph_node*       out_fact)
+{
+    if (!engine || !objects || !out_fact) return fail(ZELPH_INVALID_ARGUMENT, "engine, objects and out_fact are required");
+    if (!subject || !predicate) return fail(ZELPH_INVALID_ARGUMENT, "subject and predicate must be nodes");
+    if (object_count == 0) return fail(ZELPH_INVALID_ARGUMENT, "a fact needs at least one object");
+
+    if (const int32_t refused = require_owner(engine, "zelph_refute"); refused != ZELPH_OK) return refused;
+
+    return guarded([&]
+                   {
+        zelph::network::adjacency_set set;
+        for (size_t i = 0; i < object_count; ++i)
+        {
+            if (!objects[i]) return fail(ZELPH_INVALID_ARGUMENT, "object " + std::to_string(i) + " is not a node");
+            set.insert(objects[i]);
+        }
+
+        // Within a Janet block, `zelph/refute` operates identically: the fact
+        // assigned a probability of 0, which Zelph::fact refuses for a fact
+        // that the graph claims, and the claimed marking, while the fact keeps
+        // its original status.
+        *out_fact = engine->interactive.graph()->refute(subject, predicate, set);
+        return succeed(); });
+}
+
+int32_t zelph_mention(zelph_engine*     engine,
+                      const zelph_node  subject,
+                      const zelph_node  predicate,
+                      const zelph_node* objects,
+                      const size_t      object_count,
+                      zelph_node*       out_fact)
+{
+    if (!engine || !objects || !out_fact) return fail(ZELPH_INVALID_ARGUMENT, "engine, objects and out_fact are required");
+    if (!subject || !predicate) return fail(ZELPH_INVALID_ARGUMENT, "subject and predicate must be nodes");
+    if (object_count == 0) return fail(ZELPH_INVALID_ARGUMENT, "a fact needs at least one object");
+
+    if (const int32_t refused = require_owner(engine, "zelph_mention"); refused != ZELPH_OK) return refused;
+
+    return guarded([&]
+                   {
+        zelph::network::adjacency_set set;
+        for (size_t i = 0; i < object_count; ++i)
+        {
+            if (!objects[i]) return fail(ZELPH_INVALID_ARGUMENT, "object " + std::to_string(i) + " is not a node");
+            set.insert(objects[i]);
+        }
+
+        *out_fact = engine->interactive.graph()->mention(subject, predicate, set);
         return succeed(); });
 }
 
@@ -1010,13 +1108,24 @@ int32_t zelph_exists(zelph_engine*     engine,
         // reach through this header alone: a network LOADED here carries the
         // rule-pattern and refutation markings it was saved with, and neither
         // is a claim. "Does this fact exist" means "did anyone claim it".
-        const zelph::network::Zelph* const graph = engine->interactive.graph();
+        //
+        // The engine's bookkeeping is not there either, just as with
+        // zelph/exists: a ground rule condition does not see it either.
+        zelph::network::Reasoning* const graph = engine->interactive.graph();
 
-        zelph::network::Node found = graph->check_fact(subject, predicate, set).relation();
-        if (!graph->check_fact(subject, predicate, set).is_known())
-            found = zelph::network::containing_fact(graph, subject, predicate, set);
+        const zelph::network::Answer exact = graph->check_fact(subject, predicate, set);
+        const zelph::network::Node   found = exact.relation();
+        bool                         holds = exact.is_known() && graph->check_fact(found).is_correct() && graph->is_asserted_fact(found) && !((predicate == graph->core.IsA || predicate == graph->core.PartOf) && graph->is_bookkeeping(found));
 
-        *out_exists = (found != 0 && graph->check_fact(found).is_correct() && graph->is_asserted_fact(found)) ? 1 : 0;
+        // Past the exact fact, the two sides ask a single matcher -- the one
+        // that matches a ground rule condition (ground_condition_matches): a
+        // statement within the arguments is stated by a fact containing
+        // additional objects, and a claimed wider fact counts also where the
+        // exact node exists solely as a rule's pattern.
+        if (!holds && graph->may_hold_wider_statements())
+            holds = zelph::network::ground_condition_matches(graph, subject, predicate, set);
+
+        *out_exists = holds ? 1 : 0;
         return succeed(); });
 }
 
@@ -1070,17 +1179,31 @@ int32_t zelph_rule(zelph_engine*     engine,
             set.insert(conditions[i]);
         }
 
-        // The conditions become a collection marked as a conjunction, and
-        // each consequence is linked to it by the causation predicate. That
-        // IS the rule - there is no rule object beyond the graph.
-        const zelph::network::Node condition_set = graph->collection(set);
-        graph->fact(condition_set, graph->core.IsA, {graph->core.Conjunction});
-
+        zelph::network::adjacency_set heads;
         for (size_t i = 0; i < consequence_count; ++i)
         {
             if (!consequences[i]) return fail(ZELPH_INVALID_ARGUMENT, "consequence " + std::to_string(i) + " is not a node");
-            graph->fact(condition_set, graph->core.Causes, {consequences[i]});
+            heads.insert(consequences[i]);
         }
+
+        // A consequence that writes a fact with a predicate not bound by any
+        // condition is rejected before anything is written, as each rule
+        // builder in Janet refuses it (unbound_predicate): the rule triggered
+        // without a predicate to write, and a variable that also stood as a
+        // subject or an object got a new node, displayed as "->".
+        if (const std::string why = zelph::network::unbound_predicate(graph, {set.begin(), set.end()}, heads); !why.empty())
+            throw std::runtime_error("zelph_rule: " + why);
+
+        // The conditions become a collection marked as a conjunction, while
+        // the consequences serve as the objects of a single causation fact
+        // applied to it, as expressed in the notation `(A) => (B) (C)`. That
+        // IS the rule - there is no rule object beyond the graph. Each
+        // consequence corresponded to a causation fact, meaning one rule per
+        // consequence, and a fresh variable shared by two consequences
+        // received a witness in each instance.
+        const zelph::network::Node condition_set = graph->collection(set);
+        graph->fact(condition_set, graph->core.IsA, {graph->core.Conjunction});
+        graph->fact(condition_set, graph->core.Causes, heads);
 
         *out_condition_set = condition_set;
         return succeed(); });

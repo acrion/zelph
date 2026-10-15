@@ -27,6 +27,9 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #include "test_helpers.hpp"
 
+#include <filesystem>
+#include <string>
+
 using namespace zelph::test;
 
 // ---------------------------------------------------------------------------
@@ -86,6 +89,44 @@ TEST_CASE("zelph/query: the same pattern answers the same way every time")
         CHECK(any_output_contains(collector, "first-count=1"));
         CHECK(any_output_contains(collector, "second-count=1"));
         CHECK(any_output_contains(collector, "third-count=1")); });
+}
+
+// The pattern a program builds for zelph/query stays with the program, as
+// the cases above rely on, and likewise the relation-type declaration that
+// the pattern wrote as the first fact of its predicate: the kept pattern is
+// read through it, even following a .save and a .load. Only the drop of a
+// cluster that the program asked in takes both (test_clusters.cpp, "a
+// question a program asks in a cluster that it drops takes back the
+// relation-type declaration it wrote").
+TEST_CASE("zelph/query: a pattern the program keeps keeps the relation-type declaration it wrote")
+{
+    const std::string path = (std::filesystem::temp_directory_path() / "zelph_test_query_pattern_declaration.bin").string();
+    run_both_modes([&](auto& collector, auto& interactive)
+                   {
+        interactive.process(kApi);
+        interactive.process(kReport);
+        interactive.process(R"js(%(zf "e1" "hits" "e5"))js");
+        interactive.process(R"js(%(def q (zf 'A "e5" 'B)))js");
+        collector.clear();
+        interactive.process(R"js(%(report "asked" q))js");
+        CHECK(any_output_contains(collector, "asked-count=0"));
+
+        SUBCASE("in the session") {}
+        SUBCASE("after .save and .load")
+        {
+            interactive.process(".save " + path);
+            interactive.process(".load " + path);
+        }
+        collector.clear();
+        interactive.process("P ~ ->");
+        CHECK(answers_contain(collector, "e5 ~ ->"));
+
+        interactive.process(R"js(%(zf "x" "e5" "y"))js");
+        collector.clear();
+        interactive.process(R"js(%(report "again" q))js");
+        CHECK(any_output_contains(collector, "again-count=1"));
+        CHECK(any_output_contains(collector, "again-bind=x/y")); });
+    std::filesystem::remove(path);
 }
 
 TEST_CASE("zelph/query: a stored conjunction matches, repeatedly")

@@ -21,6 +21,11 @@
 # list node, and it survives .save. A Janet helper would have produced
 # the same facts and left nothing to reason ABOUT.
 
+# Each name below represents a node within the language zelph,
+# regardless of the .lang setting used by the importer; upon
+# completion of the import, the importer's language is restored.
+.lang zelph
+
 .import topoly
 .import math-syntax
 .import symbolic-core

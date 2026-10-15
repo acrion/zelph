@@ -27,6 +27,8 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #include "test_helpers.hpp"
 
+#include <filesystem>
+
 using namespace zelph::test;
 
 // ---------------------------------------------------------------------------
@@ -504,6 +506,35 @@ TEST_CASE("path condition: the printed rule re-enters as the same rule")
         CHECK(any_output_contains(collector, "(x above d)")); });
 }
 
+// Rendered independently -- the node `(zelph/rules)` hands out for a path
+// condition -- the condition printed as the fact it represents,
+// `(S P279 T) closure one-or-more`, where `closure` and `one-or-more` are
+// labelled in the present language. Outside the zelph language, those labels
+// correspond to different nodes, and the line, written back as the rule's
+// condition, built a second rule adjacent to the first. It appears exactly as
+// entered, which is the identical condition across every language.
+TEST_CASE("path condition: the condition printed by itself re-enters as the same condition, in every language")
+{
+    for (const char* lang : {"en", "zelph"})
+    {
+        CAPTURE(lang);
+        zelph::io::OutputCollector  collector;
+        zelph::console::Interactive interactive(collector.sink());
+        interactive.process(std::string(".lang ") + lang);
+        interactive.process("(S pair T, S P279⁺ T) => (S under T)");
+
+        collector.clear();
+        interactive.process("%(zelph/out (string (first ((first (zelph/rules)) :paths))))");
+        const std::string printed = last_out_text(collector);
+        CHECK(printed == "S P279⁺ T");
+
+        interactive.process("(S pair T, " + printed + ") => (S under T)");
+        collector.clear();
+        interactive.process(".list-rules");
+        CHECK(count_outputs_containing(collector, "=>") == 1);
+    }
+}
+
 namespace
 {
     // a and b form a two-cycle, c is not in one. All three are classes, so a
@@ -668,6 +699,80 @@ TEST_CASE("path condition: a walk through its own predicate node does not step a
         interactive.process("(R rel S, S q⁺ T) => (R above T)");
         CHECK(any_output_contains(collector, "(x above z)"));
         CHECK_FALSE(any_output_contains(collector, "(x above ->)")); });
+}
+
+// A walk proceeds through no fact that a rule condition skips: the engine's
+// own bookkeeping. `{(g p h) (g q h)} ~⁺ O` answered `refuted` for the record
+// of a contradiction, `(g p h) in⁺ O` the record's set, and `(a p b) ~⁺ O`
+// the mark of a rule's pattern. A refutation composed by someone is a
+// statement and is walked, and likewise the memberships of a rule's
+// condition set, which constitute its text. A load reads the record and the
+// marks back.
+TEST_CASE("path condition: a walk steps along no bookkeeping, as a condition matches none")
+{
+    const auto file = std::filesystem::temp_directory_path() / "zelph_path_bookkeeping.bin";
+    run_both_modes([&](auto& collector, auto& interactive)
+                   {
+        const auto answers = [&](const std::string& query)
+        {
+            collector.clear();
+            interactive.process(query);
+            return collect_answers(collector);
+        };
+
+        feed(interactive, "(c q d, a p b) => (e r f)\n(X q Y, X p Y) => !\ng p h\ng q h\n¬(u p v)\n");
+        SUBCASE("in the session") {}
+        SUBCASE("after .save and .load")
+        {
+            interactive.process(".save \"" + file.string() + "\"");
+            interactive.process(".load \"" + file.string() + "\"");
+        }
+
+        CHECK(answers("{(g p h) (g q h)} ~⁺ O").empty());
+        CHECK(answers("(g p h) in⁺ O").empty());
+        CHECK(answers("(a p b) ~⁺ O").empty());
+        CHECK(answers("(u p v) ~⁺ O") == std::vector<std::string>{"(u p v) ~⁺ refuted"});
+        CHECK(answers("(a p b) in⁺ O").size() == 1);
+
+        collector.clear();
+        interactive.process(R"(%(zelph/out (string "SOURCES-" (length (zelph/closure-sources "refuted" "~")))))");
+        CHECK(any_output_contains(collector, "SOURCES-1")); });
+    std::filesystem::remove(file);
+}
+
+// A path condition takes the identical offer: a record's memberships do not
+// constitute a step in a walk until a statement names the set, and when a
+// statement does so between two runs, the seeded run must re-match the rule
+// that walks `in`. It missed `(x p y) within {(x p y) (x q y)}`.
+TEST_CASE("path condition: a seeded run walks the memberships of a record's set once a statement names it")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        const auto answers = [&](const std::string& query)
+        {
+            collector.clear();
+            interactive.process(query);
+            return collect_answers(collector);
+        };
+        const auto seeded = [&]
+        {
+            interactive.process(".auto-run");
+            process_lines(interactive, "x p y\nx q y\n(A p B, A q B) => !\n.run\n(x p y) go k\n(M go k, M in⁺ C) => (M within C)\n.run\n");
+            REQUIRE(answers("S within O").empty());
+
+            interactive.process("{(x p y) (x q y)} label foo");
+            collector.clear();
+            interactive.process(".run-delta");
+            CHECK_FALSE(any_event_contains(collector, "Incremental run not applicable"));
+            CHECK(answers("S within O") == std::vector<std::string>{"(x p y) within {(x p y) (x q y)}"});
+        };
+
+        SUBCASE("check mode") { seeded(); }
+        SUBCASE(".semi-naive on")
+        {
+            interactive.process(".semi-naive on");
+            seeded();
+        } });
 }
 
 TEST_CASE("path condition: a ground self-path outside a rule is refused")

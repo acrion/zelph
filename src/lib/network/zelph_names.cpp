@@ -107,6 +107,64 @@ namespace
         return s.str();
     }
 
+    // The engine reads its own vocabulary by name in language zelph
+    // (Zelph::engine_vocabulary): `refuted`, `opaque`, the rule-pattern
+    // predicate, and the remainder. When passed to a different node, such
+    // a name made that node the engine's: `.name attitude opaque` turned
+    // every claimed `P ~ attitude` into a declaration, past the refusal that
+    // a declaration encounters. Removed, via a rename or `.delname`, it
+    // ended every declaration instantly, past the refusal that their
+    // deletion encounters. A name from that vocabulary thus remains bound to
+    // its node, just as a core node's spelling does, and the node does not
+    // merge with any other.
+    std::string vocabulary_name_refusal(const std::string& name, const zelph::network::Node holder)
+    {
+        std::stringstream s;
+        s << "Requested name '" << name << "' belongs to the engine's vocabulary in language 'zelph'";
+        if (holder != 0) s << ", where it names node " << holder;
+        s << ". A name of the engine's vocabulary cannot be given away.";
+        return s.str();
+    }
+
+    std::string vocabulary_removal_refusal(const std::string& name, const zelph::network::Node holder)
+    {
+        std::stringstream s;
+        s << "Node " << holder << " carries the name '" << name
+          << "' of the engine's vocabulary in language 'zelph'. A name of the engine's vocabulary cannot be taken from its node.";
+        return s.str();
+    }
+
+    std::string vocabulary_merge_refusal(const std::string& name, const zelph::network::Node holder, const std::string& lang, const zelph::network::Node vocabulary_node, const std::string_view vocabulary_name)
+    {
+        std::stringstream s;
+        s << "Requested name '" << name << "' is already used by node " << holder
+          << " in language '" << lang
+          << "'. Merging the two nodes is impossible because node " << vocabulary_node << " is '" << vocabulary_name
+          << "' of the engine's vocabulary, and a node of the engine's vocabulary merges with no other.";
+        return s.str();
+    }
+
+    // A statement or a set constant: a node whose identity is determined by
+    // its construction (Zelph::merge_shape). A variable is never one,
+    // regardless of the bits its identifier holds.
+    bool is_term(const zelph::network::Node n)
+    {
+        return zelph::network::Zelph::is_hash(n) && !zelph::network::Zelph::is_var(n);
+    }
+
+    // An atom given the name of a statement or a set constant is defined as
+    // that term, x := t, whichever of the two holds the name: the term keeps
+    // its identifier, and anything constructed upon the atom is rebuilt over
+    // it (Zelph::merge_shape). Merged in the opposite direction, the
+    // survivor kept the atom's identifier, which no content hashes to, and
+    // `a p b` merged with `foo` ceased to respond to any query. A core node
+    // keeps its place, and merge_shape rejects it when paired with a term.
+    // Only id bits and core names, thus the decision re-derives unchanged.
+    void survive_as_term(const zelph::network::Zelph& z, zelph::network::Node& from, zelph::network::Node& into)
+    {
+        if (is_term(from) && !is_term(into) && z.get_core_name(into).empty()) std::swap(from, into);
+    }
+
     // Using `.name`, two variables merge exclusively across distinct languages:
     // it refuses them within a single language. A variable belongs to the
     // statement that quantifies it, hence the merge produces a single
@@ -202,7 +260,89 @@ bool Zelph::resolve_name_conflict_locked(const Node         node,
         throw std::runtime_error(template_merge_refusal(name, conflict_node, lang, is_rule_template(from) ? from : into));
     }
 
+    // In whichever language the two have a common name, a node in the
+    // engine's vocabulary keeps its own name (vocabulary_name_refusal).
+    if (const auto zelph_names = _pImpl->_name_of_node.find("zelph"); zelph_names != _pImpl->_name_of_node.end())
+    {
+        for (const Node n : {from, into})
+        {
+            const auto it = zelph_names->second.find(n);
+            if (it != zelph_names->second.end() && !Impl::is_var(n) && engine_vocabulary(std::string(it->second), "zelph") != Vocabulary::none)
+                throw std::runtime_error(vocabulary_merge_refusal(name, conflict_node, lang, n, it->second));
+        }
+    }
+
+    survive_as_term(*this, from, into);
     return true;
+}
+
+Zelph::MergePlan Zelph::plan_name_merge(const Node from, const Node into, const Node holder, const std::string& name, const std::string& lang) const
+{
+    // Before any modification: a merge that makes a predicate opaque while
+    // one of its facts holds a statement is refused as the declaration is.
+    refuse_opaque_merge(from, into);
+
+    // Read WHILE THE HASHES STILL HOLD: after the merge the components no
+    // longer hash back to the node, and the verifying reader refuses to
+    // decompose it. The plan is established from them before any
+    // modifications, ensuring that a merge which Network::merge could not
+    // complete is rejected at this stage: Network::merge threw midway, once
+    // the names and the two nodes had already been merged. The survivor
+    // resulting from two statements holds the objects from each and moves to
+    // the identifier they give it, carrying its dependents with it
+    // (merge_shape), which also rejects pairs that are unable to merge.
+    const Node survivor = merge_shape(from, into, holder, name, lang);
+    MergePlan  plan     = plan_merge(from, into, collect_hash_dependents(from, survivor != 0 ? into : 0), survivor);
+    plan.defines        = !is_term(from) && is_term(into);
+    refuse_conflicting_merge(plan, holder, name, lang);
+
+    // The refutation prevails in the fold of a refuted statement and one
+    // that nobody claimed (refuse_conflicting_merge): the link from the
+    // second to its predicate is assigned a probability of 0 at this
+    // stage, before any merge, ensuring that every join beneath encounters
+    // two equal probabilities.
+    for (const auto& [statement, predicate] : plan.refuted_with)
+        _pImpl->set_edge_weight(statement, predicate, 0);
+
+    return plan;
+}
+
+void Zelph::carry_out_name_merge_locked(const MergePlan& plan) const
+{
+    invalidate_fact_structures_cache();
+
+    // The survivor of two statements holds the objects from both: after
+    // `a p b` and `a p c` are merged, a single node states `a p b c`, which
+    // no invocation of fact() wrote (Zelph::may_hold_wider_statements).
+    if (Impl::is_hash(plan.from) || Impl::is_hash(plan.into)) _pImpl->_may_hold_wider_statements.store(true, std::memory_order_release);
+
+    _pImpl->merge(plan.from, plan.into);
+    _pImpl->fold_cluster_member(plan.from, plan.into, plan.from_state, plan.into_state);
+}
+
+// A node IS the hash of what it is built from, so everything built on the
+// node that just disappeared has to be re-created under the id its new
+// components give it.
+void Zelph::finish_name_merge(const MergePlan& plan) const
+{
+    rehash_dependents(plan);
+    if (_pImpl->_on_merge) _pImpl->_on_merge(plan.moved);
+}
+
+void Zelph::refuse_vocabulary_rename(const Node node, const std::string& name, const std::string& lang) const
+{
+    if (lang != "zelph" || Impl::is_var(node)) return;
+
+    if (engine_vocabulary(name, lang) != Vocabulary::none)
+    {
+        const Node holder = get_node(name, lang, true);
+        if (node == 0 || holder != node) throw std::runtime_error(vocabulary_name_refusal(name, holder));
+        return;
+    }
+    if (node == 0) return;
+
+    const std::string current = get_name(node, lang, false);
+    if (engine_vocabulary(current, lang) != Vocabulary::none) throw std::runtime_error(vocabulary_removal_refusal(current, node));
 }
 
 void Zelph::set_name(const Node         node,
@@ -227,6 +367,8 @@ void Zelph::set_name(const Node         node,
     Node merge_from = 0;
     Node merge_into = 0;
 
+    refuse_vocabulary_rename(node, name, lang);
+
     if (merge_on_conflict)
     {
         std::unique_lock lock_node(_pImpl->_mtx_node_of_name);
@@ -238,11 +380,8 @@ void Zelph::set_name(const Node         node,
         resolve_name_conflict_locked(node, name, lang, merge_from, merge_into);
     }
 
-    // Read WHILE THE HASHES STILL HOLD: after the merge the components no
-    // longer hash back to the node, and the verifying reader refuses to
-    // decompose it.
-    std::vector<std::pair<Node, HashRecipe>> dependents;
-    if (merge_from != 0) dependents = collect_hash_dependents(merge_from);
+    MergePlan plan;
+    if (merge_from != 0) plan = plan_name_merge(merge_from, merge_into, merge_from == node ? merge_into : merge_from, name, lang);
 
     {
         std::unique_lock lock_node(_pImpl->_mtx_node_of_name);
@@ -277,9 +416,7 @@ void Zelph::set_name(const Node         node,
                 out_stream() << variable_merge_warning("B", from, into, name, lang) << std::endl;
             }
 
-            invalidate_fact_structures_cache();
-
-            _pImpl->merge(from, into);
+            carry_out_name_merge_locked(plan);
 
             // In `lang`, the survivor is assigned `name` below, so a different
             // name that either node carries there is dropped first: the
@@ -307,10 +444,12 @@ void Zelph::set_name(const Node         node,
         _pImpl->assign_name_locked(target_node, name, lang);
     }
 
-    // A node IS the hash of what it is built from, so everything built on the
-    // node that just disappeared has to be re-created under the id its new
-    // components give it.
-    if (merge_from != 0) rehash_dependents(dependents, merge_from, merge_into);
+    if (merge_from != 0) finish_name_merge(plan);
+}
+
+void Zelph::observe_merges(std::function<void(const std::unordered_map<Node, Node>& moved)> observer) const
+{
+    _pImpl->_on_merge = std::move(observer);
 }
 
 // Assigns or links a name in a foreign language to a node and ensures the name in the current default language (_lang) is correctly set.
@@ -371,12 +510,14 @@ Node Zelph::set_name(const std::string& name_in_current_lang,
     // 2) Slow path: exclusive locks
     //    Global lock order must be consistent everywhere:
     //    _mtx_node_of_name -> _mtx_name_of_node
+    //
+    //    A merge takes the steps of the overload above: decided under the
+    //    locks, planned without them, carried out under them again, repaired
+    //    without them. Without the plan, this overload merged two statements
+    //    of different subjects into a node read as the cross product of
+    //    their parts, and left every fact built on the vanished node under
+    //    an id its parts no longer hash to.
     // -------------------------------------------------------------------------
-    std::unique_lock lock_node(_pImpl->_mtx_node_of_name);
-    std::unique_lock lock_name(_pImpl->_mtx_name_of_node);
-
-    ExclusiveNameAccessScope scope_node(node_of_name_exclusive_depth);
-    ExclusiveNameAccessScope scope_name(name_of_node_exclusive_depth);
 
     // Helper: assign/replace one name for one node in one language, while keeping
     // both maps consistent. Caller must have both exclusive locks.
@@ -449,153 +590,231 @@ Node Zelph::set_name(const std::string& name_in_current_lang,
         return new_node;
     };
 
-    Node result_node = 0;
-
-    // Re-check foreign mapping under exclusive lock
-    auto foreign_reverse_outer_it = _pImpl->_node_of_name.find(lang);
-    if (foreign_reverse_outer_it == _pImpl->_node_of_name.end())
+    // The refusals of refuse_vocabulary_rename and of a merge with a node
+    // from the engine's vocabulary, accessed while under the locks held
+    // here.
+    const auto lookup_locked = [this](const std::string& in_lang, const std::string& name) -> Node
     {
-        result_node = find_or_create_current_node_locked();
-        assign_name_locked(result_node, name_in_given_lang, lang);
-        return result_node;
-    }
-
-    auto foreign_reverse_it = foreign_reverse_outer_it->second.find(name_in_given_lang);
-    if (foreign_reverse_it == foreign_reverse_outer_it->second.end())
+        const auto names = _pImpl->_node_of_name.find(in_lang);
+        if (names == _pImpl->_node_of_name.end()) return 0;
+        const auto it = names->second.find(name);
+        return it == names->second.end() ? 0 : it->second;
+    };
+    const auto vocabulary_name_of = [this](const Node n) -> std::string
     {
-        result_node = find_or_create_current_node_locked();
-        assign_name_locked(result_node, name_in_given_lang, lang);
-        return result_node;
-    }
-
-    // Foreign-language name already exists
-    result_node = foreign_reverse_it->second;
-
-    // Consistency check: reverse mapping (node -> name) must exist and match
-    auto foreign_forward_outer_it = _pImpl->_name_of_node.find(lang);
-    if (foreign_forward_outer_it == _pImpl->_name_of_node.end())
+        const auto names = _pImpl->_name_of_node.find("zelph");
+        if (n == 0 || Impl::is_var(n) || names == _pImpl->_name_of_node.end()) return {};
+        const auto it = names->second.find(n);
+        if (it == names->second.end() || engine_vocabulary(std::string(it->second), "zelph") == Vocabulary::none) return {};
+        return std::string(it->second);
+    };
+    const auto refuse_vocabulary_locked = [&](const Node n, const std::string& name, const std::string& in_lang)
     {
-        throw std::runtime_error("Zelph::set_name: Internal error – name mappings are inconsistent.");
-    }
-
-    auto foreign_forward_it = foreign_forward_outer_it->second.find(result_node);
-    if (foreign_forward_it == foreign_forward_outer_it->second.end() || foreign_forward_it->second != name_in_given_lang)
-    {
-        throw std::runtime_error("Zelph::set_name: Internal error – name mappings are inconsistent.");
-    }
-
-    auto [current_reverse_outer_it, inserted_current_reverse_outer] = _pImpl->_node_of_name.try_emplace(_lang);
-    auto [current_forward_outer_it, inserted_current_forward_outer] = _pImpl->_name_of_node.try_emplace(_lang);
-    (void)inserted_current_reverse_outer;
-    (void)inserted_current_forward_outer;
-
-    auto& node_of_name_cur = current_reverse_outer_it->second;
-    auto& name_of_node_cur = current_forward_outer_it->second;
-
-    auto             current_forward_it = name_of_node_cur.find(result_node);
-    std::string_view old_current_name =
-        (current_forward_it != name_of_node_cur.end()) ? current_forward_it->second : std::string_view{};
-
-    // Already correct? Then optionally repair missing reverse entry cheaply and return.
-    if (old_current_name == name_in_current_lang)
-    {
-        auto current_reverse_it = node_of_name_cur.find(name_in_current_lang);
-        if (current_reverse_it == node_of_name_cur.end() || current_reverse_it->second == result_node)
+        if (in_lang != "zelph" || Impl::is_var(n)) return;
+        if (engine_vocabulary(name, in_lang) != Vocabulary::none)
         {
+            const Node holder = lookup_locked(in_lang, name);
+            if (n == 0 || holder != n) throw std::runtime_error(vocabulary_name_refusal(name, holder));
+        }
+        else if (const std::string taken = vocabulary_name_of(n); !taken.empty())
+            throw std::runtime_error(vocabulary_removal_refusal(taken, n));
+    };
+
+    Node result_node      = 0;
+    Node conflicting_node = 0;
+    Node merge_from       = 0;
+    Node merge_into       = 0;
+    {
+        std::unique_lock lock_node(_pImpl->_mtx_node_of_name);
+        std::unique_lock lock_name(_pImpl->_mtx_name_of_node);
+
+        ExclusiveNameAccessScope scope_node(node_of_name_exclusive_depth);
+        ExclusiveNameAccessScope scope_name(name_of_node_exclusive_depth);
+
+        // Re-check foreign mapping under exclusive lock
+        auto foreign_reverse_outer_it = _pImpl->_node_of_name.find(lang);
+        if (foreign_reverse_outer_it == _pImpl->_node_of_name.end())
+        {
+            refuse_vocabulary_locked(lookup_locked(_lang, name_in_current_lang), name_in_given_lang, lang);
+            result_node = find_or_create_current_node_locked();
+            assign_name_locked(result_node, name_in_given_lang, lang);
+            return result_node;
+        }
+
+        auto foreign_reverse_it = foreign_reverse_outer_it->second.find(name_in_given_lang);
+        if (foreign_reverse_it == foreign_reverse_outer_it->second.end())
+        {
+            refuse_vocabulary_locked(lookup_locked(_lang, name_in_current_lang), name_in_given_lang, lang);
+            result_node = find_or_create_current_node_locked();
+            assign_name_locked(result_node, name_in_given_lang, lang);
+            return result_node;
+        }
+
+        // Foreign-language name already exists
+        result_node = foreign_reverse_it->second;
+
+        // Consistency check: reverse mapping (node -> name) must exist and match
+        auto foreign_forward_outer_it = _pImpl->_name_of_node.find(lang);
+        if (foreign_forward_outer_it == _pImpl->_name_of_node.end())
+        {
+            throw std::runtime_error("Zelph::set_name: Internal error – name mappings are inconsistent.");
+        }
+
+        auto foreign_forward_it = foreign_forward_outer_it->second.find(result_node);
+        if (foreign_forward_it == foreign_forward_outer_it->second.end() || foreign_forward_it->second != name_in_given_lang)
+        {
+            throw std::runtime_error("Zelph::set_name: Internal error – name mappings are inconsistent.");
+        }
+
+        auto [current_reverse_outer_it, inserted_current_reverse_outer] = _pImpl->_node_of_name.try_emplace(_lang);
+        auto [current_forward_outer_it, inserted_current_forward_outer] = _pImpl->_name_of_node.try_emplace(_lang);
+        (void)inserted_current_reverse_outer;
+        (void)inserted_current_forward_outer;
+
+        auto& node_of_name_cur = current_reverse_outer_it->second;
+        auto& name_of_node_cur = current_forward_outer_it->second;
+
+        auto             current_forward_it = name_of_node_cur.find(result_node);
+        std::string_view old_current_name =
+            (current_forward_it != name_of_node_cur.end()) ? current_forward_it->second : std::string_view{};
+
+        // Already correct? Then optionally repair missing reverse entry cheaply and return.
+        if (old_current_name == name_in_current_lang)
+        {
+            auto current_reverse_it = node_of_name_cur.find(name_in_current_lang);
+            if (current_reverse_it == node_of_name_cur.end() || current_reverse_it->second == result_node)
+            {
+                assign_name_locked(result_node, name_in_current_lang, _lang);
+                return result_node;
+            }
+            // else: inconsistent reverse entry -> continue into normal conflict handling
+        }
+
+        // A merge is rejected before any modification, including the names, if
+        // a collection of a rule's text is involved, if the name matches the
+        // spelling of a core node, or if both nodes are core nodes -- the
+        // refusals of resolve_name_conflict_locked.
+        {
+            Node other         = 0;
+            bool core_spelling = false;
+            if (const auto it = node_of_name_cur.find(name_in_current_lang); it != node_of_name_cur.end())
+                other = it->second;
+            else if (const auto core = _core_names_by_name.find(name_in_current_lang); core != _core_names_by_name.end())
+            {
+                other         = core->second;
+                core_spelling = true;
+            }
+
+            if (other != 0 && other != result_node)
+            {
+                if (core_spelling) throw std::runtime_error(core_name_refusal(name_in_current_lang, other));
+                if (!get_core_name(other).empty() && !get_core_name(result_node).empty())
+                    throw std::runtime_error(core_merge_refusal(name_in_current_lang, other, _lang));
+                if (is_rule_template(other) || is_rule_template(result_node))
+                    throw std::runtime_error(template_merge_refusal(name_in_current_lang, other, _lang, is_rule_template(result_node) ? result_node : other));
+            }
+
+            refuse_vocabulary_locked(result_node, name_in_current_lang, _lang);
+            if (other != 0 && other != result_node)
+            {
+                for (const Node n : {other, result_node})
+                    if (const std::string vocabulary = vocabulary_name_of(n); !vocabulary.empty())
+                        throw std::runtime_error(vocabulary_merge_refusal(name_in_current_lang, other, _lang, n, vocabulary));
+            }
+        }
+
+        // Check whether the desired current-language name is already used by another regular node
+        const auto conflict_it = node_of_name_cur.find(name_in_current_lang);
+        if (conflict_it == node_of_name_cur.end() || conflict_it->second == result_node)
+        {
+            // Remove old current-language mapping for result_node, if any
+            if (!old_current_name.empty())
+            {
+                name_of_node_cur.erase(result_node);
+                _pImpl->release_label_locked(_lang, result_node, old_current_name);
+            }
+
+            // Finally assign the desired current-language name
             assign_name_locked(result_node, name_in_current_lang, _lang);
             return result_node;
         }
-        // else: inconsistent reverse entry -> continue into normal conflict handling
-    }
-
-    // A merge is rejected before any modification, including the names, if
-    // a collection of a rule's text is involved, if the name matches the
-    // spelling of a core node, or if both nodes are core nodes -- the
-    // refusals of resolve_name_conflict_locked.
-    {
-        Node other         = 0;
-        bool core_spelling = false;
-        if (const auto it = node_of_name_cur.find(name_in_current_lang); it != node_of_name_cur.end())
-            other = it->second;
-        else if (const auto core = _core_names_by_name.find(name_in_current_lang); core != _core_names_by_name.end())
-        {
-            other         = core->second;
-            core_spelling = true;
-        }
-
-        if (other != 0 && other != result_node)
-        {
-            if (core_spelling) throw std::runtime_error(core_name_refusal(name_in_current_lang, other));
-            if (!get_core_name(other).empty() && !get_core_name(result_node).empty())
-                throw std::runtime_error(core_merge_refusal(name_in_current_lang, other, _lang));
-            if (is_rule_template(other) || is_rule_template(result_node))
-                throw std::runtime_error(template_merge_refusal(name_in_current_lang, other, _lang, is_rule_template(result_node) ? result_node : other));
-        }
-    }
-
-    // Remove old current-language mapping for result_node, if any
-    if (!old_current_name.empty())
-    {
-        name_of_node_cur.erase(result_node);
-        _pImpl->release_label_locked(_lang, result_node, old_current_name);
-    }
-
-    // Check whether the desired current-language name is already used by another regular node
-    auto conflict_it = node_of_name_cur.find(name_in_current_lang);
-    if (conflict_it != node_of_name_cur.end() && conflict_it->second != result_node)
-    {
-        Node conflicting_node = conflict_it->second;
+        conflicting_node = conflict_it->second;
 
         // Merge direction: higher / non-core into lower / core-preserving target as before
-        Node from = result_node;
-        Node into = conflicting_node;
+        merge_from = result_node;
+        merge_into = conflicting_node;
 
         // Core nodes must never be merged away.
-        if (!get_core_name(from).empty())
+        if (!get_core_name(merge_from).empty())
         {
-            std::swap(from, into);
+            std::swap(merge_from, merge_into);
         }
 
-        if (Impl::is_var(from) != Impl::is_var(into))
+        if (Impl::is_var(merge_from) != Impl::is_var(merge_into))
         {
             std::stringstream s;
             s << "Requested name '" << name_in_current_lang
-              << "' is already used by node " << into
+              << "' is already used by node " << merge_into
               << " in language '" << lang
               << "'. Merging the two nodes is impossible because one node is a variable, the other not.";
             throw std::runtime_error(s.str());
         }
 
-        if (!Impl::is_var(from))
+        survive_as_term(*this, merge_from, merge_into);
+    }
+
+    const MergePlan plan = plan_name_merge(merge_from, merge_into, conflicting_node, name_in_current_lang, _lang);
+
+    {
+        std::unique_lock lock_node(_pImpl->_mtx_node_of_name);
+        std::unique_lock lock_name(_pImpl->_mtx_name_of_node);
+
+        ExclusiveNameAccessScope scope_node(node_of_name_exclusive_depth);
+        ExclusiveNameAccessScope scope_name(name_of_node_exclusive_depth);
+
+        // Re-derived instead of taken for granted, as in the overload above.
+        if (lookup_locked(lang, name_in_given_lang) != result_node || lookup_locked(_lang, name_in_current_lang) != conflicting_node)
+            throw std::runtime_error("Zelph::set_name: the name conflict changed while it was being repaired");
+
+        // Remove old current-language mapping for result_node, if any
+        if (const auto names = _pImpl->_name_of_node.find(_lang); names != _pImpl->_name_of_node.end())
         {
-            out_stream() << "Warning: (C) Merging Node " << from
-                         << " into Node " << into
+            if (const auto it = names->second.find(result_node); it != names->second.end())
+            {
+                const std::string_view old_current_name = it->second;
+                names->second.erase(it);
+                _pImpl->release_label_locked(_lang, result_node, old_current_name);
+            }
+        }
+
+        if (!Impl::is_var(merge_from))
+        {
+            out_stream() << "Warning: (C) Merging Node " << merge_from
+                         << " into Node " << merge_into
                          << " due to name conflict '" << name_in_current_lang
                          << "' in language '" << _lang << "'."
                          << std::endl;
         }
         else
         {
-            out_stream() << variable_merge_warning("C", from, into, name_in_current_lang, _lang) << std::endl;
+            out_stream() << variable_merge_warning("C", merge_from, merge_into, name_in_current_lang, _lang) << std::endl;
         }
 
-        invalidate_fact_structures_cache();
+        carry_out_name_merge_locked(plan);
+        _pImpl->transfer_names_locked(merge_from, merge_into);
 
-        _pImpl->merge(from, into);
-        _pImpl->transfer_names_locked(from, into);
-
-        result_node = into;
+        // Finally assign the desired current-language name
+        assign_name_locked(merge_into, name_in_current_lang, _lang);
     }
 
-    // Finally assign the desired current-language name
-    assign_name_locked(result_node, name_in_current_lang, _lang);
-
-    return result_node;
+    finish_name_merge(plan);
+    return merge_into;
 }
 
 std::string Zelph::get_name(const Node node, std::string lang, const bool fallback) const
 {
-    if (lang.empty()) lang = _lang;
+    // The language currently published, as per get_node.
+    if (lang.empty()) lang = _pImpl->published_lang();
 
     auto lookup = [&](const std::string& language) -> std::string_view
     {
@@ -775,6 +994,8 @@ void Zelph::remove_name(Node node, std::string lang)
 {
     if (lang.empty()) lang = _lang;
 
+    refuse_vocabulary_rename(node, "", lang);
+
     std::unique_lock lock_node(_pImpl->_mtx_node_of_name);
     std::unique_lock lock_name(_pImpl->_mtx_name_of_node);
 
@@ -785,6 +1006,8 @@ void Zelph::unset_name(Node node, std::string lang)
 {
     if (lang.empty()) lang = _lang;
 
+    refuse_vocabulary_rename(node, "", lang);
+
     std::unique_lock lock_node(_pImpl->_mtx_node_of_name);
     std::unique_lock lock_name(_pImpl->_mtx_name_of_node);
 
@@ -793,7 +1016,11 @@ void Zelph::unset_name(Node node, std::string lang)
 
 Node Zelph::get_node(const std::string& name, const std::string& lang, const bool atoms_only) const
 {
-    const std::string& language = lang.empty() ? _lang : lang;
+    // An empty language refers to the current one, as published to
+    // readers on any thread: the functions get_node, get_name, and
+    // nodes_named also operate on threads beyond the main one, where
+    // _lang may not be read while set_lang assigns it.
+    const std::string& language = lang.empty() ? _pImpl->published_lang() : lang;
 
     {
         std::shared_lock lock(_pImpl->_mtx_node_of_name);
@@ -862,7 +1089,7 @@ std::string Zelph::get_name_hex(Node node, bool prepend_num, int max_neighbors) 
 std::string Zelph::format(Node node) const
 {
     std::string result;
-    string::node_to_string(this, result, _lang, node);
+    string::node_to_string(this, result, published_lang(), node);
     return string::unmark_identifiers(result);
 }
 
@@ -1529,7 +1756,8 @@ void Zelph::Impl::rebuild_label_index()
 
 std::optional<std::vector<Node>> Zelph::nodes_named(const std::string& name, std::string lang) const
 {
-    if (lang.empty()) lang = _lang;
+    // The language currently published, as per get_node.
+    if (lang.empty()) lang = _pImpl->published_lang();
 
     std::shared_lock lock_node(_pImpl->_mtx_node_of_name);
     std::shared_lock lock_name(_pImpl->_mtx_name_of_node);

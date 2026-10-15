@@ -106,7 +106,7 @@ namespace zelph::network
             Node              object{0};
             Node              relation{0};
             std::vector<Node> variables;
-            bool              by_members{false}; // holds_condition_set: not confirmed through lookup
+            bool              by_members{false}; // holds_member_matched_set: not confirmed through lookup
         };
 
         // A consequence, whether it is itself a rule, and its predicate when
@@ -671,25 +671,6 @@ namespace zelph::network
             return Resolve::Missing;
         }
 
-        // A fact that carries the objects of `narrow` and more, within the
-        // same subject and predicate.
-        bool is_wider(const Zelph* z, const Node wider, const Node narrow)
-        {
-            const auto narrow_structures = get_fact_structures(z, narrow, 1);
-            const auto wider_structures  = get_fact_structures(z, wider, 1);
-            for (const auto& n : *narrow_structures)
-            {
-                for (const auto& w : *wider_structures)
-                {
-                    if (w.subject != n.subject || w.predicate != n.predicate || w.objects.size() <= n.objects.size()) continue;
-                    if (std::all_of(n.objects.begin(), n.objects.end(), [&](const Node o)
-                                    { return w.objects.count(o) != 0; }))
-                        return true;
-                }
-            }
-            return false;
-        }
-
         // Another premise a ground condition might represent: a fact
         // involving its subject and predicate that carries additional
         // objects, which Unification also matches. Asked only once the exact
@@ -711,23 +692,76 @@ namespace zelph::network
             return 0;
         }
 
-        // The premise of a condition Unification just matched, under the
-        // joined bindings: the fact it denotes, or the fact Unification read
-        // the match from, provided that this latter one carries additional
-        // objects -- also where the fact it denotes is present (refer to
-        // wider_premise). 0: none that holds.
+        // Whether the matcher reads a part of the condition -- its subject,
+        // its predicate, or an object -- through a subset reading that lies
+        // beneath the top level: a part that constitutes a statement, written
+        // as one or bound to one. containing_fact widens only the top level,
+        // so the premise of such a condition is asked of the matcher
+        // (matched_premises).
+        bool nested_reading(const Zelph* z, const PatternInfo& pattern, const Variables& bindings)
+        {
+            const auto statement = [&](Node part)
+            {
+                if (Zelph::is_var(part))
+                {
+                    const auto it = bindings.find(part);
+                    if (it == bindings.end()) return false;
+                    part = it->second;
+                }
+                return z->predicate_of(part) != 0;
+            };
+            return statement(pattern.subject) || statement(pattern.relation) || std::any_of(pattern.objects.begin(), pattern.objects.end(), statement);
+        }
+
+        // The facts Unification matches a condition with under the bindings,
+        // excluding `except`, following the order of their ids. A statement
+        // inside a condition is stated by a fact that carries more objects at
+        // its own level: ((a p b c) bad k) states ((a p c) bad k), and
+        // x (a p b c) y states x (a p c) y. The lookups that resolve a
+        // premise find neither, and the search printed a fact the rule had
+        // derived as "[asserted; no derivation found]". Asked solely for a
+        // condition containing a statement within its parts (nested_reading),
+        // and only after a fact with multiple objects might exist
+        // (Zelph::may_hold_wider_statements): before this, the node the lookups
+        // find is the sole fact capable of matching.
+        std::vector<Node> matched_premises(ExplainContext& ctx, const PatternInfo& pattern, const Node rule, const Variables& bindings, const Node except)
+        {
+            std::vector<Node> found;
+            Zelph* const      z = ctx.z;
+            if (!z->may_hold_wider_statements() || !nested_reading(z, pattern, bindings)) return found;
+
+            Unification match(z, pattern, rule, std::make_shared<Variables>(bindings), std::make_shared<Variables>(), /*pool*/ nullptr, /*log_depth*/ 1, /*profiler*/ nullptr);
+            match.enumerate_by_id();
+            std::size_t matches = 0;
+            while (match.Next())
+            {
+                ++matches;
+                const Node fact = match.matched_fact();
+                if (fact != 0 && fact != except && premise_holds(z, fact) && std::find(found.begin(), found.end(), fact) == found.end()) found.push_back(fact);
+            }
+            charge(ctx, 1 + matches + match.scanned() / scan_per_unit + match.fruitless() / tries_per_unit);
+            return found;
+        }
+
+        // The premise of a condition Unification has just matched, under the
+        // joined bindings: the fact Unification read the match from, provided
+        // that it holds -- the fact that the condition denotes, or one that
+        // states it with more objects at a certain level, taken also where
+        // the fact it denotes is present (refer to wider_premise). Otherwise
+        // the fact that the bindings denote. 0: none that holds.
         Node enumerated_premise(ExplainContext& ctx, const Node condition, const Variables& joined, const Node matched)
         {
             Zelph* const      z       = ctx.z;
             Node              premise = 0;
             std::vector<Node> history;
+            const bool        read = matched != 0 && premise_holds(z, matched);
             if (resolve_pattern(z, condition, joined, premise, history, /*containing*/ false) == Resolve::Ok)
             {
-                if (matched != 0 && matched != premise && premise_holds(z, matched) && is_wider(z, matched, premise)) return matched;
+                if (read && matched != premise) return matched;
                 return premise_holds(z, premise) ? premise : 0;
             }
-            if (resolve_premise(ctx, condition, joined, premise) != Resolve::Ok || !premise_holds(z, premise)) return 0;
-            return premise;
+            if (resolve_premise(ctx, condition, joined, premise) == Resolve::Ok && premise_holds(z, premise)) return premise;
+            return read ? matched : 0;
         }
 
         // How many facts Unification scans to enumerate a condition given the
@@ -828,6 +862,12 @@ namespace zelph::network
                         {
                             l.widened = true;
                             if (const Node wider = wider_premise(_ctx, l.ground.front()); wider != 0) l.ground.push_back(wider);
+                            // The facts that state it with more objects
+                            // beneath the top level (matched_premises), which
+                            // the forward pass matches in addition to the
+                            // exact one.
+                            for (const Node more : matched_premises(_ctx, _r.patterns[l.conditions[l.chosen]], _r.rule, l.bindings, l.ground.front()))
+                                if (std::find(l.ground.begin(), l.ground.end(), more) == l.ground.end()) l.ground.push_back(more);
                         }
                         if (l.tried < l.ground.size())
                         {
@@ -954,7 +994,7 @@ namespace zelph::network
                 Node                         aside_relation{0}; // where the enumeration set aside stood: the relation
                 Node                         aside_fact{0};     // and the fact it gave its last match from
                 std::size_t                  reopened{0};       // how often it was taken up again
-                std::vector<Node>            ground;            // a ground condition's premise, then the wider fact
+                std::vector<Node>            ground;            // a ground condition's premise, then the wider facts
                 std::size_t                  tried{0};
                 bool                         widened{false};
                 bool                         started{false};
@@ -1109,9 +1149,9 @@ namespace zelph::network
                 }
 
                 // 1. Favour a fully ground condition: O(1) verification, and it
-                //    binds nothing. A condition holding a rule whose
-                //    conditions form a set matches more than its instance,
-                //    and is enumerated.
+                //    binds nothing. A condition holding a set matched by its
+                //    members matches more than its individual instance, and
+                //    is therefore enumerated.
                 for (std::size_t k = 0; k < l.conditions.size(); ++k)
                 {
                     if (_r.shapes[l.conditions[k]].by_members) continue;
@@ -1126,12 +1166,23 @@ namespace zelph::network
                         premise   = wider_premise(_ctx, premise);
                         l.widened = true;
                     }
+                    l.chosen = k;
                     if (r == Resolve::Missing || premise == 0)
                     {
-                        leave(); // cannot hold under these bindings
-                        return false;
+                        // No node the lookups find holds. A statement within
+                        // the parts of the condition might be stated by a fact
+                        // carrying more objects, and every fact the condition
+                        // matches serves as a premise to try
+                        // (matched_premises).
+                        l.ground  = matched_premises(_ctx, _r.patterns[l.conditions[k]], _r.rule, l.bindings, 0);
+                        l.widened = true;
+                        if (l.ground.empty())
+                        {
+                            leave(); // cannot hold under these bindings
+                            return false;
+                        }
+                        return true;
                     }
-                    l.chosen = k;
                     l.ground.push_back(premise);
                     return true;
                 }
@@ -1308,9 +1359,11 @@ namespace zelph::network
         ProofNode::Status leaf_status(const ExplainContext& ctx, const Node fact, const bool unified)
         {
             if (fact == ctx.root && ctx.z->predicate_of(fact) == ctx.z->core.Causes && ctx.z->is_mentioned(fact) && ctx.z->has_rule_form(fact)) return ProofNode::Status::RuleMentioned;
-            return ctx.z->is_rule_pattern(fact) ? ProofNode::Status::RulePattern
-                 : unified                      ? ProofNode::Status::Unfounded
-                                                : ProofNode::Status::Axiom;
+            // A fact that has been refuted keeps its mark (Zelph::refute), and
+            // the basis it rests on is the claimed refutation: it is labelled
+            // as such.
+            if (ctx.z->is_rule_pattern(fact) && !ctx.z->is_refuted_fact(fact)) return ctx.z->is_mention(fact) ? ProofNode::Status::Mentioned : ProofNode::Status::RulePattern;
+            return unified ? ProofNode::Status::Unfounded : ProofNode::Status::Axiom;
         }
 
         Grade leaf_grade(const ProofNode::Status status)
@@ -1713,6 +1766,138 @@ namespace zelph::network
                 e.candidates.push_back(std::move(c));
             }
             return e.grade == Grade::Clean;
+        }
+
+        // Whether the `consequence` holds a variable that remains unbound by
+        // `bindings`.
+        bool free_in(Zelph* z, const Node consequence, const Variables& bindings)
+        {
+            std::unordered_set<Node> variables;
+            std::vector<Node>        history;
+            collect_variables(z, consequence, variables, 0, history);
+            return std::any_of(variables.begin(), variables.end(), [&](const Node v)
+                               {
+                                   const auto it = bindings.find(v);
+                                   return it == bindings.end() || Zelph::is_var(it->second); });
+        }
+
+        // The facts indicated by the consequences `heads`, each holding a
+        // variable that `bindings` leaves unbound, are searched together: a
+        // fresh variable shared by two of them represents a single witness in
+        // both. `each` takes in the facts from one assignment and returns
+        // whether the search continues; the result is false if `each` stopped
+        // the search.
+        bool join_witnesses(ExplainContext& ctx, const RuleInForce& r, const std::vector<const Reasoning::ExplainRules::Head*>& heads, const Variables& bindings, const std::function<bool(const std::vector<Node>&)>& each)
+        {
+            std::vector<Node>                                        chosen;
+            const std::function<bool(std::size_t, const Variables&)> search = [&](const std::size_t k, const Variables& so_far)
+            {
+                if (k == heads.size()) return each(chosen);
+                const auto  vars = std::make_shared<Variables>(so_far);
+                const auto  uneq = std::make_shared<Variables>();
+                Unification match(ctx.z, heads[k]->pattern, r.rule, vars, uneq, nullptr, 1, /*profiler*/ nullptr);
+                while (const std::shared_ptr<Variables> m = match.Next())
+                {
+                    charge(ctx, 1);
+                    Variables merged = so_far;
+                    for (const auto& [variable, value] : *m)
+                        merged[variable] = value;
+                    const Node witness = ctx.engine->existing_consequence(heads[k]->consequence, merged, 0, r.condition);
+                    if (witness == 0 || !premise_holds(ctx.z, witness)) continue;
+                    chosen.push_back(witness);
+                    const bool go_on = search(k + 1, merged);
+                    chosen.pop_back();
+                    if (!go_on) return false;
+                }
+                return true;
+            };
+            return search(0, bindings);
+        }
+
+        // Whether the consequences linked to `matched` via a fresh variable
+        // hold under `bindings`. A firing generates a single witness for each
+        // fresh variable and writes it into every consequence that names it,
+        // thus a join solution stands for the firing that made the witness
+        // only when those consequences hold with it as well: beside `a q b`
+        // and `a q c`, the rule `(X q Y) => (X has _W) (_W from Y)` made one
+        // witness per object, and the search took `a q b` as the premise of
+        // the `a has` fact whose witness came from `a q c`.
+        bool witnesses_hold(ExplainContext& ctx, const RuleInForce& r, const Reasoning::ExplainRules::Head& matched, const Variables& bindings)
+        {
+            if (r.heads.size() < 2) return true;
+            Zelph* const z = ctx.z;
+
+            const auto variables_of = [z](const Node pattern)
+            {
+                std::unordered_set<Node> variables;
+                std::vector<Node>        history;
+                collect_variables(z, pattern, variables, 0, history);
+                return variables;
+            };
+
+            // The variables that a match binds are: those involved in
+            // positive conditions and those involved in path conditions,
+            // which bind an endpoint. A variable that is named solely by a
+            // negation, a negated path, or a guard is either quantified at
+            // that location or binds nothing; thus, the firing makes a
+            // witness for it just as it does for any other fresh variable:
+            // beside `¬(_W blocks Y)`, `_W` still ties `X has _W` to
+            // `_W from Y`.
+            std::unordered_set<Node> conditioned;
+            for (const std::vector<Node>* conditions : {&r.positive, &r.closures})
+                for (const Node c : *conditions)
+                {
+                    const auto variables = variables_of(c);
+                    conditioned.insert(variables.begin(), variables.end());
+                }
+
+            std::unordered_set<Node> tying;
+            for (const Node v : variables_of(matched.consequence))
+                if (conditioned.count(v) == 0) tying.insert(v);
+            if (tying.empty()) return true;
+
+            // The consequences that share a fresh variable with `matched`,
+            // either directly or via another one of them.
+            std::vector<const Reasoning::ExplainRules::Head*> tied;
+            std::vector<bool>                                 taken(r.heads.size(), false);
+            for (bool grew = true; grew;)
+            {
+                grew = false;
+                for (std::size_t i = 0; i < r.heads.size(); ++i)
+                {
+                    const auto& head = r.heads[i];
+                    if (taken[i] || &head == &matched || head.produces_rule || head.consequence == z->core.Contradiction) continue;
+                    const auto variables = variables_of(head.consequence);
+                    if (std::none_of(variables.begin(), variables.end(), [&](const Node v)
+                                     { return tying.count(v) != 0; }))
+                        continue;
+                    taken[i] = true;
+                    grew     = true;
+                    tied.push_back(&head);
+                    for (const Node v : variables)
+                        if (conditioned.count(v) == 0) tying.insert(v);
+                }
+            }
+
+            std::vector<const Reasoning::ExplainRules::Head*> open;
+            for (const auto* head : tied)
+            {
+                if (free_in(z, head->consequence, bindings))
+                {
+                    open.push_back(head);
+                    continue;
+                }
+                const Node holds = ctx.engine->existing_consequence(head->consequence, bindings, 0, r.condition);
+                if (holds == 0 || !premise_holds(z, holds)) return false;
+            }
+            if (open.empty()) return true;
+
+            bool found = false;
+            join_witnesses(ctx, r, open, bindings, [&found](const std::vector<Node>&)
+                           {
+                               found = true;
+                               return false; });
+            return found;
         }
 
         // Whether the rest of an instantiation holds after the join has
@@ -2415,6 +2600,11 @@ namespace zelph::network
                             if (!builds_member(ctx, f, r, bindings)) continue;
                             f.e->unified = true;
                         }
+
+                        // The witnesses the fact names belong to this
+                        // solution exclusively if the consequences sharing
+                        // them also hold (witnesses_hold).
+                        if (!f.generator && !witnesses_hold(ctx, r, *f.matched, bindings)) continue;
 
                         Candidate c;
                         c.rule     = r.rule;
@@ -3168,17 +3358,12 @@ namespace zelph::network
         }
     } // namespace
 
-    std::shared_ptr<ProofNode> Reasoning::explain(const Node fact, const std::size_t max_depth) const
+    std::shared_ptr<const Reasoning::ExplainRules> Reasoning::explain_rules_in_force() const
     {
-        // The unification machinery takes a mutable engine pointer, but this
-        // reconstruction never creates nodes or edges: resolve_pattern and
-        // check_fact are pure hash lookups, and Unification is constructed
-        // without a thread pool, so it only reads the graph.
         Reasoning* const self = const_cast<Reasoning*>(this);
 
-        const Node nn_pred           = get_node("nn", "zelph");
-        const Node closure_pred      = get_node("closure", "zelph");
-        const Node closure_zero_plus = get_node("zero-or-more", "zelph");
+        const Node nn_pred      = get_node("nn", "zelph");
+        const Node closure_pred = get_node("closure", "zelph");
 
         // Rules are the facts where the predicate is core.Causes; the
         // subject corresponds to the condition segment, and the objects
@@ -3295,7 +3480,7 @@ namespace zelph::network
                     std::vector<Node>        history;
                     collect_variables(self, condition, variables, 0, history);
                     shape.variables.assign(variables.begin(), variables.end());
-                    shape.by_members = holds_condition_set(self, condition);
+                    shape.by_members = holds_member_matched_set(self, condition);
                     r.shapes.push_back(std::move(shape));
                 }
                 source.rule = fresh->rules.size();
@@ -3319,7 +3504,21 @@ namespace zelph::network
             watch_removals(std::move(watched));
             _explain_rules = std::move(fresh);
         }
-        const std::shared_ptr<const ExplainRules> rules = _explain_rules;
+        return _explain_rules;
+    }
+
+    std::shared_ptr<ProofNode> Reasoning::explain(const Node fact, const std::size_t max_depth) const
+    {
+        // The unification machinery takes a mutable engine pointer, but this
+        // reconstruction never creates nodes or edges: resolve_pattern and
+        // check_fact are pure hash lookups, and Unification is constructed
+        // without a thread pool, so it only reads the graph.
+        Reasoning* const self = const_cast<Reasoning*>(this);
+
+        const std::shared_ptr<const ExplainRules> rules             = explain_rules_in_force();
+        const Node                                nn_pred           = rules->nn_pred;
+        const Node                                closure_pred      = rules->closure_pred;
+        const Node                                closure_zero_plus = get_node("zero-or-more", "zelph");
 
         const auto prepared = [&](ExplainContext& ctx, const std::size_t depth_limit)
         {
@@ -3417,6 +3616,233 @@ namespace zelph::network
         }
         _explain_counts.facts = facts;
         return proof;
+    }
+
+    // A rule instantiation uses `fact` when a positive condition unifies with
+    // it, just as explain() unifies a consequence with the fact it accounts
+    // for, or when the walk of a path condition steps over it and no
+    // alternate traversal around it arrives at the same endpoint. Every such
+    // instantiation where the join, guards, path conditions, and negations
+    // are satisfied within the graph lists the facts named by its heads that
+    // exist and hold, excluding the fact itself; a head containing a variable
+    // that the instantiation leaves unbound lists every witness fulfilling
+    // all such heads together, and a head that is a rule lists the rule a
+    // generator built. A denial derives nothing, and a neural condition
+    // cannot be checked, so neither rule lists anything. The work is charged
+    // as explain() charges it, against the session's budget.
+    std::vector<Node> Reasoning::dependents(const Node fact, bool& truncated) const
+    {
+        Reasoning* const self = const_cast<Reasoning*>(this);
+        truncated             = false;
+
+        const std::shared_ptr<const ExplainRules> rules = explain_rules_in_force();
+        ExplainContext                            ctx;
+        ctx.z                 = self;
+        ctx.engine            = this;
+        ctx.nn_pred           = rules->nn_pred;
+        ctx.closure_pred      = rules->closure_pred;
+        ctx.closure_zero_plus = get_node("zero-or-more", "zelph");
+        ctx.root              = fact;
+        ctx.rules             = rules->rules;
+        ctx.in_force          = rules.get();
+        ctx.unasserted        = unasserted_snapshot();
+        ctx.budget            = explain_budget();
+        ctx.work_limit        = ctx.budget;
+
+        const Node    predicate = predicate_of(fact);
+        adjacency_set found;
+        if (predicate == 0) return {};
+
+        const auto heads = [&](const RuleInForce& r, const Variables& bindings)
+        {
+            std::vector<const ExplainRules::Head*> open;
+            for (const auto& head : r.heads)
+            {
+                if (head.consequence == core.Contradiction) continue;
+                charge(ctx, 1);
+                if (head.produces_rule)
+                {
+                    if (const Node rule = existing_rule(head.consequence, bindings, 0, r.condition); rule != 0 && rule != fact) found.insert(rule);
+                    continue;
+                }
+                if (free_in(self, head.consequence, bindings))
+                {
+                    open.push_back(&head);
+                    continue;
+                }
+                const Node derived = existing_consequence(head.consequence, bindings, 0, r.condition);
+                if (derived != 0 && derived != fact && premise_holds(self, derived)) found.insert(derived);
+            }
+            if (open.empty()) return;
+
+            join_witnesses(ctx, r, open, bindings, [&](const std::vector<Node>& chosen)
+                           {
+                               for (const Node n : chosen)
+                                   if (n != fact) found.insert(n);
+                               return true; });
+        };
+
+        // A path condition binds the endpoint that remains unbound by any
+        // other condition, as observed during the forward pass: each node
+        // that the walk reaches from the bound endpoint constitutes an
+        // instantiation of its own.
+        std::function<void(const RuleInForce&, const Variables&, std::size_t, const std::function<void(const Variables&)>&)> bind_ends;
+        bind_ends = [&](const RuleInForce& r, const Variables& bindings, const std::size_t k, const std::function<void(const Variables&)>& each)
+        {
+            if (k == r.closures.size())
+            {
+                each(bindings);
+                return;
+            }
+            adjacency_set modes;
+            adjacency_set ends;
+            const Node    walked = self->parse_fact(r.closures[k], modes, 0);
+            const Node    from   = walked != 0 ? self->parse_fact(walked, ends, r.closures[k]) : 0;
+            const Node    step   = walked != 0 ? parse_relation(walked) : 0;
+            const auto    bound  = [&](const Node n) -> Node
+            {
+                if (!Zelph::is_var(n)) return n;
+                const auto it = bindings.find(n);
+                return it == bindings.end() || Zelph::is_var(it->second) ? 0 : it->second;
+            };
+            const Node start = from != 0 ? bound(from) : 0;
+            const Node stop  = ends.size() == 1 ? bound(*ends.begin()) : 0;
+            const Node over  = step != 0 ? bound(step) : 0;
+            if (modes.size() != 1 || from == 0 || ends.size() != 1 || over == 0 || (start != 0) == (stop != 0))
+            {
+                bind_ends(r, bindings, k + 1, each);
+                return;
+            }
+            const bool          reflexive = *modes.begin() == ctx.closure_zero_plus;
+            const adjacency_set reached   = start != 0 ? transitive_targets(start, over, reflexive) : transitive_sources(stop, over, reflexive);
+            charge(ctx, 1 + reached.size() / scan_per_unit);
+            for (const Node n : reached)
+            {
+                Variables extended                          = bindings;
+                extended[start != 0 ? *ends.begin() : from] = n;
+                charge(ctx, 1);
+                bind_ends(r, extended, k + 1, each);
+            }
+        };
+
+        const auto instantiations = [&](const RuleInForce& r, Variables seed, const std::function<bool(const Variables&)>& uses_fact)
+        {
+            Join join(ctx, r, std::move(seed));
+            while (join.next())
+            {
+                const std::vector<Node> premises = join.premises();
+                bind_ends(r, join.bindings(), 0, [&](const Variables& bindings)
+                          {
+                    Candidate c;
+                    c.rule     = r.rule;
+                    c.bindings = bindings;
+                    c.facts    = premises;
+                    if (!rest_holds(ctx, r, c)) return;
+                    if (uses_fact && !uses_fact(c.bindings)) return;
+                    heads(r, c.bindings); });
+            }
+        };
+
+        adjacency_set fact_objects;
+        const Node    fact_subject = parse_fact(fact, fact_objects, 0);
+
+        try
+        {
+            for (const RuleInForce& r : ctx.rules)
+            {
+                if (r.neural) continue;
+                if (std::none_of(r.heads.begin(), r.heads.end(), [&](const auto& head)
+                                 { return head.consequence != core.Contradiction; }))
+                    continue;
+
+                for (std::size_t i = 0; i < r.positive.size(); ++i)
+                {
+                    const Node relation = r.shapes[i].relation;
+                    // A condition whose predicate is a statement -- a pattern
+                    // like (Y r s), or a concrete statement that a fact with
+                    // more objects states -- matches facts having different
+                    // predicates, and seed-mode Unification decides whether it
+                    // matches this one.
+                    if (relation != 0 && !Zelph::is_var(relation) && relation != predicate && predicate_of(relation) == 0) continue;
+                    const auto  vars = std::make_shared<Variables>();
+                    const auto  uneq = std::make_shared<Variables>();
+                    Unification unify(self, r.patterns[i], r.rule, vars, uneq, nullptr, 1, /*profiler*/ nullptr, fact, predicate);
+                    while (const std::shared_ptr<Variables> match = unify.Next())
+                    {
+                        charge(ctx, 1);
+                        instantiations(r, *match, nullptr);
+                    }
+                }
+
+                // The walk of a path condition along the fact's predicate
+                // steps over the fact for every start that reaches the fact's
+                // subject and every end that one of the fact's objects
+                // reaches: a fact having two objects constitutes an edge to
+                // each.
+                if (fact_subject == 0) continue;
+                for (const Node fact_object : fact_objects)
+                {
+                    for (const Node p : r.closures)
+                    {
+                        adjacency_set modes;
+                        const Node    walked = self->parse_fact(p, modes, 0);
+                        if (walked == 0 || modes.size() != 1) continue;
+                        const bool    reflexive = *modes.begin() == ctx.closure_zero_plus;
+                        adjacency_set ends;
+                        const Node    from = self->parse_fact(walked, ends, p);
+                        const Node    step = parse_relation(walked);
+                        if (from == 0 || step == 0 || ends.size() != 1) continue;
+                        if (!Zelph::is_var(step) && step != predicate) continue;
+                        const Node to = *ends.begin();
+
+                        const auto reaching = [&](const Node end, const Node from_end, const Node to_end, const bool backwards)
+                        {
+                            if (!Zelph::is_var(end))
+                            {
+                                const Path        path{from_end, to_end, predicate, true};
+                                std::vector<Node> edges;
+                                bool              exhausted = false;
+                                return ::zelph::network::transitive_walk(ctx, path, nullptr, edges, exhausted) ? adjacency_set{end} : adjacency_set{};
+                            }
+                            adjacency_set nodes = backwards ? transitive_sources(fact_subject, predicate, true) : transitive_targets(fact_object, predicate, true);
+                            charge(ctx, 1 + nodes.size() / scan_per_unit);
+                            return nodes;
+                        };
+                        const adjacency_set starts = reaching(from, from, fact_subject, true);
+                        if (starts.empty()) continue;
+                        const adjacency_set stops = reaching(to, fact_object, to, false);
+                        for (const Node start : starts)
+                        {
+                            for (const Node stop : stops)
+                            {
+                                Variables seed;
+                                if (Zelph::is_var(from)) seed[from] = start;
+                                if (Zelph::is_var(to)) seed[to] = stop;
+                                if (Zelph::is_var(step)) seed[step] = predicate;
+                                charge(ctx, 1);
+                                const auto around = [&](const Variables&)
+                                {
+                                    const Path          path{start, stop, predicate, reflexive};
+                                    const adjacency_set avoid{fact};
+                                    std::vector<Node>   edges;
+                                    bool                exhausted = false;
+                                    return !::zelph::network::transitive_walk(ctx, path, &avoid, edges, exhausted);
+                                };
+                                instantiations(r, std::move(seed), around);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        catch (const BudgetSpent&)
+        {
+            truncated = true;
+        }
+
+        std::vector<Node> out(found.begin(), found.end());
+        std::sort(out.begin(), out.end());
+        return out;
     }
 
     std::size_t Reasoning::explain_budget() const

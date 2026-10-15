@@ -101,6 +101,25 @@ nav:
       - The C ABI: capi.md
       - The Rust Layer: rust.md
       - Neural Networks in the Graph: neural.md
+  - ACE Front End (Specification):
+      - ace-spec/index.md
+      - A Tour in Sessions: ace-spec/sessions.md
+      - Work Plan and Milestones: ace-spec/plan.md
+      - What zelph Already Provides: ace-spec/foundation.md
+      - What zelph Still Needs: ace-spec/prerequisites.md
+      - Architecture: ace-spec/architecture.md
+      - The ace Block: ace-spec/block.md
+      - Modules, API and Data Shapes: ace-spec/api.md
+      - Tokenizer, Grammar and Lexicon: ace-spec/grammar.md
+      - From Sentences to the Graph: ace-spec/semantics.md
+      - Questions, Answers and Explanations: ace-spec/answers.md
+      - Words and Wikidata: ace-spec/words.md
+      - Numbers and Formulas: ace-spec/math.md
+      - Constructs and Refusals: ace-spec/constructs.md
+      - zelph Features Through ACE: ace-spec/zelph-features.md
+      - Tests and Quality Gates: ace-spec/tests.md
+      - Design Decisions: ace-spec/decisions.md
+      - Design Routes Taken and Not Taken: ace-spec/routes.md
   - Video Introduction: presentation.md
   - Building zelph: building.md
   - About the Project: about.md

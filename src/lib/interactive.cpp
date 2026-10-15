@@ -126,6 +126,20 @@ public:
             [this]
             { return _repl_state->import_depth == 0 && _repl_state->quiet_depth == 0; });
 
+        // `zelph/auto-run?` reads the switch that the host checks following an
+        // input line, so during a module import, which suspends it, the
+        // binding answers false.
+        _script_engine->set_auto_run_predicate(
+            [this]
+            { return _repl_state->auto_run; });
+
+        // `zelph/prune-fact` eliminates the same content that
+        // `.prune-facts` removes, hence it is rejected wherever the
+        // command is blocked.
+        _script_engine->set_full_graph_guard(
+            [this](const std::string& name)
+            { _command_executor->require_full_graph_mode(name); });
+
         _n->set_deduction_filter(filters_deductions(_repl_state->deduction_mode));
         _n->set_deduction_notice(announces_withheld(*_repl_state));
     }
@@ -278,38 +292,46 @@ void console::Interactive::process(std::string line) const
 
                 _pImpl->_n->profiler_reset_epoch();
 
-                bool dispatched = false;
-                try
-                {
-                    dispatched = _pImpl->_script_engine->invoke_keyword(
-                        state->active_keyword, state->keyword_buffer, force);
-                }
-                catch (...)
-                {
-                    // Leave keyword mode on handler errors so the REPL is not stuck.
-                    state->accumulating_keyword = false;
-                    state->active_keyword.clear();
-                    state->keyword_buffer.clear();
-                    state->keyword_prev_blank = false;
-                    throw;
-                }
+                // The block leaves the keyword state BEFORE its handler
+                // runs, just as finish_input's block does. While the
+                // handler had not returned, the state continued to gather
+                // input, so when a handler imported a file, the file's lines
+                // were directed into the keyword buffer rather than being
+                // read, and the import's conclusion dispatched the handler a
+                // second time with those lines appended. An error leaves the
+                // state cleared, ensuring the REPL does not remain trapped in
+                // keyword mode.
+                const std::string keyword   = std::move(state->active_keyword);
+                const std::string text      = std::move(state->keyword_buffer);
+                state->accumulating_keyword = false;
+                state->active_keyword.clear();
+                state->keyword_buffer.clear();
+                state->keyword_prev_blank = false;
 
-                if (dispatched)
-                {
-                    state->accumulating_keyword = false;
-                    state->active_keyword.clear();
-                    state->keyword_buffer.clear();
-                    state->keyword_prev_blank = false;
+                // An error names the block, not the blank line that ends it.
+                reported = keyword_block_label(keyword, text);
 
-                    if (state->auto_run)
+                // A handler that ran the engine following its last write has
+                // left the graph at a fixpoint, and the host's run would
+                // derive nothing: it would merely display once more, in zelph
+                // syntax, each contradiction lacking a record, which a handler
+                // that ran quietly has just returned as data. The end of input
+                // applies the same test (CommandExecutor::Impl::finish_input).
+                const size_t runs_before = _pImpl->_n->completed_runs();
+                if (_pImpl->_script_engine->invoke_keyword(keyword, text, force))
+                {
+                    const bool handler_ran_last = _pImpl->_n->completed_runs() != runs_before && _pImpl->_n->unchanged_since_last_run();
+                    if (state->auto_run && !handler_ran_last)
                         _pImpl->_n->run(state->deduction_mode != DeductionMode::Off, false, false, true);
                 }
                 else
                 {
                     // Handler vetoed (:incomplete): the blank line belongs to the
                     // text; a second consecutive blank line forces dispatch.
-                    state->keyword_buffer += "\n";
-                    state->keyword_prev_blank = true;
+                    state->accumulating_keyword = true;
+                    state->active_keyword       = keyword;
+                    state->keyword_buffer       = text + "\n";
+                    state->keyword_prev_blank   = true;
                 }
             }
             else

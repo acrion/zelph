@@ -257,6 +257,105 @@ TEST_CASE("derived rules: a transitivity generator chains the relation it names"
         CHECK_FALSE(any_output_contains(collector, "??")); });
 }
 
+TEST_CASE("derived rules: a focus on the arrow of the rule a generator writes leaves the generator as it is")
+{
+    // A focus on a rule's arrow names the rule, and this includes the inner
+    // rule within a generator. Read as a focus, the inner rule evaluated to
+    // the arrow, making the generator's consequence the arrow directly, and
+    // the line was refused as a rule nested without parentheses, even though
+    // parentheses were present.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("(R is transitive) => ((X R Y, Y R Z) *=> (X R Z))");
+        interactive.process("before is transitive");
+        interactive.process("a before b");
+        interactive.process("b before c");
+        interactive.run(true, false, false);
+
+        collector.clear();
+        interactive.process("A before C");
+        CHECK(answers_contain(collector, "a before c"));
+
+        // The generator and exactly one derived rule.
+        collector.clear();
+        interactive.process(".list-rules");
+        CHECK(listed_rules(collector) == 2); });
+}
+
+// A statement evaluates to the part its focus marks; thus, a focus on the
+// conditions of the rule a generator writes hands the comma list to the
+// generator as the consequence: no rule is written at that location, and a
+// rule is not allowed to have a conjunction as its consequence. The refusal
+// originated in Zelph::fact, whose message advised writing `A => (B) (C)`
+// rather than `A => (B, C)`, a comma list the line had not typed; the parser
+// now refuses the line and says what it does.
+TEST_CASE("derived rules: a focus on the conditions of the rule a generator writes is refused for what it does")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        const auto refusal = [&](const std::string& line)
+        {
+            try
+            {
+                interactive.process(line);
+            }
+            catch (const std::runtime_error& e)
+            {
+                return std::string(e.what());
+            }
+            return std::string{};
+        };
+
+        SUBCASE("the comma list under the focus")
+        {
+            const std::string message = refusal("(R is transitive) => (*(X R Y, Y R Z) => (X R Z))");
+            CHECK(message.find("a focus on its condition list") != std::string::npos);
+            CHECK(message.find("A => (B, C)") == std::string::npos);
+        }
+        SUBCASE("the comma list under a further focus")
+        {
+            const std::string message = refusal("(R is transitive) => (*(*(X R Y, Y R Z)) => (X R Z))");
+            CHECK(message.find("a focus on its condition list") != std::string::npos);
+        }
+        SUBCASE("in a statement that mentions the generator")
+        {
+            const std::string message = refusal("x says ((R is transitive) => (*(X R Y, Y R Z) => (X R Z)))");
+            CHECK(message.find("a focus on its condition list") != std::string::npos);
+        }
+        // A group containing a single value equates to that value, and a
+        // focus on the generator's consequence continues to retain the inner
+        // rule as that consequence: both lines hand the comma list to the
+        // generator, just as the first one does. The parser examined only the
+        // top of the slot, and these spellings received the advice of
+        // Zelph::fact once more.
+        SUBCASE("the inner rule in a further group")
+        {
+            const std::string message = refusal("(R is transitive) => ((*(X R Y, Y R Z) => (X R Z)))");
+            CHECK(message.find("a focus on its condition list") != std::string::npos);
+        }
+        SUBCASE("a focus on the consequence that holds the inner rule")
+        {
+            const std::string message = refusal("(R is transitive) => *(*(X R Y, Y R Z) => (X R Z))");
+            CHECK(message.find("a focus on its condition list") != std::string::npos);
+        }
+        // A rule that writes a rule generator is accepted in its
+        // straightforward form,
+        // `(R is transitive) => ((Q is u) => ((X R Y, Y R Z) => (X R Z)))`;
+        // under the focus, the most deeply nested rule hands its comma list to
+        // the rule in the middle, and the line received the advice of
+        // Zelph::fact.
+        SUBCASE("the rule written by the rule a generator writes")
+        {
+            const std::string message = refusal("(R is transitive) => ((Q is u) => (*(X R Y, Y R Z) => (X R Z)))");
+            CHECK(message.find("a focus on its condition list") != std::string::npos);
+            CHECK(message.find("A => (B, C)") == std::string::npos);
+        }
+
+        collector.clear();
+        interactive.process(".list-rules");
+        CHECK(listed_rules(collector) == 0); });
+}
+
 TEST_CASE("derived rules: the facts may be older than the rule that derives the rule")
 {
     // A derived rule has to see the graph it was born into, not just what
@@ -2680,13 +2779,20 @@ c r d
             CHECK(answered("S in O").empty());
             CHECK(answered("S s O").empty());
         }
-        SUBCASE("in a set literal")
+        SUBCASE("in a set literal, after which .explain finds the query gone")
         {
             // A set literal containing a rule that includes variables
             // constitutes a collection of the rule's text as well. The
             // firing derived `a about @{(((X s B), (X r B)) => (c q d))}`,
             // the query answered it, and `.explain`, which takes the most
             // recent answer, printed its derivation starting from `a p b`.
+            //
+            // This SUBCASE was "in a set literal", and it pinned that
+            // `.explain` after the empty answer printed no derivation: it
+            // explained the query's own statement, which stayed in the
+            // graph. That statement now goes once the query is answered, so
+            // `.explain` says that the node printed last has vanished, and
+            // continues to print nothing regarding the rule or `a p b`.
             interactive.process("(X p Y) => (X about {((X r B, X s B) => (c q d))})");
             collector.clear();
             interactive.process("a p b");
@@ -2694,7 +2800,7 @@ c r d
             CHECK(answered("A about B").empty());
 
             collector.clear();
-            interactive.process(".explain");
+            CHECK_THROWS_WITH_AS(interactive.process(".explain"), doctest::Contains("the pattern of a query"), std::runtime_error);
             CHECK_FALSE(any_output_contains(collector, "=>"));
             CHECK_FALSE(any_output_contains(collector, "a p b"));
         }
@@ -5946,13 +6052,20 @@ a p b
         } });
 }
 
-TEST_CASE("derived rules: a rule's collection with a variable bound through a marking fact has a data term no firing writes")
+// This test was named "derived rules: a rule's collection with a variable
+// bound through a marking fact has a data term no firing writes". A rule
+// acting on the engine's marking facts bound the collection of `(X p Y) =>
+// (X likes @{d Y})` via the mark of its member `d`, and the rule it generated
+// wrote into the collection's data term, which no firing of the typed rule
+// writes. A mark serves as the engine's annotation regarding a pattern and
+// does not match any condition, as per "rule patterns: the mark of a pattern
+// answers no query and satisfies no rule", and it was the sole path to a
+// rule's own collection that holds a variable: a rule over rules does not
+// read such a rule ("rule patterns: a typed rule whose variables sit in its
+// own collection is no data to a rule over rules"). The generator now binds
+// nothing, and the typed rule fires as written.
+TEST_CASE("derived rules: a rule over the engine's marking facts binds no rule's collection")
 {
-    // A rule over the engine's marking facts binds the collection of
-    // `(X p Y) => (X likes @{d Y})`, whose firings write a term per binding.
-    // The generated rule writes into the collection's data term, the term
-    // under no binding, which is never written by any of those firings: the
-    // two never meet.
     run_both_modes([](auto& collector, auto& interactive)
                    {
         process_lines(interactive, R"(
@@ -5968,10 +6081,11 @@ k r k
         CHECK(collect_answers(collector) == std::vector<std::string>{"a likes {d b}"});
         collector.clear();
         interactive.process("k in O");
-        CHECK(collect_answers(collector) == std::vector<std::string>{"k in @{k}"});
+        CHECK(collect_answers(collector).empty());
         collector.clear();
         interactive.process(".list-rules");
-        CHECK(any_output_contains(collector, "(X p Y) => (X likes @{d Y})")); });
+        CHECK(any_output_contains(collector, "(X p Y) => (X likes @{d Y})"));
+        CHECK(listed_rules(collector) == 2); });
 }
 
 TEST_CASE("derived rules: a construction inside a user's cluster is dropped with it")
@@ -6019,27 +6133,41 @@ a p b
         CHECK(collect_answers(collector) == std::vector<std::string>{"a t b"}); });
 }
 
-TEST_CASE("derived rules: a construction that throws leaves its scratch cluster")
+TEST_CASE("derived rules: a construction that fact() refuses is reported and leaves no scratch cluster")
 {
-    // `¬(c q k)` makes the consequence of the rule the generator writes for
-    // `t go k` a fact known to be wrong, causing the construction to throw.
+    // The consequence of the rule that the generator writes for `t go c`
+    // is `c q c t`, the subject of which is one among its several objects,
+    // which fact() refuses.
     // The scratch cluster it executed within is dropped, and the previously
-    // active cluster is restored before the exception leaves the
+    // active cluster is restored before the refusal leaves the
     // construction. Left active, the scratch took every node that was
     // entered afterwards, and the next construction's drop removed them:
     // `z1 foo bar` and all rules entered after the failure were lost, and
     // the cluster list named the scratch.
+    //
+    // This replaces "derived rules: a construction that throws leaves its
+    // scratch cluster", which reached the throw via a consequence that
+    // `¬(c q k)` had refuted. A construction now looks that fact up, just as
+    // the parser looks it up for a typed rule, and writes the rule
+    // ("negation: a derived rule may name a statement refuted before it").
+    //
+    // Under the name "derived rules: a construction that fact() refuses
+    // leaves its scratch cluster" this test pinned that the refusal made the
+    // run exit with an error, which the program caught. A construction's
+    // refusal is now reported just like a firing's, including its reason,
+    // and the run proceeds (next case).
     zelph::io::OutputCollector  collector;
     zelph::console::Interactive interactive(collector.sink());
     process_lines(interactive, R"(
 .auto-run
-¬(c q k)
-(G go H) => ((X G Y) => (c q H))
-t go k
+(G go H) => ((X G Y) => (c q H t))
+t go c
 )");
-    interactive.process(R"js(%(try (zelph/run) ([e] (zelph/out "caught"))))js");
+    collector.clear();
+    CHECK_NOTHROW(interactive.process("%(zelph/run)"));
+    CHECK(has_contradiction(collector));
+    CHECK(any_output_contains(collector, "refused: facts with same subject and object"));
     interactive.process(R"js(%(zelph/out (string "clusters=" (length (zelph/clusters)))))js");
-    CHECK(any_output_contains(collector, "caught"));
     CHECK(any_output_contains(collector, "clusters=0"));
 
     process_lines(interactive, R"(
@@ -6048,12 +6176,12 @@ z1 foo bar
 (M make N) => ((K is on) => ((X p Y) => (X M Y)))
 s make n
 )");
-    // The pass fires `t go k` once more, and its construction throws
+    // The pass fires `t go c` once more, and the construction is refused
     // once more, after the switch `s make n` writes was claimed.
     collector.clear();
-    interactive.process(R"js(%(try (zelph/run-once) ([e] (zelph/out "caught again"))))js");
+    CHECK_NOTHROW(interactive.process("%(zelph/run-once)"));
+    CHECK(any_output_contains(collector, "refused: facts with same subject and object"));
     interactive.process(R"js(%(zelph/out (string "clusters=" (length (zelph/clusters)))))js");
-    CHECK(any_output_contains(collector, "caught again"));
     CHECK(any_output_contains(collector, "clusters=0"));
 
     collector.clear();
@@ -6062,6 +6190,87 @@ s make n
     collector.clear();
     interactive.process(".list-rules");
     CHECK(listed_rules(collector) == 3);
+}
+
+// A construction wrote `X in {c d}` into the rule it built as a fresh set:
+// within the generator's text, the membership establishes X as a member of
+// the set, and rebuilding the set from its members under X = a resulted in
+// `{a c d}`, a set that nobody authored, concerning which `a q b` then
+// derived a statement. The identical consequence within a rule of its own
+// is refused, just as every extension of a set constant is, and so is the
+// construction now, reported as a refused consequence. A variable in the
+// rule that the construction builds still quantifies over the set, and the
+// firing of that rule is refused.
+TEST_CASE("derived rules: a construction refuses to extend a set constant as a firing does")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        const auto answers = [&](const std::string& query)
+        {
+            collector.clear();
+            interactive.process(query);
+            auto found = collect_answers(collector);
+            std::sort(found.begin(), found.end());
+            return found;
+        };
+        interactive.process("a p b");
+        SUBCASE("a value the generator binds")
+        {
+            collector.clear();
+            CHECK_NOTHROW(interactive.process("(X p Y) => ((X q Y) => (z says (X in {c d})))"));
+            CHECK(has_contradiction(collector));
+            CHECK(any_output_contains(collector, "refused: a set constant cannot be extended"));
+            collector.clear();
+            interactive.process(".list-rules");
+            CHECK(listed_rules(collector) == 1);
+            CHECK_NOTHROW(interactive.process("a q b"));
+        }
+        SUBCASE("a variable of the rule it builds")
+        {
+            CHECK_NOTHROW(interactive.process("(X p Y) => ((Z q Y) => (z says (Z in {c d})))"));
+            collector.clear();
+            interactive.process(".list-rules");
+            CHECK(listed_rules(collector) == 2);
+            collector.clear();
+            CHECK_NOTHROW(interactive.process("k q b"));
+            CHECK(any_output_contains(collector, "refused: a set constant cannot be extended"));
+        }
+        // The identical membership within a condition of the rule that the
+        // construction builds made `{a c d}` there as well, the binding
+        // fulfilled the condition, and the built rule derived `a ok b` even
+        // though `a` is not a member of `{c d}`. When typed as an
+        // independent rule, `(a in {c d}) => (a ok b)` is refused. A value
+        // that constitutes a member gives a condition that is valid, and its
+        // corresponding rule is triggered.
+        SUBCASE("a condition of the rule it builds")
+        {
+            collector.clear();
+            CHECK_NOTHROW(interactive.process("(X p Y) => ((X in {c d}) => (X ok Y))"));
+            CHECK(any_output_contains(collector, "refused: a set constant cannot be extended"));
+            CHECK(answers("S ok O").empty());
+            CHECK_NOTHROW(interactive.process("c p b"));
+            CHECK(answers("S ok O") == std::vector<std::string>{"c ok b"});
+            collector.clear();
+            interactive.process(".list-rules");
+            CHECK(listed_rules(collector) == 2);
+        }
+        // A set that the built rule names as a value, beside the membership
+        // that the generator's own consequence writes: that consequence is
+        // refused upon firing, and the set within the built rule turned into
+        // `{a c d}` regardless.
+        SUBCASE("a value of the rule it builds beside a membership the generator writes")
+        {
+            collector.clear();
+            CHECK_NOTHROW(interactive.process("(X p Y) => ((X q Y) => (z has {c d})) (X in {c d})"));
+            CHECK(any_output_contains(collector, "refused: a set constant cannot be extended"));
+            collector.clear();
+            interactive.process(".list-rules");
+            CHECK(listed_rules(collector) == 2);
+            CHECK_NOTHROW(interactive.process("a q b"));
+            CHECK(answers("S has O") == std::vector<std::string>{"z has {c d}"});
+        }
+        CHECK(answers("S says O").empty());
+        CHECK(answers("S in O") == std::vector<std::string>{"c in {c d}", "d in {c d}"}); });
 }
 
 TEST_CASE("derived rules: a construction does not start in a cluster that has its scratch's name")

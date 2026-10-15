@@ -184,7 +184,7 @@ std::vector<IndexPair> Zelph::Impl::extract_predicate_pairs(const Node predicate
                 // the predicate is its SUBJECT -- every `P ~ ->`
                 // declaration is such a relation. The hash separates
                 // the declaration from a genuine `~ ~ ->`.
-                if (bidirectional > 1)
+                if (bidirectional > 1 || subject == predicate)
                 {
                     subject = 0;
                     for (const Node c : rel_right)
@@ -389,6 +389,37 @@ void Zelph::Impl::invalidate_predicate_index() const noexcept
     if (!_pred_idx_has_entries.exchange(false, std::memory_order_acq_rel)) return;
     std::unique_lock lock(_pred_idx_mtx);
     _pred_idx_cache.clear();
+}
+
+bool Zelph::Impl::predicate_index_in_use() const noexcept
+{
+    return _pred_idx_has_entries.load(std::memory_order_acquire) || _pidx_io_enabled.load(std::memory_order_acquire);
+}
+
+void Zelph::Impl::invalidate_predicate_index(const Node predicate) const
+{
+    if (predicate == 0 || !predicate_index_in_use()) return;
+
+    // Each ground fact within a loaded session asks, thus the answer "already
+    // recorded and not built" is read under the shared lock.
+    {
+        std::shared_lock lock(_pred_idx_mtx);
+        const bool       recorded = !_pidx_io_enabled.load(std::memory_order_acquire) || _pidx_changed.count(predicate) != 0;
+        if (recorded && _pred_idx_cache.find(predicate) == _pred_idx_cache.end()) return;
+    }
+
+    std::unique_lock lock(_pred_idx_mtx);
+    if (_pidx_io_enabled.load(std::memory_order_acquire)) _pidx_changed.insert(predicate);
+    if (_pred_idx_cache.erase(predicate) != 0)
+        _pred_idx_has_entries.store(!_pred_idx_cache.empty(), std::memory_order_release);
+}
+
+bool Zelph::Impl::pidx_io_allowed(const Node predicate) const
+{
+    if (!_pidx_io_enabled.load(std::memory_order_acquire) || _pidx_base.empty()) return false;
+
+    std::shared_lock lock(_pred_idx_mtx);
+    return _pidx_changed.count(predicate) == 0;
 }
 
 // Relation-type declarations (p ~ ->) can appear without passing

@@ -55,6 +55,8 @@ A slice is a network in its own right, not an extract, so three things come alon
 
 What does not travel is a fact of a predicate you did not name, even between two nodes the slice keeps. That is the point of slicing.
 
+A refutation accompanies its fact. A fact that has been refuted, belonging to a predicate you named, comes along with its marking and its probability 0, even if nobody claims it, so the slice rejects the statement as its source does. A slice leaves a contradiction record out completely, along with the memberships associated with its set, and a run over the slice records the contradiction anew according to the content retained by the slice. A set that a statement names over the same facts travels as any set does, including its memberships; regarding the record, the slice omits solely the marking. A record that something within the slice holds travels whole, including its set, its marking, and its memberships, so the slice reads it as its source does: a statement that nests the marking, such as `x says ({(x p y) (x q y)} ~ refuted)` within a slice of `says`, and a rule whose condition names the record’s set beside a variable, which travels with every slice.
+
 Rules go in whole, so a slice reasons over the predicates it kept exactly as the source does. That includes the **contradiction rules**, which are the ones a reachability rule would miss: their consequence is `!`, a fact of no predicate, so nothing a slice retains ever reaches them. A rule whose conditions name a predicate you left out is carried intact, prints in full, and simply never matches. `.save-predicates` says how many went into the file:
 
 ```
@@ -86,7 +88,8 @@ Three checks, in increasing strength. The first two take seconds.
 $ zelph
 ...
 zelph> .load wikidata-20260309-all-pruned-small-P279.bin
-Auto-run has been disabled due to loading a large dataset.
+Auto-run has been disabled, as every .load disables it: inference after each
+input line can be slow on a loaded network. Use .auto-run to enable it again.
 Loading network from generic file wikidata-20260309-all-pruned-small-P279.bin...
 Loading: left chunks=3, right chunks=3, nameOfNode chunks=2, nodeOfName chunks=2
 ...

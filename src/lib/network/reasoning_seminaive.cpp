@@ -36,6 +36,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include <memory>
 #include <mutex>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -55,6 +56,7 @@ namespace
                                                                     // decomposition, built once, reused per seed
         std::shared_ptr<std::unordered_set<Node>> excluded;         // rule topology nodes (conjunction set + elements)
         adjacency_set                             deductions;
+        std::vector<Node>                         walk_preds;          // the predicates its path conditions walk
         bool                                      delta_unsafe{false}; // must be applied classically every iteration
         bool                                      deferred{false};     // contains a negated condition -> stratum 2
         std::size_t                               level{0};            // deferred only: see Reasoning::negation_levels
@@ -99,7 +101,12 @@ void Reasoning::record_negations(const bool on)
     // The switch defines the limits of memory, thus disabling it releases the
     // records -- except those that continue to undergo re-tests in check
     // mode.
-    if (!keeps_negation_records()) std::vector<NegationRecord>().swap(_negation_records);
+    if (!keeps_negation_records())
+    {
+        std::vector<NegationRecord>().swap(_negation_records);
+        _reported_in_cluster.clear();
+        _any_reported_in_cluster.store(false, std::memory_order_release);
+    }
 }
 
 bool Reasoning::record_negations() const
@@ -127,11 +134,12 @@ const std::vector<std::pair<Node, Node>>& Reasoning::defeated_negations() const
 // once in a delta; facts created in the SAME delta find each other because
 // the seeded evaluation of the later-processed fact scans a graph that
 // already contains the earlier one.
-uint64_t Reasoning::run_fixpoint_seminaive(bool silent, const std::vector<std::pair<Node, Node>>* seed)
+uint64_t Reasoning::run_fixpoint_seminaive(bool silent, const std::vector<std::pair<Node, Node>>* seed, const std::unordered_set<Node>* removed_preds, const std::unordered_set<Node>* new_rules)
 {
     _nn_pred           = get_node("nn", "zelph");
     _nn_layers_pred    = get_node("nn-layers", "zelph");
     _closure_pred      = get_node("closure", "zelph");
+    _refuted_pred      = get_node(refuted_fact_name(), "zelph");
     _closure_one_plus  = get_node("one-or-more", "zelph");
     _closure_zero_plus = get_node("zero-or-more", "zelph");
 
@@ -141,6 +149,8 @@ uint64_t Reasoning::run_fixpoint_seminaive(bool silent, const std::vector<std::p
     std::vector<IndexedRule> rules;
     // concrete predicate -> (rule index, leaf index) pairs
     std::unordered_map<Node, std::vector<std::pair<size_t, size_t>>> pred_index;
+    // predicate a path condition walks -> the seedable rules that walk it
+    std::unordered_map<Node, std::vector<size_t>> walk_index;
     // leaf conditions with a variable predicate: seeded by every delta fact
     std::vector<std::pair<size_t, size_t>> wildcard_index;
     // The number of negation levels that deferred rules encompass; 0 if
@@ -151,11 +161,39 @@ uint64_t Reasoning::run_fixpoint_seminaive(bool silent, const std::vector<std::p
     // rebuild at the delta boundary below.
     size_t indexed_rules = 0;
 
+    // A seeded run seeds a deferred rule at the boundary of its level, using
+    // the facts created since that level was last assessed, instead of
+    // performing a classic pass there. The previous run ended at a fixpoint,
+    // representing the state against which each level was last evaluated, so
+    // for every level the facts it has not yet seen are precisely those this
+    // run has drained from its deltas -- first the carried ones -- since its
+    // most recent pass. These are kept in `drained`, restricted to the
+    // predicates accessed by seedable deferred rules, and `level_seen[L]`
+    // tracks how many of them level L has seen. The switch is turned off for
+    // the rest of the run when the rule set grows, the safety net finds a
+    // miss, or `drained` surpasses the limit set by the record of additions:
+    // at that point, every deferred rule proceeds with its classic pass, as
+    // occurs in a full run.
+    bool                                                             seed_deferred = seed != nullptr;
+    std::unordered_map<Node, std::vector<std::pair<size_t, size_t>>> deferred_pred_index;
+    std::vector<std::pair<size_t, size_t>>                           deferred_wildcard_index;
+    std::unordered_map<Node, std::vector<size_t>>                    deferred_walk_index;
+    std::unordered_set<Node>                                         deferred_reads;
+    bool                                                             deferred_reads_any = false;
+    std::vector<std::pair<Node, Node>>                               drained;
+    std::vector<size_t>                                              level_seen;
+
     const auto build_index = [&]()
     {
         rules.clear();
         pred_index.clear();
+        walk_index.clear();
         wildcard_index.clear();
+        deferred_pred_index.clear();
+        deferred_wildcard_index.clear();
+        deferred_walk_index.clear();
+        deferred_reads.clear();
+        deferred_reads_any = false;
         _negating_rules.clear();
         levels        = 0;
         indexed_rules = _pImpl->get_left(core.Causes).size();
@@ -201,9 +239,10 @@ uint64_t Reasoning::run_fixpoint_seminaive(bool silent, const std::vector<std::p
 
             // Rules whose condition contains a negation at ANY depth form the
             // deferred stratum: excluded from the classic first pass, never
-            // seeded, never applied inside the positive delta loop. They run
-            // only at stratum boundaries (positive delta drained), so every
-            // negation is tested against the saturated positive fact base.
+            // applied inside the positive delta loop. They run only at
+            // stratum boundaries (positive delta drained), so every negation
+            // is tested against the saturated positive fact base -- either via a
+            // classic pass, or seeded during a seeded run (see seed_deferred).
             // This supersedes the former per-rule negation handling: a rule
             // whose negation variables were all covered by positive conditions
             // used to be seeded like a normal rule, which evaluated its
@@ -219,7 +258,7 @@ uint64_t Reasoning::run_fixpoint_seminaive(bool silent, const std::vector<std::p
                 _negating_rules[condition] = rule_node;
             }
 
-            if (!ir.deferred)
+            if (!ir.deferred || seed_deferred)
             {
                 // Classify elements. A rule is delta-unsafe (and then applied
                 // classically in every iteration) when seeding over its
@@ -230,8 +269,30 @@ uint64_t Reasoning::run_fixpoint_seminaive(bool silent, const std::vector<std::p
                 //  - elements without a unique predicate
                 //  - neural (approx) conditions (no fact lookup, epoch-cached)
                 //  - no positive leaf at all
+                // A deferred rule is classified solely during a seeded run,
+                // and within that context, a delta-unsafe rule keeps its
+                // classic pass at the boundary.
                 for (Node cond : ir.elements)
                 {
+                    // A negated condition tests the instance that the
+                    // remaining conditions bound, hence it never serves as a
+                    // seed. A negated net derives its response from its
+                    // weights instead of from facts a removal would announce,
+                    // and a negated set of conditions does not designate any
+                    // predicate a removal could announce: both keep the rule's
+                    // classic pass.
+                    if (ir.deferred)
+                    {
+                        if (const Node negated = negation_operand(cond); negated != 0)
+                        {
+                            const adjacency_set negated_rels = filter(negated, core.IsA, core.RelationTypeCategory);
+                            if (is_condition_set(negated)
+                                || (_nn_pred != 0 && negated_rels.size() == 1 && *negated_rels.begin() == _nn_pred))
+                                ir.delta_unsafe = true;
+                            continue;
+                        }
+                    }
+
                     if (is_condition_set(cond))
                     {
                         ir.delta_unsafe = true;
@@ -265,17 +326,44 @@ uint64_t Reasoning::run_fixpoint_seminaive(bool silent, const std::vector<std::p
                     // `(X sub Y) => (X P279 Y)`, `a P31 c1`, `c1 sub c2`:
                     // classic derives `(a below c2)`, semi-naive did not, and
                     // semi-naive is the default. `.semi-naive check` named it.
+                    //
+                    // These edges are the sole justification for revisiting a
+                    // given rule: its remaining conditions are seedable
+                    // leaves, and the path condition filters or generates
+                    // under their bindings, just as in a classic pass.
+                    // Consequently, the predicate it walks is recorded, and
+                    // the rule gets a classic pass exclusively during an
+                    // iteration where the delta holds a fact matching that
+                    // predicate. A predicate named by a variable is known
+                    // only per binding and keeps the rule delta-unsafe, just
+                    // as does the lack of any other condition (no leaf, as
+                    // noted below).
                     if (_closure_pred != 0 && rel == _closure_pred)
                     {
-                        ir.delta_unsafe = true;
+                        adjacency_set modes;
+                        const Node    path   = parse_fact(cond, modes, 0);
+                        const Node    walked = path != 0 ? parse_relation(path) : Node{0};
+                        if (walked == 0 || Zelph::Impl::is_var(walked))
+                            ir.delta_unsafe = true;
+                        else
+                            ir.walk_preds.push_back(walked);
                         continue;
                     }
 
                     if (!Zelph::Impl::is_var(rel) && rel == core.Unequal)
                         continue; // guard: never a seed, binds no new variables
 
+                    // A composite predicate is stated by other composite
+                    // predicates as well: a pattern by each statement it
+                    // unifies with, a concrete statement by a fact possessing
+                    // more objects. With its node serving as the key, the leaf
+                    // received no seed whatsoever, thus
+                    // `(x (a p Y) Z) => ...` failed to capture what a later
+                    // iteration derived; seeded by each fact within the delta,
+                    // much like a predicate variable, it matches the seed's
+                    // predicate to its own.
                     ir.leaves.push_back(cond);
-                    ir.leaf_preds.push_back(Zelph::Impl::is_var(rel) ? Node{0} : rel);
+                    ir.leaf_preds.push_back(Zelph::Impl::is_var(rel) || (Zelph::Impl::is_hash(rel) && predicate_of(rel) != 0) ? Node{0} : rel);
                     // Hoisted out of the Unification constructor: the pattern
                     // decomposition is a pure function of the condition node
                     // (with armed stores: its immutable genuine triple), so one
@@ -286,7 +374,7 @@ uint64_t Reasoning::run_fixpoint_seminaive(bool silent, const std::vector<std::p
                 if (ir.leaves.empty()) ir.delta_unsafe = true;
 
                 const size_t rule_idx = rules.size();
-                if (!ir.delta_unsafe)
+                if (!ir.deferred && !ir.delta_unsafe)
                 {
                     for (size_t li = 0; li < ir.leaves.size(); ++li)
                     {
@@ -294,6 +382,11 @@ uint64_t Reasoning::run_fixpoint_seminaive(bool silent, const std::vector<std::p
                             wildcard_index.emplace_back(rule_idx, li);
                         else
                             pred_index[ir.leaf_preds[li]].emplace_back(rule_idx, li);
+                    }
+                    for (const Node walked : ir.walk_preds)
+                    {
+                        auto& walkers = walk_index[walked];
+                        if (walkers.empty() || walkers.back() != rule_idx) walkers.push_back(rule_idx);
                     }
                 }
             }
@@ -308,9 +401,69 @@ uint64_t Reasoning::run_fixpoint_seminaive(bool silent, const std::vector<std::p
         levels                          = stratified.levels;
         for (std::size_t i = 0; i < rules.size(); ++i)
             rules[i].level = stratified.level[i];
+
+        if (!seed_deferred) return;
+
+        // A fact that has arrived can solely cause a negation to become false,
+        // hence using the positive conditions for seeding identifies every
+        // instance that can fire now and could not previously. What enables a
+        // negation to become true is a statement that was valid during the
+        // last run but is no longer present: the rule keeps its classic pass
+        // if a predicate it negates belongs to the set
+        // (_removed_preds_since_run), or if it negates under a predicate
+        // variable, which might represent any such predicate, or if it negates
+        // a pattern that names no predicate whatsoever. A component that
+        // negates its own derived content lacks a stratified reading, and its
+        // alternation remains unchanged.
+        level_seen.assign(levels, 0);
+        for (std::size_t i = 0; i < rules.size(); ++i)
+        {
+            IndexedRule& ir = rules[i];
+            if (!ir.deferred || ir.delta_unsafe) continue;
+
+            const RuleFootprint f       = footprint(ir.rule);
+            bool                classic = f.negates_any || f.negates.empty()
+                                       || stratified.negation_inside[stratified.component[i]]
+                                       || (new_rules != nullptr && new_rules->count(ir.rule) != 0);
+            for (auto p = f.negates.begin(); !classic && p != f.negates.end(); ++p)
+                classic = removed_preds != nullptr && removed_preds->count(*p) != 0;
+            if (classic)
+            {
+                ir.delta_unsafe = true;
+                continue;
+            }
+
+            for (size_t li = 0; li < ir.leaves.size(); ++li)
+            {
+                if (ir.leaf_preds[li] == 0)
+                {
+                    deferred_wildcard_index.emplace_back(i, li);
+                    deferred_reads_any = true;
+                }
+                else
+                {
+                    deferred_pred_index[ir.leaf_preds[li]].emplace_back(i, li);
+                    deferred_reads.insert(ir.leaf_preds[li]);
+                }
+            }
+            for (const Node walked : ir.walk_preds)
+            {
+                auto& walkers = deferred_walk_index[walked];
+                if (walkers.empty() || walkers.back() != i) walkers.push_back(i);
+                deferred_reads.insert(walked);
+            }
+        }
     };
 
     build_index();
+
+    // In a seeded run, each rule that is new since the last run receives a
+    // classic pass during the run's first iteration, enabling the rule to
+    // observe facts that predate it.
+    std::vector<size_t> fresh;
+    if (seed != nullptr && new_rules != nullptr)
+        for (size_t i = 0; i < rules.size(); ++i)
+            if (!rules[i].deferred && new_rules->count(rules[i].rule) != 0) fresh.push_back(i);
 
     // ------------------------------------------------------------------
     // Phase 1: delta capture + classic first iteration
@@ -378,6 +531,7 @@ uint64_t Reasoning::run_fixpoint_seminaive(bool silent, const std::vector<std::p
         // the same "consequence <= {conditions}" explanation as classic mode.
         ctx.current_condition = ir.top_condition;
         ctx.rule_deductions   = ir.deductions;
+        ctx.rule              = ir.rule;
 
         auto vars = std::make_shared<Variables>();
         auto uneq = std::make_shared<Variables>();
@@ -482,6 +636,33 @@ uint64_t Reasoning::run_fixpoint_seminaive(bool silent, const std::vector<std::p
                                      { return !_pImpl->exists(entry.first); }),
                       current.end());
 
+        // In this iteration, the rules that take a classic pass also see this
+        // delta, ensuring they are not seeded from it.
+        std::vector<char> classic_now;
+        if (!fresh.empty())
+        {
+            classic_now.assign(rules.size(), 0);
+            for (const size_t ri : fresh)
+            {
+                classic_now[ri] = 1;
+                apply_rule(rules[ri].rule, 0);
+            }
+            _pool->wait();
+            fresh.clear();
+            if (current.empty()) continue; // what they derived is in the delta
+        }
+
+        if (seed_deferred)
+        {
+            for (const auto& entry : current)
+                if (deferred_reads_any || deferred_reads.count(entry.second) != 0) drained.push_back(entry);
+            if (drained.size() > _max_delta_entries)
+            {
+                seed_deferred = false;
+                std::vector<std::pair<Node, Node>>().swap(drained);
+            }
+        }
+
         if (current.empty())
         {
             // ---- A rule derived a rule. ----
@@ -494,6 +675,9 @@ uint64_t Reasoning::run_fixpoint_seminaive(bool silent, const std::vector<std::p
             // is never created twice (rebuild_rule), so this terminates.
             if (_pImpl->get_left(core.Causes).size() != indexed_rules)
             {
+                // The new rule may negate, and the levels are recalculated
+                // from scratch.
+                seed_deferred = false;
                 build_index();
                 _done = false;
                 if (!silent && progress_due())
@@ -521,9 +705,49 @@ uint64_t Reasoning::run_fixpoint_seminaive(bool silent, const std::vector<std::p
                 if (!silent)
                     if (progress_due())
                         diagnostic_stream() << "--- Deferred stratum (negation level " << next_level + 1 << " of " << levels
-                                            << ", classic pass) ---" << std::endl;
+                                            << (seed_deferred ? ", seeded" : ", classic pass") << ") ---" << std::endl;
                 for (const IndexedRule& ir : rules)
-                    if (ir.deferred && ir.level == next_level) apply_rule(ir.rule, 0);
+                    if (ir.deferred && ir.level == next_level && (!seed_deferred || ir.delta_unsafe)) apply_rule(ir.rule, 0);
+                if (seed_deferred)
+                {
+                    // What this level has not observed yet; what this pass derives
+                    // reaches `drained` through the delta and becomes visible during
+                    // the level's next pass, if any exists.
+                    const size_t from      = level_seen[next_level];
+                    level_seen[next_level] = drained.size();
+                    const auto this_level  = [&](const size_t ri)
+                    { return rules[ri].level == next_level; };
+                    std::vector<char> classic_here;
+                    if (!deferred_walk_index.empty())
+                    {
+                        classic_here.assign(rules.size(), 0);
+                        for (size_t i = from; i < drained.size(); ++i)
+                        {
+                            const auto walkers = deferred_walk_index.find(drained[i].second);
+                            if (walkers == deferred_walk_index.end()) continue;
+                            for (const size_t ri : walkers->second)
+                            {
+                                if (!this_level(ri) || classic_here[ri]) continue;
+                                classic_here[ri] = 1;
+                                apply_rule(rules[ri].rule, 0);
+                            }
+                        }
+                    }
+                    _pool->wait();
+
+                    const auto seeded_now = [&](const size_t ri)
+                    { return this_level(ri) && (classic_here.empty() || classic_here[ri] == 0); };
+                    for (size_t i = from; i < drained.size(); ++i)
+                    {
+                        const auto [seed_fact, seed_pred] = drained[i];
+                        if (Zelph::Impl::is_var(seed_pred) || !_pImpl->exists(seed_fact)) continue;
+                        if (const auto it = deferred_pred_index.find(seed_pred); it != deferred_pred_index.end())
+                            for (const auto& [ri, li] : it->second)
+                                if (seeded_now(ri)) seed_rule(rules[ri], li, seed_fact, seed_pred);
+                        for (const auto& [ri, li] : deferred_wildcard_index)
+                            if (seeded_now(ri)) seed_rule(rules[ri], li, seed_fact, seed_pred);
+                    }
+                }
                 _pool->wait();
                 // Mirror the classic loop: a deferred pass that derived
                 // something may trigger additional deferred
@@ -578,13 +802,17 @@ uint64_t Reasoning::run_fixpoint_seminaive(bool silent, const std::vector<std::p
             if (!_done) break; // clean fixpoint confirmed
 
             ++safety_violations;
-            next_level = 0; // violation facts must re-open the deferred strata too
+            next_level    = 0; // violation facts must re-open the deferred strata too
+            seed_deferred = false;
 
             // Diagnosis aid: name the missed facts explicitly. The observer
             // stayed active during the classic pass, so the delta now holds
             // exactly the facts the seeded phase failed to derive (including
             // inner facts materialized by instantiate_fact). The printed
             // predicate is the pred_index key that would have been seeded.
+            // A quiet run outputs nothing, and the error message from the run
+            // conveys the remainder.
+            if (!_quiet)
             {
                 std::vector<std::pair<Node, Node>> missed;
                 {
@@ -618,12 +846,37 @@ uint64_t Reasoning::run_fixpoint_seminaive(bool silent, const std::vector<std::p
 
         // Delta-unsafe rules cannot be seeded completely; apply them
         // classically once per iteration. This set is empty for typical
-        // rule bases, including the arithmetic modules.
-        for (const IndexedRule& ir : rules)
+        // rule bases, including the arithmetic modules. A rule that is
+        // deferred executes solely at its boundary, regardless of its
+        // classification.
+        for (size_t ri = 0; ri < rules.size(); ++ri)
         {
-            if (ir.delta_unsafe) apply_rule(ir.rule, 0);
+            const IndexedRule& ir = rules[ri];
+            if (ir.delta_unsafe && !ir.deferred && (classic_now.empty() || classic_now[ri] == 0)) apply_rule(ir.rule, 0);
+        }
+
+        // A rule whose path condition walks a predicate that this delta
+        // extends takes a classic pass, and that pass has seen the delta
+        // as well, so the rule is not seeded again in this iteration.
+        if (!walk_index.empty())
+        {
+            if (classic_now.empty()) classic_now.assign(rules.size(), 0);
+            for (const auto& entry : current)
+            {
+                const auto walkers = walk_index.find(entry.second);
+                if (walkers == walk_index.end()) continue;
+                for (const size_t ri : walkers->second)
+                {
+                    if (classic_now[ri]) continue;
+                    classic_now[ri] = 1;
+                    apply_rule(rules[ri].rule, 0);
+                }
+            }
         }
         _pool->wait();
+
+        const auto seeded_now = [&classic_now](const size_t ri)
+        { return classic_now.empty() || classic_now[ri] == 0; };
 
         for (const auto& [seed_fact, seed_pred] : current)
         {
@@ -635,10 +888,10 @@ uint64_t Reasoning::run_fixpoint_seminaive(bool silent, const std::vector<std::p
             if (it != pred_index.end())
             {
                 for (const auto& [ri, li] : it->second)
-                    seed_rule(rules[ri], li, seed_fact, seed_pred);
+                    if (seeded_now(ri)) seed_rule(rules[ri], li, seed_fact, seed_pred);
             }
             for (const auto& [ri, li] : wildcard_index)
-                seed_rule(rules[ri], li, seed_fact, seed_pred);
+                if (seeded_now(ri)) seed_rule(rules[ri], li, seed_fact, seed_pred);
         }
         _pool->wait();
     }

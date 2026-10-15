@@ -25,7 +25,7 @@
 # containing dynamic bindings set outside any fibre, by inserting the
 # marking logic that Janet's master branch has included since commit b437ae3
 # (referencing issue #1888) into janet_collect within src/core/gc.c. Janet
-# 1.41.2 fails to mark this table, resulting in its premature release during
+# 1.42.1 fails to mark this table, resulting in its premature release during
 # the first collection. zelph initializes :err within this table once at
 # start-up, and Janet's event loop reads the table when generating a stack
 # trace for a finished task (janet_stacktrace_ext): after a collection, that

@@ -27,6 +27,8 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #include "test_helpers.hpp"
 
+#include "network/reasoning.hpp"
+
 #include <filesystem>
 #include <fstream>
 #include <sstream>
@@ -232,6 +234,141 @@ TEST_CASE("sparql: a ground triple is a question, not an assertion")
         interactive.process("Q1 P31 O");
         CHECK_FALSE(answers_contain(collector, "Q1 P31 Q7"));
         CHECK(collect_answers(collector).size() == 2); });
+}
+
+// A query builds its patterns using zelph/fact and zelph/set -- one fact for
+// each triple, the conjunction set that joins them, its tag, and the
+// variables -- and these stayed in the graph: every query added nodes, and
+// `S ~ conjunction` answered a query's conjunction as data. Each query is now
+// evaluated within its own cluster, which is dropped along with the answer.
+// The caller's cluster is active again afterwards, and the drop leaves the
+// fact stores armed.
+TEST_CASE("sparql: a query leaves nothing in the graph")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        load_sparql(interactive);
+        setup_base_graph(interactive);
+        std::string active = "active=";
+        SUBCASE("outside a cluster") {}
+        SUBCASE("inside a cluster of the caller's")
+        {
+            interactive.process(".cluster mine");
+            active += "mine";
+        }
+        const std::size_t before = node_count(collector, interactive);
+
+        const auto ask = [&](const std::string& query, const std::string& rows)
+        {
+            CAPTURE(query);
+            collector.clear();
+            run_sparql(interactive, query);
+            CHECK(any_output_contains(collector, rows));
+            CHECK(node_count(collector, interactive) == before);
+        };
+        ask("SELECT ?x WHERE { ?x wdt:P31 wd:Q5 . ?x wdt:P21 wd:Q6581097 . }", "-- 1 result(s) --");
+        ask("SELECT ?x ?y WHERE { ?x wdt:P279 ?y . ?y wdt:P279 wd:Q500 . }", "-- 2 result(s) --");
+        ask("SELECT ?x WHERE { ?x wdt:P279+ wd:Q500 . }", "-- 3 result(s) --");
+
+        collector.clear();
+        interactive.process("S ~ conjunction");
+        CHECK(collect_answers(collector).empty());
+        CHECK(interactive.graph()->fact_stores_enabled());
+
+        collector.clear();
+        interactive.process(R"(%(zelph/out (string "active=" (zelph/cluster))))");
+        CHECK(any_output_contains(collector, active)); });
+}
+
+// A triple pattern whose predicate had never been a predicate declared it a
+// relation type, just as the first fact of a predicate does, and the drop of
+// the query's cluster took the pattern and left the declaration: `wd:Q5`, an
+// object present in every fact of the base graph, became a relation type
+// following the query.
+TEST_CASE("sparql: a query that uses a node as a predicate for the first time leaves no declaration of it")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        load_sparql(interactive);
+        setup_base_graph(interactive);
+        const auto declarations = [&]
+        {
+            collector.clear();
+            interactive.process("P ~ ->");
+            std::vector<std::string> answers = collect_answers(collector);
+            std::sort(answers.begin(), answers.end());
+            return answers;
+        };
+        const std::size_t              before   = node_count(collector, interactive);
+        const std::vector<std::string> declared = declarations();
+
+        collector.clear();
+        run_sparql(interactive, "SELECT ?x WHERE { ?x wd:Q5 ?y . }");
+        CHECK(any_output_contains(collector, "No results."));
+        CHECK(node_count(collector, interactive) == before);
+        CHECK(declarations() == declared);
+        CHECK(interactive.graph()->fact_stores_enabled()); });
+}
+
+// When a query fails, it leaves nothing behind either: the scratch cluster
+// is dropped, and the caller's cluster is restored via a defer. The error
+// below is raised after the group of two triples has been evaluated, which
+// builds their patterns; thus, merely dropping on success would retain those
+// patterns within the graph and keep the scratch cluster active, causing
+// every subsequent query to be refused.
+TEST_CASE("sparql: a query that fails while it is evaluated leaves nothing in the graph either")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        load_sparql(interactive);
+        setup_base_graph(interactive);
+        std::string active = "active=.";
+        SUBCASE("outside a cluster") {}
+        SUBCASE("inside a cluster of the caller's")
+        {
+            interactive.process(".cluster mine");
+            active = "active=mine.";
+        }
+        const std::size_t before = node_count(collector, interactive);
+
+        CHECK_THROWS_WITH(run_sparql(interactive, "SELECT ?x WHERE { ?x wdt:P31 ?c . ?c wdt:P279 ?d . ?a wdt:P279* ?b . }"),
+                          doctest::Contains("both ends unbound"));
+        CHECK(node_count(collector, interactive) == before);
+
+        collector.clear();
+        interactive.process("S ~ conjunction");
+        CHECK(collect_answers(collector).empty());
+
+        collector.clear();
+        interactive.process(R"(%(zelph/out (string "active=" (zelph/cluster) ".")))");
+        CHECK(any_output_contains(collector, active));
+
+        collector.clear();
+        run_sparql(interactive, "SELECT ?x WHERE { ?x wdt:P31 wd:Q5 . ?x wdt:P21 wd:Q6581097 . }");
+        CHECK(any_output_contains(collector, "-- 1 result(s) --")); });
+}
+
+// The cluster in which a query is evaluated is dropped along with the
+// answer, meaning a cluster sharing the same name that the caller
+// previously created would be removed as well. The query is refused
+// instead, and the caller's nodes remain intact.
+TEST_CASE("sparql: a query refuses to run while a cluster of its scratch name exists")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        load_sparql(interactive);
+        setup_base_graph(interactive);
+        process_lines(interactive, R"(
+    .cluster sparql:query
+    x p y
+    .cluster default
+    )");
+        collector.clear();
+        CHECK_THROWS_WITH(run_sparql(interactive, "SELECT ?x WHERE { ?x wdt:P31 wd:Q5 . }"), doctest::Contains("exists already"));
+
+        collector.clear();
+        interactive.process("x p O");
+        CHECK(collect_answers(collector) == std::vector<std::string>{"x p y"}); });
 }
 
 TEST_CASE("sparql: a ground triple satisfied by a fact carrying more objects")

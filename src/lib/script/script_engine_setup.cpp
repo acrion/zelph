@@ -127,16 +127,21 @@ namespace zelph
         auto wrap = [](JanetCFunction f)
         { return janet_wrap_cfunction(f); };
 #endif
-        janet_def(_janet_env, "zelph/fact", wrap((JanetCFunction)&guarded<&janet_cfun_zelph_fact>), "(zelph/fact s p o)\nCreate fact. Main thread only.");
-        janet_def(_janet_env, "zelph/refute", wrap((JanetCFunction)&guarded<&janet_cfun_zelph_refute>), "(zelph/refute s p o)\nClaim that the fact does NOT hold: same node as zelph/fact, created with probability 0 so that Answer::is_wrong holds for it. This is what the statement \"¬(s p o)\" means outside a rule condition. Refused if the graph already claims the fact. Main thread only.");
+        janet_def(_janet_env, "zelph/fact", wrap((JanetCFunction)&guarded<&janet_cfun_zelph_fact>), "(zelph/fact s p o)\nCreate fact. A refuted marking of a ground fact, (zelph/fact F \"~\" \"refuted\"), is refused outside a rule build: write that claim with zelph/refute. A marking whose fact holds a variable is a pattern and stays allowed. "
+                                                                                                    "A => fact the call creates whose consequence has a predicate that no condition binds is checked when the outermost Janet evaluation ends "
+                                                                                                    "(a block, a statement with its islands, a keyword handler, a .janet file) and before any run or save within it: "
+                                                                                                    "if it is still a rule in force then (neither a generator nor a statement holds it), it is removed and the block, the run or the save fails with \"zelph/fact: ...\". "
+                                                                                                    "So is a rule zelph/mention wrote down that the call claims into force; its refusal takes back the claim, and the rule stays a mention. "
+                                                                                                    "Main thread only.");
+        janet_def(_janet_env, "zelph/refute", wrap((JanetCFunction)&guarded<&janet_cfun_zelph_refute>), "(zelph/refute s p o)\nClaim that the fact does NOT hold: same node as zelph/fact, created with probability 0 so that Answer::is_wrong holds for it. This is what the statement \"¬(s p o)\" means outside a rule condition, and what \"(s p o) ~ refuted\" means on a line of its own. Refused if the graph already claims the fact; a fact that a rule or a query only writes down as a pattern is no claim and is refuted. Refuting a refuted fact again changes nothing. Main thread only.");
         janet_def(_janet_env, "zelph/path-guard", wrap((JanetCFunction)&guarded<&janet_cfun_zelph_path_guard>), "(zelph/path-guard from to)\nRefuse a path marker whose two ends are both concrete, outside a rule and outside a Janet block: reachability is walked, not asserted. Emitted by the \"P⁺\"/\"P∗\" sugar BEFORE the pattern is built, since building it is what would assert the one step. Main thread only.");
 
         janet_def(_janet_env, "zelph/list", wrap((JanetCFunction)&guarded<&janet_cfun_zelph_list>), "(zelph/list nodes...)\nCreate list from nodes (a Lisp-style cons list with the first node as outermost cell). Main thread only.");
 
-        janet_def(_janet_env, "zelph/list-chars", wrap((JanetCFunction)&guarded<&janet_cfun_zelph_list_chars>), "(zelph/list-chars str)\nCreate list from string characters.\nCharacters are reversed before building the cons list so that the least-significant\ncharacter (rightmost in the string) is the outermost cons cell.\nThis matches the compact <...> syntax and enables LSB-first arithmetic via recursion. Main thread only.");
+        janet_def(_janet_env, "zelph/list-chars", wrap((JanetCFunction)&guarded<&janet_cfun_zelph_list_chars>), "(zelph/list-chars str)\nCreate list from string characters.\nCharacters are reversed before building the cons list so that the least-significant\ncharacter (rightmost in the string) is the outermost cons cell.\nThis matches the compact <...> syntax and enables LSB-first arithmetic via recursion.\nEvery character is the node of that name in language \"zelph\", whatever .lang says, so a character list is the same node in every language. Main thread only.");
         janet_def(_janet_env, "zelph/set", wrap((JanetCFunction)&guarded<&janet_cfun_zelph_set>), "(zelph/set nodes...)\nCreate a SET CONSTANT from elements, the `{...}` literal. Identified by its members, so the same elements always yield the same node, and membership cannot be extended. Main thread only.");
 
-        janet_def(_janet_env, "zelph/collection", wrap((JanetCFunction)&guarded<&janet_cfun_zelph_collection>), "(zelph/collection nodes...)\nCreate a COLLECTION from elements, the `@{...}` literal. A container with its own identity: two calls with the same elements yield two different nodes, and (member in collection) adds to it. Main thread only.");
+        janet_def(_janet_env, "zelph/collection", wrap((JanetCFunction)&guarded<&janet_cfun_zelph_collection>), "(zelph/collection nodes...)\nCreate a COLLECTION from elements, the `@{...}` literal. A container with its own identity: two calls with the same elements yield two different nodes, and (member in collection) adds to it. With no elements it returns nil, the core node of the empty list, as zelph/set and zelph/list do. Main thread only.");
 
         janet_def(_janet_env, "zelph/conjunction", wrap((JanetCFunction)&guarded<&janet_cfun_zelph_conjunction>), "(zelph/conjunction conditions...)\nCreate a rule's condition set, the `(cond, cond, ...)` comma list: a collection tagged `~ conjunction`. "
                                                                                                                   "Every condition must be readable as a fact pattern, or as a nested condition set; anything else is refused, "
@@ -144,6 +149,16 @@ namespace zelph
 
         janet_def(_janet_env, "zelph/resolve", wrap((JanetCFunction)&guarded<&janet_cfun_zelph_resolve>), "(zelph/resolve name &opt lang)\nResolve a string to its node, creating it if needed. "
                                                                                                           "lang defaults to the current language (as set by .lang). On a thread other than the main thread it only looks the name up, and a name that has no node yet is refused there.");
+
+        janet_def(_janet_env, "zelph/lookup", wrap((JanetCFunction)&guarded<&janet_cfun_zelph_lookup>), "(zelph/lookup name &opt lang)\nThe node that already carries the name in lang (default: the current language), or nil. Unlike zelph/resolve it creates nothing. "
+                                                                                                        "A variable carrying the name is not its node, and a core spelling (\"~\", \"=>\") gives the core node in every language. Allowed on every thread.");
+
+        janet_def(_janet_env, "zelph/lookup-all", wrap((JanetCFunction)&guarded<&janet_cfun_zelph_lookup_all>), "(zelph/lookup-all name &opt lang)\nEvery node that carries the name in lang (default: the current language), as a tuple of nodes, "
+                                                                                                                "in the order of the ranking that elects the node the name resolves to: a Wikidata property before an item before any other node, then the lower Wikidata number, then the lower node id. "
+                                                                                                                "A name that only one node carries gives that node alone, a name no node carries the empty tuple; never a variable or a core node. "
+                                                                                                                "After a .name or set_name takeover, the node zelph/lookup returns need not come first. "
+                                                                                                                "The keyword :incomplete instead, in every language, while the name sections of the network were loaded partially "
+                                                                                                                "(a .load-partial that selected fewer name chunks than the file holds), until a load replaces the graph or .new. Creates nothing. Allowed on every thread.");
 
         janet_def(_janet_env, "zelph/var", wrap((JanetCFunction)&guarded<&janet_cfun_zelph_var>), "(zelph/var &opt name)\nCreate a FRESH variable node and return it. "
                                                                                                   "A variable SYMBOL passed to zelph/fact is scoped to one evaluation of a Janet block; this node is a value, "
@@ -166,22 +181,50 @@ namespace zelph
                                                                                                     "import into an empty graph writes the cache. The Janet environment is kept; a node a Janet value held "
                                                                                                     "names whatever has that id in the loaded graph, or nothing. Main thread only, and refused while a rule is being built.");
 
-        janet_def(_janet_env, "zelph/run", wrap((JanetCFunction)&guarded<&janet_cfun_zelph_run>), "(zelph/run)\nRun forward chaining to a fixed point, like the .run command. "
+        janet_def(_janet_env, "zelph/epoch", wrap((JanetCFunction)&guarded<&janet_cfun_zelph_epoch>), "(zelph/epoch)\nAn integer that only grows within the process: every new engine (.new) advances it, as does every load that replaces the graph "
+                                                                                                      "and every Wikidata dump imported into the running session. A Janet value that holds node ids or labels is current while the epoch "
+                                                                                                      "is still the one it was computed under. Allowed on every thread.");
+
+        janet_def(_janet_env, "zelph/run", wrap((JanetCFunction)&guarded<&janet_cfun_zelph_run>), "(zelph/run &opt :quiet :derived)\nRun forward chaining to a fixed point, like the .run command. "
                                                                                                   "Needed when driving zelph as a library: facts and rules created from Janet only take effect once the engine has run, "
-                                                                                                  "and outside the REPL neither .run nor auto-run is reachable. Returns nil. Main thread only, and refused while a rule is being built.");
+                                                                                                  "and outside the REPL neither .run nor auto-run is reachable. Returns nil. "
+                                                                                                  "With :quiet the run prints nothing -- no banner, deduction, contradiction, note or finding -- and returns "
+                                                                                                  "{:contradictions C :naf-final N}: C a tuple with one struct {:rule :conditions :conclusion :record :bindings} per distinct "
+                                                                                                  "contradiction the run met, in the order first met (:record is :new, :existing or :none); N a tuple of {:fact F :rule R}, "
+                                                                                                  "one per fact found no longer justified while negation records are kept (check mode or .negation-records), "
+                                                                                                  "which check mode then does not raise for. With :derived as well (in either order), the struct adds :derived D: a tuple, in the order derived, "
+                                                                                                  "of {:fact :rule :premises :absent :bindings} per derived fact, :premises the facts its positive conditions matched (by node id), "
+                                                                                                  ":absent the patterns of its negated conditions, found absent; :derived without :quiet is refused. "
+                                                                                                  "Any other argument is refused. Main thread only, and refused while a rule is being built.");
 
-        janet_def(_janet_env, "zelph/run-once", wrap((JanetCFunction)&guarded<&janet_cfun_zelph_run_once>), "(zelph/run-once)\nRun a single inference pass, like the .run-once command. "
-                                                                                                            "Derives what one application of the rules yields instead of iterating to a fixed point. Returns nil. Main thread only, and refused while a rule is being built.");
+        janet_def(_janet_env, "zelph/run-once", wrap((JanetCFunction)&guarded<&janet_cfun_zelph_run_once>), "(zelph/run-once &opt :quiet :derived)\nRun a single inference pass, like the .run-once command. "
+                                                                                                            "Derives what one application of the rules yields instead of iterating to a fixed point. Returns nil. "
+                                                                                                            "With :quiet (and :derived), what (zelph/run :quiet) (and :derived) returns; a single pass never re-tests the negation records, so :naf-final is always empty. "
+                                                                                                            "Main thread only, and refused while a rule is being built.");
 
-        janet_def(_janet_env, "zelph/run-delta", wrap((JanetCFunction)&guarded<&janet_cfun_zelph_run_delta>), "(zelph/run-delta)\nRun inference seeded by the facts created since the previous run, like the .run-delta command. "
+        janet_def(_janet_env, "zelph/run-delta", wrap((JanetCFunction)&guarded<&janet_cfun_zelph_run_delta>), "(zelph/run-delta &opt :quiet :derived)\nRun inference seeded by the facts created since the previous run, like the .run-delta command. "
                                                                                                               "Skips the pass over the whole graph for the rules that can be seeded, which is what makes assert-then-reason loops practical; "
                                                                                                               "a rule with a negated condition still takes a classic pass over the facts its positive conditions match at each negation level, and a rule that cannot be seeded takes one in every iteration. "
-                                                                                                              "Requires an earlier run, an unchanged rule set and semi-naive evaluation; otherwise it falls back to a full pass. Returns nil. Main thread only, and refused while a rule is being built.");
+                                                                                                              "Requires an earlier run, an unchanged rule set and semi-naive evaluation; otherwise it falls back to a full pass. Returns nil. "
+                                                                                                              "With :quiet (and :derived), what (zelph/run :quiet) (and :derived) returns, and no note about falling back to a full pass; a full pass returns all it derived. "
+                                                                                                              "Main thread only, and refused while a rule is being built.");
+
+        janet_def(_janet_env, "zelph/auto-run?", wrap((JanetCFunction)&guarded<&janet_cfun_zelph_auto_run_p>), "(zelph/auto-run?)\nWhether the host runs inference after the input that is being processed: the effective value of the .auto-run switch. "
+                                                                                                               "False while a module is imported (.import, zelph/import), whose single run follows its last line, "
+                                                                                                               "and after .load or .load-partial, which switch auto-run off. Main thread only.");
 
         janet_def(_janet_env, "zelph/strata", wrap((JanetCFunction)&guarded<&janet_cfun_zelph_strata>), "(zelph/strata)\nThe negation levels of the rules in force, as the .strata command shows them, without running anything. "
                                                                                                         "Returns an array with one table per rule, in no particular order: :rule the rule node, :level its negation level counted from 1 "
                                                                                                         "(absent for a rule without a negated condition), :component a number shared by the rules of one strongly connected component, "
-                                                                                                        "and :stratifiable, false when that component negates what it derives. Main thread only.");
+                                                                                                        "and :stratifiable, false when that component negates what it derives. "
+                                                                                                        "A rule over predicates -- one that only extends the predicates it reads, as (R is transitive, A R B, B R C) => (A R C) does -- "
+                                                                                                        "has :transparent true; while one is in force, the levels compare predicates alone, not predicate and object, "
+                                                                                                        "so two rules that share a predicate depend on each other whatever their objects. Main thread only.");
+        janet_def(_janet_env, "zelph/rules", wrap((JanetCFunction)&guarded<&janet_cfun_zelph_rules>), "(zelph/rules)\nThe rules in force with their parts, as the .list-rules command lists them, without running anything. "
+                                                                                                      "Returns a tuple sorted by rule node, one struct per rule: :rule the rule node, :conditions its plain positive conditions, "
+                                                                                                      ":negated the patterns its negated conditions negate (P for the condition ¬(P)), :guards its != conditions, :paths its path conditions, "
+                                                                                                      ":neural its ≈ conditions and :heads its consequences (the core node ! for a denial), each a tuple of nodes sorted by node. "
+                                                                                                      "A rule that a statement only mentions is not in force and is not listed. Creates nothing. Main thread only.");
         janet_def(_janet_env, "zelph/defeated", wrap((JanetCFunction)&guarded<&janet_cfun_zelph_defeated>), "(zelph/defeated)\nReturn an array of [fact rule] tuples, one per fact the latest run found no longer justified: "
                                                                                                             "derived by that rule under a negated premise that has since come to hold, and derived by nothing else. "
                                                                                                             "These are the facts the run's warning names while .negation-records is on, or its error in check mode; "
@@ -192,6 +235,41 @@ namespace zelph
                                                                                                                             "Returns the state afterwards. Off by default, because every record costs memory (see .help .negation-records); "
                                                                                                                             "switching off drops the records, unless check mode keeps them. The switch is a setting of the session: a load keeps it, "
                                                                                                                             "and discards the records, which name the nodes of the graph it replaced. Main thread only.");
+        janet_def(_janet_env, "zelph/explain", wrap((JanetCFunction)&guarded<&janet_cfun_zelph_explain>), "(zelph/explain fact)\n(zelph/explain s p o & objs)\nThe proof .explain prints, as data, or nil when there is no such fact. "
+                                                                                                          "The fact is resolved without creating anything and taken exactly as given; a statement whose text holds a comma list, such as a rule with several conditions, can only be named by its node. "
+                                                                                                          "Each step is a struct: :fact the node; :status one of :derived :axiom :unfounded :rule-pattern :mentioned :rule-mentioned :truncated; :rule the => fact of a derived step; "
+                                                                                                          ":premises the steps of its positive conditions; :absent the patterns of its negated conditions, found absent; :walked the patterns of its path conditions, "
+                                                                                                          "and :walk-edges, per path condition, the steps of the derived facts its walk passes; :cycle-leaf; :more, true when the root has a second justification; "
+                                                                                                          ":bindings the rule's variables as the step binds them. :unfounded is a fact that rules could derive but that no derivation supports now: "
+                                                                                                          "a premise was removed, or a negated premise has come to hold since. "
+                                                                                                          "The proof is the complete one while its search stays within the session's .explain-budget; otherwise it is the proof found within the default depth of .explain, "
+                                                                                                          "cut there by :truncated steps, and the root carries :fallback true. Main thread only.");
+        janet_def(_janet_env, "zelph/prune-fact", wrap((JanetCFunction)&guarded<&janet_cfun_zelph_prune_fact>), "(zelph/prune-fact fact)\n(zelph/prune-fact s p o & objs)\nWithdraw the claim of one fact, as the ground form of .prune-facts does. "
+                                                                                                                "The fact is resolved without creating anything and taken exactly as given, so a fact with further objects is another fact. "
+                                                                                                                "Returns :removed when the node went, together with the statements that hold it (see zelph/holders); :unclaimed when it stays as part of a rule or as a mention, "
+                                                                                                                "while what holds it outside rule text goes; nil when nothing claims it: no such fact, only a rule's pattern or a mention, or a refuted fact. "
+                                                                                                                "The relation-type declaration of a core predicate (~ ~ ->) is kept, nil, with the line .prune-facts prints for it. "
+                                                                                                                "What was derived from the fact stays (see .help .prune-facts). A removed node loses its annotations, a node that stays keeps them. "
+                                                                                                                "Dropping the active cluster does not bring a removed fact back. "
+                                                                                                                "Refused for a node that is no fact and for a fact that holds a variable (a pattern is the business of .prune-facts). Blocked on a partially loaded graph, as .prune-facts is. Main thread only, and refused while a rule is being built.");
+
+        janet_def(_janet_env, "zelph/holders", wrap((JanetCFunction)&guarded<&janet_cfun_zelph_holders>), "(zelph/holders fact)\n(zelph/holders s p o & objs)\nThe statements that claim the fact by nesting it, as a tuple of nodes sorted by node, each once; "
+                                                                                                          "the empty tuple when nothing holds it, nil when there is no such fact. The fact is resolved as zelph/prune-fact resolves it. "
+                                                                                                          "These are what zelph/prune-fact takes with the fact, or withdraws where a holder is part of a rule. "
+                                                                                                          "Left out: rule text and mentions (a rule, an opaque statement or a zelph/mention that names the fact), the engine's bookkeeping, a pattern with a variable, "
+                                                                                                          "and the fact's own markings. Only direct holders: a statement that nests a holder goes with the holder. "
+                                                                                                          "A membership in a container the prune takes along (a set constant; an atom or a collection that no rule or mention names) is passed over: listed are the statements that name the container, which go with it, and the container goes too; so is a membership that is itself asked about. "
+                                                                                                          "A membership in a container that a rule or a mention names is listed, as it is all that goes, also beside a container the prune takes along. "
+                                                                                                          "A core predicate's relation-type declaration, which zelph/prune-fact keeps with whatever holds it, gives the empty tuple. Creates nothing. "
+                                                                                                          "Refused, and blocked on a partially loaded graph, as zelph/prune-fact is. Main thread only, and refused while a rule is being built.");
+
+        janet_def(_janet_env, "zelph/dependents", wrap((JanetCFunction)&guarded<&janet_cfun_zelph_dependents>), "(zelph/dependents fact)\n(zelph/dependents s p o & objs)\nThe facts that a rule in force derives from the fact in one step, as a tuple of nodes sorted by node, each once: "
+                                                                                                                "a justification of each uses the fact, as a condition or as an edge a path condition walks over, while its other conditions, guards and negations hold. "
+                                                                                                                "The empty tuple when nothing rests on the fact, nil when there is no such fact. The fact is resolved as zelph/prune-fact resolves it. "
+                                                                                                                "Only direct dependents: a fact that rests on the fact only through another dependent is not listed. A fact with another justification is listed too, "
+                                                                                                                "and so is one a statement also asserted, since zelph records no derivation. A denial and a rule that the fact blocks through a negation derive nothing from it. "
+                                                                                                                "The search does .explain's work and is bounded by the session's .explain-budget: when the budget runs out first, the tuple ends with :truncated after the dependents found so far. "
+                                                                                                                "Creates nothing. Refused, and blocked on a partially loaded graph, as zelph/prune-fact is. Main thread only, and refused while a rule is being built.");
 
         janet_def(_janet_env, "zelph/cluster", wrap((JanetCFunction)&guarded<&janet_cfun_zelph_cluster>), "(zelph/cluster &opt name)\nActivate a named cluster, or with nil / \"default\" deactivate cluster tracking; without an argument only report. "
                                                                                                           "Returns the name of the cluster that is active afterwards, or nil for the default. "
@@ -210,18 +288,41 @@ namespace zelph
         janet_def(_janet_env, "zelph/query", wrap((JanetCFunction)&guarded<&janet_cfun_zelph_query>), "(zelph/query node)\nExecute a query and return results as an array of tables.\nEach table maps variable symbols to their bound zelph/node values.\nTakes a zelph/fact containing variables.\n"
                                                                                                       "Resets the variable scope, so it is refused while a rule is being built: there the scope binds the rule's variables. Main thread only.");
 
-        janet_def(_janet_env, "zelph/exists", wrap((JanetCFunction)&guarded<&janet_cfun_zelph_exists>), "(zelph/exists s p o)\nCheck whether the fact was CLAIMED -- asserted or derived -- without creating it. Returns boolean.\n"
-                                                                                                        "A statement that only occurs as a rule's pattern is not claimed; ask zelph/mentioned for that.");
+        janet_def(_janet_env, "zelph/exists", wrap((JanetCFunction)&guarded<&janet_cfun_zelph_exists>), "(zelph/exists s p o & objs)\nCheck whether the fact was CLAIMED -- asserted or derived -- without creating it. Returns boolean.\n"
+                                                                                                        "A statement that only occurs as a rule's pattern is not claimed; ask zelph/mentioned for that.\n"
+                                                                                                        "Nor is the engine's own bookkeeping, which no rule condition sees either: the mark of a rule's pattern, a contradiction record or one of its members.\n"
+                                                                                                        "A fact carrying further objects satisfies the question, as it satisfies a rule condition. With a trailing :exact only the fact exactly as given counts: "
+                                                                                                        "one hash probe, also when the answer is false, where the plain form walks every relation of the subject. Allowed on every thread.");
 
-        janet_def(_janet_env, "zelph/mentioned", wrap((JanetCFunction)&guarded<&janet_cfun_zelph_mentioned>), "(zelph/mentioned s p o)\nCheck whether the fact NODE is present in the graph, whether or not anybody claimed it.\n"
+        janet_def(_janet_env, "zelph/mentioned", wrap((JanetCFunction)&guarded<&janet_cfun_zelph_mentioned>), "(zelph/mentioned s p o & objs)\nCheck whether the fact NODE is present in the graph, whether or not anybody claimed it.\n"
                                                                                                               "True for a rule's own conditions and consequences, which zelph/exists reports as absent. Use this to\n"
-                                                                                                              "inspect rule structure; use zelph/exists to ask about the data.");
+                                                                                                              "inspect rule structure; use zelph/exists to ask about the data. Takes a trailing :exact as zelph/exists does.");
 
-        janet_def(_janet_env, "zelph/name", wrap((JanetCFunction)&guarded<&janet_cfun_zelph_name>), "(zelph/name node &opt lang)\nReturn the name of a node as a string, or nil if unnamed.");
+        janet_def(_janet_env, "zelph/name", wrap((JanetCFunction)&guarded<&janet_cfun_zelph_name>), "(zelph/name node &opt lang :strict)\nReturn the name of a node in lang (default: the current language) as a string, or nil if unnamed. "
+                                                                                                    "Without a name in lang it falls back to the node's name in English, then in zelph, then in any other language; "
+                                                                                                    "with a trailing :strict it does not, and a node without a name in lang gives nil. A core node answers with its spelling in every language.");
+
+        janet_def(_janet_env, "zelph/lang", wrap((JanetCFunction)&guarded<&janet_cfun_zelph_lang>), "(zelph/lang &opt lang)\nThe current language, as .lang shows it. With an argument, set it as .lang <lang> does and return the previous one. "
+                                                                                                    "The language decides what names resolve to and in which language zelph/resolve creates a node. Main thread only.");
 
         janet_def(_janet_env, "zelph/sources", wrap((JanetCFunction)&guarded<&janet_cfun_zelph_sources>), "(zelph/sources predicate target)\nFind all subjects connected to target via predicate. Read-only.");
 
         janet_def(_janet_env, "zelph/targets", wrap((JanetCFunction)&guarded<&janet_cfun_zelph_targets>), "(zelph/targets subject predicate)\nFind all objects connected from subject via predicate. Read-only.");
+
+        janet_def(_janet_env, "zelph/degree", wrap((JanetCFunction)&guarded<&janet_cfun_zelph_degree>), "(zelph/degree node &opt side)\nThe number of edges of node in the graph's adjacency, read without copying it: :in the incoming ones, :out the outgoing ones, "
+                                                                                                        "both without a side. A fact points to its subject and its predicate, and its subject and objects point to it, so the :in of a node counts "
+                                                                                                        "the facts it is the subject or the predicate of, and its :out those it is the subject or an object of. 0 for a node that does not exist. Allowed on every thread.");
+
+        janet_def(_janet_env, "zelph/annotate", wrap((JanetCFunction)&guarded<&janet_cfun_zelph_annotate>), "(zelph/annotate node key value)\nAttach the string value to node under the string key, after the values the key already holds; a value the key holds is not added again. "
+                                                                                                            "Returns true when the value was added. Annotations are no part of the graph: no query, rule or name sees them, and annotating a rule's node is no mention of the rule. "
+                                                                                                            ".save writes them and a .load of the file reads them back; a removal of the node erases them, and a name merge carries them to the node that remains. "
+                                                                                                            "node is a node, an id or a name, and is never created. Main thread only.");
+
+        janet_def(_janet_env, "zelph/annotations", wrap((JanetCFunction)&guarded<&janet_cfun_zelph_annotations>), "(zelph/annotations node &opt key)\nThe annotations of node: a struct from each key to the tuple of its values, in the order they were added, "
+                                                                                                                  "or with key the tuple of that key's values. Empty when there are none, also for a node that does not exist. Allowed on every thread.");
+
+        janet_def(_janet_env, "zelph/unannotate", wrap((JanetCFunction)&guarded<&janet_cfun_zelph_unannotate>), "(zelph/unannotate node key &opt value)\nRemove value from the values of key, or without value the key and all its values. "
+                                                                                                                "Returns how many values were removed. Main thread only.");
 
         janet_def(_janet_env, "zelph/negate", wrap((JanetCFunction)&guarded<&janet_cfun_zelph_negate>), "(zelph/negate pattern)\nThe negated condition over a fact pattern: creates and returns the fact\n((pattern) ~ negation), which a rule names as its condition.\nEquivalent to ¬(pattern) and to ((pattern) ~ negation) in zelph syntax.\nMain thread only.");
 
@@ -237,6 +338,7 @@ namespace zelph
                                                                                                                 "What the thunk builds into the rule is the rule's text: a collection it writes into it is the rule's own, and the ground parts of the rule it returns "
                                                                                                                 "(every => fact over the condition set it returns, or over the condition of the => fact it returns) are rule patterns, not claims. "
                                                                                                                 "Unlike a parsed rule, a duplicate is not rolled back; a thunk that fails leaves nothing of what it built. "
+                                                                                                                "Outside a parsed statement, the => fact it returns is asserted, so a rule zelph/mention wrote with the same text comes into force. "
                                                                                                                 "The zelph/rule macro builds its rule the same way (zelph/build-rule-parts); "
                                                                                                                 "wrap a rule written by hand with zelph/fact in it. Refused while another rule is being built. Main thread only.");
 
@@ -245,25 +347,60 @@ namespace zelph
                                                                                                                             "Returns the condition set node. If the thunk or the build fails, nothing the thunk built is kept. "
                                                                                                                             "Refused while another rule is being built. Not needed in hand-written Janet: use zelph/rule. Main thread only.");
 
-        janet_def(_janet_env, "zelph/dedup-rule", wrap((JanetCFunction)&guarded<&janet_cfun_zelph_dedup_rule>), "(zelph/dedup-rule thunk)\nRun a thunk that builds one rule and return the rule node. "
+        janet_def(_janet_env, "zelph/dedup-rule", wrap((JanetCFunction)&guarded<&janet_cfun_zelph_dedup_rule>), "(zelph/dedup-rule thunk &opt :focus)\nRun a thunk that builds one whole rule and returns its => fact, and return the rule node. "
+                                                                                                                "Every zelph/var of the rule is created inside the thunk, so that the rollback of a duplicate keeps none of them. "
                                                                                                                 "If the graph already holds a rule that is the same up to renaming of its variables, "
                                                                                                                 "the newly built one is rolled back and the existing node returned instead. "
-                                                                                                                "Emitted automatically around every parsed `... => ...` statement; not needed in hand-written Janet. Main thread only.");
+                                                                                                                "A thunk that returns anything but a => fact is refused, and nothing it built is kept: "
+                                                                                                                "a plain fact, and also a condition set such as zelph/rule* returns. "
+                                                                                                                "With :focus, the thunk returns a tuple of the => fact and one part of it -- its condition, the =>, or one of its consequences -- "
+                                                                                                                "and the same part of the rule kept is returned, the existing rule's when the new one is rolled back: "
+                                                                                                                "the parser's form for a rule with the focus operator, *{(X p Y)} => (X q Y). "
+                                                                                                                "Emitted around every parsed `... => ...` statement, and the one route that deduplicates a rule built in Janet. "
+                                                                                                                "Outside a parsed statement, the rule kept is asserted, so a rule zelph/mention wrote with the same text comes into force. "
+                                                                                                                "Refused while another rule is being built. Main thread only.");
 
         janet_def(_janet_env, "zelph/rule-text", wrap((JanetCFunction)&guarded<&janet_cfun_zelph_rule_text>), "(zelph/rule-text thunk)\nRun a thunk that writes a rule which another statement mentions, and return what it returns. "
                                                                                                               "Mentioning a rule claims none of its parts: the ground parts of every rule the thunk creates are rule patterns, as a typed rule's are, "
                                                                                                               "and the collections it writes are that rule's own. A part that existed before keeps its status, "
-                                                                                                              "and a mentioned rule is marked only as a part of another rule the thunk creates. "
+                                                                                                              "and a mentioned rule is marked only as a part of another rule the thunk creates: unlike the rule zelph/mention returns, "
+                                                                                                              "a rule zelph/rule-text returns and no statement holds is in force. "
                                                                                                               "In a statement that asks (it has a variable outside the rules it mentions), nothing is marked. "
                                                                                                               "zelph/fact calls in the thunk claim nothing, even in a Janet block. "
                                                                                                               "Emitted automatically around every parsed `... => ...` that stands inside another statement; "
                                                                                                               "wrap a mention written by hand with zelph/fact in it. Main thread only.");
 
-        janet_def(_janet_env, "zelph/query-text", wrap((JanetCFunction)&guarded<&janet_cfun_zelph_query_text>), "(zelph/query-text thunk)\nRun the code of a query that carries a condition operator and return what it returns. "
+        janet_def(_janet_env, "zelph/mention", wrap((JanetCFunction)&guarded<&janet_cfun_zelph_mention>), "(zelph/mention s p o & objs)\n(zelph/mention thunk)\nWrite a statement without claiming it, and return it: the first form builds one fact, the second runs a thunk that builds the statement and returns it. "
+                                                                                                          "What the call creates and the returned statement reaches is marked as written down, not asserted: no query or rule condition takes it as data "
+                                                                                                          "until a claim of the same statement (a typed statement, zelph/fact in a Janet block, a firing, zelph_fact) makes it data. "
+                                                                                                          "What existed before keeps its status, so a mention of an asserted statement still answers. "
+                                                                                                          "A rule (a => fact) the call creates as the statement it returns is a mention too: it is not in force, and a rule over rules does not read it, "
+                                                                                                          "until a claim of the same rule (a typed rule, zelph/fact in a Janet block, zelph_fact, zelph/dedup-rule, zelph/build-rule) puts it in force. "
+                                                                                                          "A claim by zelph/fact or zelph_fact of a rule whose consequence predicate no condition binds is refused as a => fact the call creates is, and the rule stays a mention. "
+                                                                                                          "A rule the thunk writes inside the statement it returns is rule text, "
+                                                                                                          "a collection it writes is a value, and a refutation marking it writes refutes nothing. zelph/fact calls in the thunk claim nothing, even in a Janet block. "
+                                                                                                          "In a parsed statement that asks, nothing is marked. A thunk that returns no node is refused, and nothing it built is kept. "
+                                                                                                          "A prune of a claimed statement that a mention holds withdraws the claim and keeps the statement, as for a rule's pattern. Main thread only.");
+
+        janet_def(_janet_env, "zelph/aside", wrap((JanetCFunction)&guarded<&janet_cfun_zelph_aside>), "(zelph/aside fact)\nReturn fact, and record it as the fact a focus writes beside the node it hands on. "
+                                                                                                      "Emitted by the parser around that fact. Within a parsed statement, the statement claims it as it claims what it writes, "
+                                                                                                      "also when it was a rule's pattern before; within a rule or a statement that another statement mentions, or in an argument "
+                                                                                                      "of an opaque predicate, it is marked with what the mention wrote, and a fact that existed before keeps its status. "
+                                                                                                      "A fact that holds a variable is not recorded. Outside a parsed statement, as in a Janet block, it only returns fact. "
+                                                                                                      "Main thread only.");
+
+        janet_def(_janet_env, "zelph/query-text", wrap((JanetCFunction)&guarded<&janet_cfun_zelph_query_text>), "(zelph/query-text thunk)\nRun the code of a query and return what it returns. "
                                                                                                                 "Emitted by the parser. Within the parsed statement, what the query creates beneath an operator -- the operand, everything in it, "
                                                                                                                 "the operator's own fact -- is a pattern, marked before the query is evaluated; a node that existed before keeps its status, "
-                                                                                                                "and if the thunk fails, nothing it built is kept. Outside a parsed statement, as in a Janet block, it only runs the thunk. "
+                                                                                                                "and if the thunk fails, nothing it built is kept. What it creates that holds one of its variables is removed once the query "
+                                                                                                                "is answered; what it creates without one stays. Outside a parsed statement, as in a Janet block, it only runs the thunk. "
                                                                                                                 "Main thread only.");
+
+        janet_def(_janet_env, "zelph/claim-text", wrap((JanetCFunction)&guarded<&janet_cfun_zelph_claim_text>), "(zelph/claim-text thunk)\nRun the code of a claimed statement that carries a refutation or takes a node by reference, and return what it returns. "
+                                                                                                                "Emitted by the parser. Within the parsed statement, a statement that fails -- in its code or in its claim at the end of the line, "
+                                                                                                                "a refutation refused for a fact the graph or the statement claims, a rule's marking pattern of a claimed fact handed in by reference -- "
+                                                                                                                "keeps nothing it built, and the rule patterns and refutations it changed are as before. "
+                                                                                                                "Outside a parsed statement, as in a Janet block, it only runs the thunk. Main thread only.");
 
         janet_def(_janet_env, "zelph/operand", wrap((JanetCFunction)&guarded<&janet_cfun_zelph_operand>), "(zelph/operand thunk)\nRun the code that builds a condition operator and its operand, and return what it returns. "
                                                                                                           "A fact the graph holds, a refuted one included, is looked up rather than asserted; anything else is built as zelph/fact builds it, "
@@ -272,6 +409,10 @@ namespace zelph
 
         janet_def(_janet_env, "zelph/car", wrap((JanetCFunction)&guarded<&janet_cfun_zelph_car>), "(zelph/car cell)\nReturn the first element (car) of a cons cell, or nil if not a cons cell.");
         janet_def(_janet_env, "zelph/cdr", wrap((JanetCFunction)&guarded<&janet_cfun_zelph_cdr>), "(zelph/cdr cell)\nReturn the rest (cdr) of a cons cell. Returns the nil node for the last cell.");
+        janet_def(_janet_env, "zelph/parse", wrap((JanetCFunction)&guarded<&janet_cfun_zelph_parse>), "(zelph/parse fact)\nThe parts of a fact node as the tuple [subject predicate objects], objects a tuple of nodes in the order of their node ids, "
+                                                                                                      "so the same fact always gives the same tuple. Every fact decomposes, a cons cell and the => fact of a rule included; "
+                                                                                                      "a negated condition is the fact ((P) ~ negation), whose parts are P, ~ and (negation). nil for an atom, a variable, or anything else that is not a fact. "
+                                                                                                      "Allowed on every thread.");
 
         janet_def(_janet_env, "zelph/register-keyword", wrap((JanetCFunction)&guarded<&janet_cfun_zelph_register_keyword>), "(zelph/register-keyword keyword handler)\n(zelph/register-keyword open close handler)\n"
                                                                                                                             "Two-argument form: register a REPL syntax keyword. After the keyword is entered, subsequent "
@@ -345,7 +486,9 @@ namespace zelph
                                                                                                                               "array of digit nodes or names in ascending order of value (e.g. [\"0\" \"1\"] for binary). "
                                                                                                                               "node_to_string then displays every canonical (no leading zero digit) nil-terminated cons list consisting solely of these digit "
                                                                                                                               "nodes as a decimal &-literal -- the inverse of the &-input syntax (zelph/number). All other "
-                                                                                                                              "cons lists keep the generic <...> display. An empty array disables the feature. Main thread only.");
+                                                                                                                              "cons lists keep the generic <...> display. An empty array disables the feature. Names resolve in the current "
+                                                                                                                              "language, whereas zelph/list-chars builds its lists from the characters in \"zelph\": register the digits of "
+                                                                                                                              "that representation under .lang zelph, or pass the digit nodes. Main thread only.");
 
         janet_def(_janet_env, "zelph/no-selffact-sugar", wrap((JanetCFunction)&guarded<&janet_cfun_zelph_no_selffact_sugar>), "(zelph/no-selffact-sugar preds...)\nExclude predicates from the self-fact display sugar: facts (X pred X) "
                                                                                                                               "with a registered predicate always render verbose as \"X pred X\", never as \":pred X\". "
@@ -472,11 +615,91 @@ namespace zelph
             # statements once and this names the result afterwards, in the
             # tree each case has always had -- see :tag-nested for what
             # deciding it beforehand cost.
+            #
+            # A group around one focused value is identical to that focus: a
+            # group of one value is the value itself, thus `x says (*(a p b))`
+            # is `x says *(a p b)` and evaluates to `a p b`. Kept as a group,
+            # the focus was silently discarded at every position the group
+            # stood (transform_arg), and no check that refuses a focus saw it:
+            # `(*k) says (*(l p m))` asserted `k says (l p m)`, and a rule
+            # that a statement holds treated `(*(X q Y))` as its plain
+            # consequence.
             (defn zelph-comma-list [tag]
               (fn [head & tail]
-                (if (empty? tail)
-                  (array tag ;(slice head 1))
-                  (array :conjunction head ;tail))))
+                (cond
+                  (not (empty? tail)) (array :conjunction head ;tail)
+                  (and (= tag :nested) (= (length head) 2) (= (get-in head [1 0]) :focused)) (get head 1)
+                  (array tag ;(slice head 1)))))
+
+            # The value located under foci and parentheses that contain a
+            # single value: `*x`, `**x`, `(x)` and `*((x))` all give x. A
+            # caller concerned with whether the value was focused examines
+            # the outer layer directly.
+            (defn zelph-peel [value]
+              (var inner value)
+              (while (or (= (get inner 0) :focused)
+                         (and (= (get inner 0) :nested) (= (length inner) 2)))
+                (set inner (get inner 1)))
+              inner)
+
+            # A focus atop additional foci, or atop parentheses enclosing a
+            # solitary value, equates to a focus on that value alone: `**x`,
+            # `*(x)` and `*((x))` each denote `*x`, since a focus with nothing
+            # around it is dropped and a group of one value is identical to
+            # that value itself. This returns the value beneath the focus, or
+            # nil if the value carries no focus. The arrow and the whole line
+            # are read through it: matched solely in the shape `*x`, one
+            # additional layer left the rule unchecked for a twin and its
+            # ground parts claimed.
+            (defn zelph-under-focus [value]
+              (when (= (get value 0) :focused)
+                (zelph-peel (get value 1))))
+
+            # A focus on the arrow of a statement, "(a p b) *=> (c q d)", names
+            # the rule: the node the statement evaluates to when no focus is
+            # applied. The arrow is read as itself in this context, so every
+            # reading of the tree takes the line as the rule it writes, which
+            # is checked for a twin and keeps its ground parts as patterns. Read
+            # as a focus, the line built the `=>` fact via `zelph/fact`: a rule
+            # that nobody checked for a twin, with its ground parts claimed.
+            # When paired with a second focus, the arrow keeps its own focus,
+            # and the statement is refused as one bearing two foci.
+            #
+            # The arrow in parentheses or quotation marks, `(=>)` or `"=>"`,
+            # refers to the node `=>` and is read as the bare arrow, either
+            # with or without a focus. Written in this manner, the line missed
+            # the parser's rule test, which demands the bare arrow: when
+            # variables were present, it formed a query that left no rule,
+            # while a ground one built the `=>` fact through `zelph/fact`, with
+            # its parts claimed.
+            (defn zelph-arrow [statement]
+              (def written (get statement 2))
+              (def arrow (zelph-peel written))
+              (defn focused? [value] (= (get value 0) :focused))
+              (when (and (>= (length statement) 4)
+                         (= (get arrow 0) :atom)
+                         (index-of (string (get arrow 1)) ["=>" "\"=>\""])
+                         (or (not (focused? written))
+                             (= 1 (count focused? (slice statement 1)))))
+                (put statement 2 @[:atom "=>"]))
+              statement)
+
+            # A line that is one rule under a focus, "*((X p Y) => (X q Y))",
+            # serves as the rule statement it holds: the focus lacks an
+            # accompanying statement to hand a part to, and the line
+            # evaluates to the rule regardless. Read as a value, the rule was
+            # recorded as a mention that no entity names, a rule in force
+            # without anyone having checked for a twin, thus each typing added
+            # one.
+            (defn zelph-line [line]
+              (def rule (when (and (= (get line 0) :root) (= (length line) 2))
+                          (zelph-under-focus (get line 1))))
+              (if (and (= (get rule 0) :nested)
+                       (>= (length rule) 4)
+                       (= (get-in rule [2 0]) :atom)
+                       (= (string (get-in rule [2 1])) "=>"))
+                (array :root ;(slice rule 1))
+                line))
 
             (def zelph-grammar
               ~{:ws (set " \t\r\f\n\0\v")
@@ -587,7 +810,7 @@ namespace zelph
                 :tag-negation (group (* (constant :negation) "¬" :s* :val-any))
 
                 # Conjunction sugar: comma-separated conditions inside parentheses
-                :conj-cond (group (* (constant :condition) :stmt-any))
+                :conj-cond (/ (group (* (constant :condition) :stmt-any)) ,zelph-arrow)
                 :comma-sep (* :s* "," (not :symchars) :s*)
                 :comma-list (* :conj-cond (any (* :comma-sep :conj-cond)))
 
@@ -721,7 +944,7 @@ namespace zelph
                 # Everything is captured into a :root group, or a :conjunction if comma separated.
                 # C++ logic decides if it's a single value or a fact (S P O) based on element count.
                 # Read once, like a group in parentheses (see :tag-nested).
-                :main (sequence :s* (/ :comma-list ,(zelph-comma-list :root)) :s* -1)})
+                :main (sequence :s* (/ :comma-list ,(comp zelph-line (zelph-comma-list :root))) :s* -1)})
 
             (defn zelph-safe-parse [peg text]
                (peg/match peg text))

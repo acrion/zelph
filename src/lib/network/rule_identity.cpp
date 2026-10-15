@@ -506,6 +506,51 @@ namespace zelph::network
                                                  { return true; }); });
     }
 
+    Node corresponding_part(const Zelph* const z, const Node a, const Node b, const Node part)
+    {
+        const FactStructure fa = rule_structure(z, a);
+        const FactStructure fb = rule_structure(z, b);
+        if (fa.predicate == 0 || fb.predicate == 0 || fa.objects.size() != fb.objects.size()) return 0;
+
+        if (part == fa.subject) return fb.subject;
+        if (part == fa.predicate) return fb.predicate;
+        if (fa.objects.count(part) == 0) return 0;
+        if (fb.objects.size() == 1) return *fb.objects.begin();
+
+        // Several consequences: the one that pairs with `part` via a bijection
+        // valid across the whole rule. The pairing of `part` is attempted
+        // initially, after which the rest of the rule must match as in
+        // rules_alpha_equivalent.
+        Matcher            m{z};
+        Matcher::Bijection ab;
+        Matcher::Bijection ba;
+
+        std::vector<Node> rest_a;
+        for (const Node o : fa.objects)
+            if (o != part) rest_a.push_back(o);
+        const std::vector<Node> cb(fb.objects.begin(), fb.objects.end());
+
+        Node found = 0;
+        m.match(fa.subject, fb.subject, ab, ba, 0, Role::Condition, [&](Matcher::Bijection& ab1, Matcher::Bijection& ba1)
+                {
+                    for (std::size_t i = 0; i < cb.size(); ++i)
+                    {
+                        Matcher::Bijection ab2 = ab1;
+                        Matcher::Bijection ba2 = ba1;
+                        std::vector<Node>  rest_b(cb);
+                        rest_b.erase(rest_b.begin() + static_cast<std::ptrdiff_t>(i));
+                        if (m.match(part, cb[i], ab2, ba2, 0, Role::Term, [&](Matcher::Bijection& ab3, Matcher::Bijection& ba3)
+                                    { return m.match_multiset(rest_a, rest_b, ab3, ba3, 0, Role::Term, [](Matcher::Bijection&, Matcher::Bijection&)
+                                                              { return true; }); }))
+                        {
+                            found = cb[i];
+                            return true;
+                        }
+                    }
+                    return false; });
+        return found;
+    }
+
     bool rule_text_below(const Zelph* const z, const Node n)
     {
         return template_below(z, n, 0);
@@ -552,6 +597,97 @@ namespace zelph::network
             }
         }
         return false;
+    }
+
+    std::string unbound_predicate(const Zelph* const z, std::vector<Node> conditions, const adjacency_set& consequences)
+    {
+        // Before examining the conditions, the facts are read from the
+        // genuine store: a consequence with a predicate that is a name, which
+        // is almost every case, incurs a lookup for each fact it writes.
+        std::vector<Node>                  pending(consequences.begin(), consequences.end());
+        std::unordered_set<Node>           seen;
+        std::vector<std::pair<Node, Node>> written;
+        while (!pending.empty())
+        {
+            const Node n = pending.back();
+            pending.pop_back();
+            if (n == 0 || Zelph::is_var(n) || !Zelph::is_hash(n) || !seen.insert(n).second) continue;
+            const Node p = z->predicate_of(n);
+            if (p == 0 || p == z->core.Causes) continue;
+            // A composite predicate constitutes a fact that the consequence
+            // writes as well: `(A is p) => (A (b M s) c)` derived
+            // `a (b -> s) c`. A fact having `n` as its predicate appears
+            // within the objects of `n` (parse_fact), and it is not a
+            // component of `n`: walked, a ground composite predicate led into
+            // every fact in the graph that uses it.
+            if (Zelph::is_var(p))
+                written.emplace_back(n, p);
+            else
+                pending.push_back(p);
+            adjacency_set objects;
+            pending.push_back(z->parse_fact(n, objects));
+            for (const Node object : objects)
+                if (z->predicate_of(object) != n) pending.push_back(object);
+        }
+        if (written.empty()) return {};
+
+        // The variables a condition names, the members of the sets it holds
+        // included, as `(Z in {W})` binds W.
+        const auto gather = [z](const Node root, std::unordered_set<Node>& into)
+        {
+            std::vector<Node>        stack{root};
+            std::unordered_set<Node> visited;
+            while (!stack.empty())
+            {
+                const Node n = stack.back();
+                stack.pop_back();
+                if (n == 0 || !visited.insert(n).second) continue;
+                if (Zelph::is_var(n))
+                {
+                    into.insert(n);
+                    continue;
+                }
+                adjacency_set parts;
+                if (!Zelph::is_hash(n))
+                {
+                    if (z->set_pattern_members(n, parts)) stack.insert(stack.end(), parts.begin(), parts.end());
+                    continue;
+                }
+                const Node p = z->predicate_of(n);
+                if (p == 0) continue;
+                stack.push_back(p);
+                stack.push_back(z->parse_fact(n, parts));
+                // A fact whose predicate is `n` does not constitute a part
+                // of it, as previously stated.
+                for (const Node part : parts)
+                    if (z->predicate_of(part) != n) stack.push_back(part);
+            }
+        };
+
+        std::unordered_set<Node> bound;
+        std::unordered_set<Node> negated;
+        while (!conditions.empty())
+        {
+            const Node c = conditions.back();
+            conditions.pop_back();
+            adjacency_set members;
+            if (z->condition_set_members(c, members))
+            {
+                conditions.insert(conditions.end(), members.begin(), members.end());
+                continue;
+            }
+            gather(c, z->negation_operand(c) != 0 ? negated : bound);
+        }
+
+        for (const auto& [fact, predicate] : written)
+        {
+            if (bound.count(predicate) != 0) continue;
+            const std::string name = z->format(predicate);
+            return "The predicate of \"" + z->format(fact) + "\" in the rule's consequence is the variable " + name + ", which no condition binds"
+                 + (negated.count(predicate) != 0 ? " (a negated condition binds nothing)" : "") + ": a firing has no predicate to write, and a new "
+                 + "node standing in for one would be a relation type without a name. Bind " + name + " in a condition, or write the predicate as a name.";
+        }
+        return {};
     }
 
     uint64_t rule_statement_climb_steps()

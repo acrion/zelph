@@ -60,6 +60,11 @@
 # ln(1) - z goes through ln(ln 1) = ln 0, and exp(ln 0) = 0 holds as a
 # formal identity.
 
+# Each name below represents a node within the language zelph,
+# regardless of the .lang setting used by the importer; upon
+# completion of the import, the importer's language is restored.
+.lang zelph
+
 .import symbolic-core
 .import symbolic-minus
 

@@ -129,6 +129,37 @@ Q77 P279 Q88
     fs::remove(script);
 }
 
+// A script that exclusively poses inquiries altered a partial view in the
+// same manner as a script that performs writes: each inquiry deposited its
+// statement and its patterns within the graph, and the import reported the
+// nodes it had added. An answered query now retains no trace of its text,
+// so a script made of questions over names the view holds does not
+// contribute anything to it, and nothing is reported.
+TEST_CASE("import: a script that only asks questions of a partial view is not reported")
+{
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+
+    const auto network = write_network(interactive, "asks");
+    const auto script  = write_script("asks", R"(.provides import-guard-asks
+.lang wikidata
+X P279 Q20
+X P279 Y, Y P279 Z
+)");
+
+    interactive.process(".new");
+    interactive.process(".load-partial \"" + network.string() + "\"");
+
+    collector.clear();
+    interactive.process(".import \"" + script.string() + "\"");
+
+    CHECK(count_outputs_starting_with(collector, "Answer:") == 2);
+    CHECK_FALSE(any_event_contains(collector, "partial view"));
+
+    fs::remove(network);
+    fs::remove(script);
+}
+
 TEST_CASE("import: adding to a complete network says nothing")
 {
     zelph::io::OutputCollector  collector;

@@ -973,6 +973,51 @@ x (a p b) y
         CHECK(answers_contain(collector, "x (a p b) y")); });
 }
 
+TEST_CASE("display: a membership used as a predicate keeps its fact")
+{
+    // A membership lists the fact whose predicate it is alongside its own
+    // objects, and the renderer took that fact as a container into which
+    // the membership put its subject: "x (a in @{c d}) y" echoed `@{a}`, and
+    // the rule "(X p Y) => (z (X in @{c d}) w)" echoed and was listed as
+    // "(X p Y) => @{X}", which reads back as a completely different line.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        SUBCASE("in a statement")
+        {
+            collector.clear();
+            interactive.process("x (a in @{c d}) y");
+            CHECK(any_output_contains(collector, "x (a in @{"));
+            CHECK_FALSE(any_output_contains(collector, "@{a}"));
+
+            collector.clear();
+            interactive.process("S (a in O) T");
+            const std::vector<std::string> answers = collect_answers(collector);
+            REQUIRE(answers.size() == 1);
+            CHECK(answers[0].starts_with("x (a in @{"));
+        }
+        SUBCASE("in a rule's consequence")
+        {
+            collector.clear();
+            interactive.process("(X p Y) => (z (X in @{c d}) w)");
+            CHECK(any_output_contains(collector, "(X p Y) => (z (X in @{"));
+            CHECK_FALSE(any_output_contains(collector, "@{X}"));
+
+            collector.clear();
+            interactive.process(".list-rules");
+            const auto listed = std::find_if(collector.events().begin(), collector.events().end(), [](const auto& event)
+                                             { return event.text.find("(X p Y) => (z (X in @{") != std::string::npos; });
+            REQUIRE(listed != collector.events().end());
+
+            // The rule that is listed, and then input once more, is
+            // the rule that the graph possesses.
+            const std::size_t before = node_count(collector, interactive);
+            std::string       line   = normalize(listed->text);
+            line.erase(line.find_last_not_of(" \n") + 1);
+            interactive.process(line);
+            CHECK(node_count(collector, interactive) == before);
+        } });
+}
+
 TEST_CASE("display: nested predicates render at every level")
 {
     // Each level of this statement puts a fact in predicate position, so
@@ -1235,6 +1280,41 @@ namespace
     }
 }
 
+// A `=>` that has a set as its outcome requests what implications are
+// present, a query, and its literal is constructed during the rule's build,
+// forming the rule's own collection, which a rule outputs using the
+// collection marker: "(X p Y) => {(X q Y)}" echoed "(X p Y) => @{(X q Y)}".
+// Inside a rule's text the two literals remain identical, so either spelling
+// reads back as this query; the query prints the brace it was written with,
+// just like every other query does. A set located within a rule's
+// consequence keeps the marker that the rule prints.
+TEST_CASE("display: a question about implications echoes its set literal with the brace")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        std::string line;
+        std::string echo;
+        SUBCASE("typed on its own line")
+        {
+            line = "(X p Y) => {(X q Y)}";
+            echo = "(X p Y) => {(X q Y)}";
+        }
+        SUBCASE("held by a statement")
+        {
+            line = "x says ((X p Y) => {(X q Y)})";
+            echo = "x says ((X p Y) => {(X q Y)})";
+        }
+        SUBCASE("a set inside a rule's consequence")
+        {
+            line = "(X p Y) => (X s {(X q Y)})";
+            echo = "(X p Y) => (X s @{(X q Y)})";
+        }
+
+        collector.clear();
+        interactive.process(line);
+        CHECK(echo_of(collector) == echo); });
+}
+
 // A query containing multiple conditions printed its condition list as a set
 // in both the echo and every answer: "{(X ~ interval) (¬(X before B))}",
 // which reads back as a set literal -- data -- and is refused for the
@@ -1340,10 +1420,9 @@ TEST_CASE("display: an answer with several conditions re-enters as the line it r
 // `((P) nn net)`, and they printed as those facts wherever they were located:
 // within the echo of a rule, within `.list-rules`, within the echo and the
 // answers of a query -- a notation that nobody types -- in the places that
-// hold conditions. A condition prints there as it is typed. The facts keep
-// their own form when they are not conditions: inside `.node`, within a
-// statement that refers to the rule, and within a deduction's premises, which
-// name what a firing found.
+// hold conditions. A condition prints there as it is typed, and likewise
+// within `.node` and inside a statement that refers to the rule; a
+// deduction's premises keep the fact, which names what a firing found.
 TEST_CASE("display: a path condition prints as it is typed wherever a condition stands")
 {
     run_both_modes([](auto& collector, auto& interactive)
@@ -1414,8 +1493,15 @@ TEST_CASE("display: a path condition prints as it is typed wherever a condition 
             CHECK(node_count(collector, interactive) == before);
         }
 
-        SUBCASE("the fact where it is not a condition")
+        SUBCASE("the fact as a premise, the condition where it is not one")
         {
+            // This case pinned the spelling of the fact in all three locations,
+            // using the name "the fact where it is not a condition". In
+            // `.node`, and within a statement that refers to a rule, that
+            // spelling names `closure` and `one-or-more` in the current
+            // language; outside the zelph language, the printed line re-entered
+            // as a different statement. There, the condition now appears
+            // exactly as it is typed.
             // A deduction identifies the facts its firing uncovered.
             interactive.process(".deductions all");
             collector.clear();
@@ -1424,15 +1510,70 @@ TEST_CASE("display: a path condition prints as it is typed wherever a condition 
 
             collector.clear();
             interactive.process(".node (a r c) closure one-or-more");
-            CHECK(any_output_contains(collector, "Representation: (a r c) closure one-or-more"));
+            CHECK(any_output_contains(collector, "Representation: a r⁺ c"));
 
-            // A statement that refers to a rule stands above its
-            // conditions, which are displayed as the facts they are, just as
-            // a negation does (see above).
             collector.clear();
             interactive.process("bob says (((a r c) closure one-or-more) => (u v w))");
-            CHECK(echo_of(collector) == "bob says (((a r c) closure one-or-more) => (u v w))");
+            CHECK(echo_of(collector) == "bob says ((a r⁺ c) => (u v w))");
+
+            // The echo is the identical statement.
+            collector.clear();
+            interactive.process("bob says X");
+            REQUIRE(collect_answers(collector).size() == 1);
+            interactive.process("bob says ((a r⁺ c) => (u v w))");
+            collector.clear();
+            interactive.process("bob says X");
+            CHECK(collect_answers(collector).size() == 1);
+        }
+        SUBCASE("a contradiction's premises name the fact, as a deduction's do")
+        {
+            // Pinned together with the modification mentioned earlier, which
+            // prints the condition exactly as typed in all locations except
+            // within the premises: the `!` line is the other place that names
+            // the facts a firing found.
+            collector.clear();
+            interactive.process("(a r⁺ c) => !");
+            CHECK(any_output_contains(collector, "! ⇐ ((a r c) closure one-or-more)"));
         } });
+}
+
+// `.node` printed a path or a neural condition as the fact it is,
+// `(a r c) closure one-or-more`, and took that spelling back as its argument.
+// It now prints the condition exactly as it is typed, `a r⁺ c`, and the
+// argument provided to `.node`, `.mermaid`, and `.explain` is read as a pattern
+// by the parser, which refused both operators just as it does within a
+// statement that asserts: the command was unable to locate the node
+// corresponding to what it had printed.
+TEST_CASE("display: .node finds a path or a neural condition under the spelling it prints")
+{
+    for (const std::string lang : {"zelph", "en"})
+    {
+        CAPTURE(lang);
+        zelph::io::OutputCollector  collector;
+        zelph::console::Interactive interactive(collector.sink());
+        interactive.process(".lang " + lang);
+        interactive.process("(X p b, a r⁺ c) => (X ok b)");
+        interactive.process("(X p b, ≈gnet(a relG b)) => (X ok b)");
+        const std::size_t before = node_count(collector, interactive);
+
+        for (const std::string printed : {"a r⁺ c", "≈gnet(a relG b)"})
+        {
+            CAPTURE(printed);
+            collector.clear();
+            CHECK_NOTHROW(interactive.process(".node " + printed));
+            CHECK(any_output_contains(collector, "Representation: " + printed));
+        }
+
+        // A pattern names a node; it does not create it.
+        CHECK_THROWS_WITH(interactive.process(".node a r⁺ d"), doctest::Contains("denoting an existing node"));
+        CHECK_THROWS_WITH(interactive.process(".node ≈gnet(a relG d)"), doctest::Contains("denoting an existing node"));
+
+        // The removal commands read their pattern in the same way, and the
+        // condition they now find matches no fact, which they say.
+        CHECK_THROWS_WITH(interactive.process(".prune-facts a r⁺ c"), doctest::Contains("matches no fact"));
+        CHECK_THROWS_WITH(interactive.process(".prune-nodes ≈gnet(a relG b)"), doctest::Contains("matches no fact"));
+        CHECK(node_count(collector, interactive) == before);
+    }
 }
 
 // The syntactic sugar appears in the output for the nodes whose names in the
@@ -1826,6 +1967,93 @@ TEST_CASE("display: a rule prints its conditions in the surface syntax")
         CHECK_FALSE(any_output_contains(collector, "(d j f) ⇐ ((")); });
 }
 
+TEST_CASE("display: a comma list a statement holds prints as a comma list")
+{
+    // A comma list nested in a statement was rendered in the brace form of
+    // a set constant, which re-enters as a set constant, another node:
+    // "x says (a p b, c q d)" printed "x says {(a p b) (c q d)}". It prints
+    // as the comma list it is now.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        const auto answers = [&](const std::string& query)
+        {
+            collector.clear();
+            interactive.process(query);
+            return collect_answers(collector);
+        };
+
+        SUBCASE("as an object")
+        {
+            interactive.process("x says (a p b, c q d)");
+            const std::vector<std::string> printed = answers("S says O");
+            REQUIRE(printed.size() == 1);
+            CHECK(printed[0].starts_with("x says (("));
+            CHECK(printed[0].find(", ") != std::string::npos);
+            CHECK(printed[0].find('{') == std::string::npos);
+
+            // The printed line re-enters as a comma list, which prints the
+            // same, and not as a set constant.
+            interactive.process(printed[0]);
+            CHECK(answers("S says O") == std::vector<std::string>{printed[0], printed[0]});
+        }
+        SUBCASE("holding a rule")
+        {
+            interactive.process("x says ((m n o) => (c q d), j r s)");
+            const std::vector<std::string> printed = answers("S says O");
+            REQUIRE(printed.size() == 1);
+            CHECK(printed[0].find("((m n o) => (c q d))") != std::string::npos);
+            CHECK(printed[0].find('{') == std::string::npos);
+        }
+        SUBCASE("as a member of a comma list")
+        {
+            collector.clear();
+            interactive.process("(a p b, j r s), x q y");
+            CHECK(any_output_contains(collector, "), x q y"));
+            CHECK_FALSE(any_output_contains(collector, "{"));
+        }
+        // A set constant re-enters as itself, so it keeps its braces.
+        SUBCASE("a set constant keeps its braces")
+        {
+            interactive.process("x says {(a p b) (c q d)}");
+            const std::vector<std::string> printed = answers("S says O");
+            REQUIRE(printed.size() == 1);
+            CHECK(printed[0].starts_with("x says {("));
+        }
+        // The list's own tag and memberships are about the container, and
+        // they print it using braces, even when an answer renders them via
+        // the query's pattern and its bindings: "S ~ conjunction" answered
+        // "((c q d), (a p b)) ~ conjunction", and "X in Y" answered
+        // "(a p b) in ((c q d), (a p b))".
+        SUBCASE("its tag in an answer keeps the braces")
+        {
+            interactive.process("x says (a p b, c q d)");
+            const std::vector<std::string> printed = answers("S ~ conjunction");
+            REQUIRE(printed.size() == 1);
+            CHECK(printed[0].starts_with("{("));
+            CHECK(printed[0].ends_with("} ~ conjunction"));
+        }
+        SUBCASE("its memberships in an answer keep the braces")
+        {
+            interactive.process("x says (a p b, c q d)");
+            const std::vector<std::string> printed = answers("X in Y");
+            REQUIRE(printed.size() == 2);
+            for (const std::string& line : printed)
+                CHECK(line.find(" in {(") != std::string::npos);
+
+            // The expression "(a p b) R L" identifies the same membership
+            // via a variable predicate and prints it in the same way.
+            const std::vector<std::string> by_predicate = answers("(a p b) R L");
+            REQUIRE(by_predicate.size() == 1);
+            CHECK(by_predicate[0].find(" in {(") != std::string::npos);
+        }
+        SUBCASE("its tag in a derivation line keeps the braces")
+        {
+            process_lines(interactive, ".deductions all\nx says (a p b, c q d)\n(S ~ conjunction) => (S is list)");
+            interactive.run(true, false, false);
+            CHECK(any_output_contains(collector, "is list) ⇐ ({("));
+            CHECK_FALSE(any_output_contains(collector, "⇐ (((")); } });
+}
+
 TEST_CASE("display: a rule's conclusion is not printed negated because a condition negates it")
 {
     // When the negation appeared as a tag attached to the pattern node, a
@@ -1899,6 +2127,47 @@ TEST_CASE("display: the rule-pattern marking is never printed in place of its no
         CHECK_FALSE(any_output_contains(collector, "Rule pattern")); });
 }
 
+// The fact of a condition operator that a query wrote remains after the
+// query is answered, with nothing holding it, and the label read it as a
+// statement written down without being claimed: `.node` said "Mentioned
+// (not asserted)" and `.explain` "[mentioned; not asserted]" for `(x says k)
+// ~ negation`, whereas its operand read as a rule pattern, as `.help .node`
+// describes what a query wrote under an operator. A mention keeps its
+// label.
+TEST_CASE("display: the fact of a condition operator a query wrote is labelled a rule pattern")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("m q n");
+        std::string query;
+        std::string tag;
+        SUBCASE("a negation")
+        {
+            query = "S q O, ¬(x says k)";
+            tag   = "(x says k) ~ negation";
+        }
+        SUBCASE("a path condition")
+        {
+            query = "S q O, x says⁺ k";
+            tag   = "(x says k) closure one-or-more";
+        }
+        interactive.process(query);
+
+        collector.clear();
+        interactive.process(".node " + tag);
+        CHECK(any_output_contains(collector, "Rule pattern (not asserted): yes"));
+        CHECK_FALSE(any_output_contains(collector, "Mentioned"));
+
+        collector.clear();
+        interactive.process(".explain " + tag);
+        CHECK(any_output_contains(collector, "[rule pattern; not asserted]"));
+
+        interactive.process(R"(%(zelph/mention "y" "says" "k"))");
+        collector.clear();
+        interactive.process(".node y says k");
+        CHECK(any_output_contains(collector, "Mentioned (not asserted): yes")); });
+}
+
 TEST_CASE("display: a predicate that lost its relation-type declaration stops being one")
 {
     // `q ~ ->` is what marks q as a relation type, and fact-structure
@@ -1923,7 +2192,18 @@ TEST_CASE("display: a predicate that lost its relation-type declaration stops be
         std::filesystem::remove(out);
 
         interactive.process("(a p b) => (c q d)");
-        interactive.process(".prune-facts (q ~ ->)");
+        SUBCASE("the ground form") { interactive.process(".prune-facts (q ~ ->)"); }
+        // The variable form eliminates what it matched via remove_doomed,
+        // triggering a refresh of the relation-type set; previously, it was
+        // responsible for eliminating the facts directly and had to
+        // independently check whether a declaration was included among them.
+        SUBCASE("the variable form") { interactive.process(".prune-facts (q ~ X)"); }
+        // In the single-fact form of `.prune-nodes`, a matched relation-type
+        // declaration undergoes the cascade as well, and its elimination
+        // triggers a refresh of the relation-type set. Previously, the form
+        // was required to verify independently whether a declaration belonged
+        // to the facts it had matched.
+        SUBCASE("the single-fact form of .prune-nodes") { interactive.process(".prune-nodes q ~ X"); }
 
         collector.clear();
         interactive.process(".list-rules");

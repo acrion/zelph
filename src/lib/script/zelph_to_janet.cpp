@@ -61,6 +61,21 @@ namespace zelph
         return false;
     }
 
+    // Whether a PEG-AST argument constitutes a single token identifying a
+    // node -- an atom or a variable, whether focused or not -- instead of
+    // a term that builds one. A Janet value counts as a term: the outcome
+    // of an island is delivered as such, and whatever the island produced
+    // is part of the term.
+    static bool is_plain_token(Janet node)
+    {
+        const Janet* data;
+        int32_t      len;
+        if (!janet_indexed_view(node, &data, &len) || len < 2 || !janet_checktype(data[0], JANET_KEYWORD)) return false;
+        const std::string type = reinterpret_cast<const char*>(janet_unwrap_keyword(data[0]));
+        if (type == "focused") return is_plain_token(data[1]);
+        return type == "atom" || type == "var";
+    }
+
     // Returns true when a PEG-AST node refers to the node `text`, whether
     // it appears in bare form or enclosed in quotes: `"~"` builds the
     // node `~`. is_atom identifies an operator only as it is typed; this
@@ -171,6 +186,63 @@ namespace zelph
         return {};
     }
 
+    // Whether a PEG-AST node names a variable anywhere, inside the rules it
+    // holds included.
+    static bool mentions_variable(Janet node)
+    {
+        const Janet* data;
+        int32_t      len;
+        if (!janet_indexed_view(node, &data, &len) || len < 1) return false;
+        if (!janet_checktype(data[0], JANET_KEYWORD)) return false;
+
+        const std::string type = reinterpret_cast<const char*>(janet_unwrap_keyword(data[0]));
+        if (type == "var") return true;
+        if (type == "selffact" && len >= 2 && string::is_var(token_text(data[1]))) return true;
+        for (int32_t i = 1; i < len; ++i)
+            if (mentions_variable(data[i])) return true;
+        return false;
+    }
+
+    // The parser's twin for asks_implications (janet_api_facts.cpp), which
+    // reads the syntax: a `=>` that a statement holds asks which
+    // implications exist when its condition is a bare variable, or when it
+    // holds a variable and none of its consequences can be asserted, each
+    // being a variable, a name different from `!`, a set, or a collection.
+    static bool asks_implications_ast(const Janet* const data, const int32_t len)
+    {
+        const auto peel = [](Janet value)
+        {
+            const Janet* part;
+            int32_t      part_len;
+            while (janet_indexed_view(value, &part, &part_len) && part_len == 2 && janet_checktype(part[0], JANET_KEYWORD))
+            {
+                const std::string type = reinterpret_cast<const char*>(janet_unwrap_keyword(part[0]));
+                if (type != "focused" && type != "nested") break;
+                value = part[1];
+            }
+            return value;
+        };
+        const auto type_of = [](const Janet value) -> std::string
+        {
+            const Janet* part;
+            int32_t      part_len;
+            if (!janet_indexed_view(value, &part, &part_len) || part_len < 1 || !janet_checktype(part[0], JANET_KEYWORD)) return {};
+            return reinterpret_cast<const char*>(janet_unwrap_keyword(part[0]));
+        };
+
+        if (type_of(peel(data[1])) == "var") return true;
+        for (int32_t i = 3; i < len; ++i)
+        {
+            const Janet       consequence = peel(data[i]);
+            const std::string type        = type_of(consequence);
+            if (type == "var" || type == "set" || type == "collection" || (type == "atom" && !is_atom(consequence, "!"))) continue;
+            return false;
+        }
+        for (int32_t i = 1; i < len; ++i)
+            if (i != 2 && mentions_variable(data[i])) return true;
+        return false;
+    }
+
     // Whether a statement ASKS: it names a variable outside every rule it
     // mentions, or it is a self-fact whose predicate is a variable (`:R
     // x`). Variables referenced within a mentioned rule belong to that
@@ -178,6 +250,11 @@ namespace zelph
     // Determined by the syntax, before any construction: a statement that
     // asks and one that asserts read a condition operator in distinct ways,
     // and the operand is built by the first call that runs.
+    //
+    // A `=>` it holds that asks which implications exist makes the
+    // statement ask too (asks_implications_ast): "x says (S => O)" was
+    // answered as a query, yet its code corresponded to that of a
+    // claim, and every asking left the fact and its variables behind.
     static bool names_query_variable(Janet node)
     {
         const Janet* data;
@@ -190,7 +267,7 @@ namespace zelph
         if (type == "selffact" && len >= 2 && string::is_var(token_text(data[1]))) return true;
 
         const bool slot = type == "nested" || type == "condition";
-        if (slot && len > 3 && is_atom(data[2], "=>")) return false;
+        if (slot && len > 3 && is_atom(data[2], "=>")) return asks_implications_ast(data, len);
 
         for (int32_t i = 1; i < len; ++i)
             if (names_query_variable(data[i])) return true;
@@ -213,6 +290,119 @@ namespace zelph
         if (type == "nested") return len >= 4 || (len == 2 && is_statement_ast(data[1]));
         if (type == "focused") return len >= 2 && is_statement_ast(data[1]);
         return type == "conjunction" || type == "selffact" || type == "negation" || type == "approx";
+    }
+
+    // The value represented by a group with a single value, or by a focus on
+    // an entire value, regardless of how many such elements are present:
+    // `((a p b))` and `*(*(a p b))` both reduce to `(a p b)`
+    // (transform_arg). `focus` is set when a focus was included among them.
+    static Janet unwrapped(Janet value, bool& focus)
+    {
+        const Janet* data;
+        int32_t      len;
+        while (janet_indexed_view(value, &data, &len) && len == 2 && janet_checktype(data[0], JANET_KEYWORD))
+        {
+            const std::string type = reinterpret_cast<const char*>(janet_unwrap_keyword(data[0]));
+            if (type == "focused")
+                focus = true;
+            else if (type != "nested")
+                break;
+            value = data[1];
+        }
+        return value;
+    }
+
+    // Whether a claimed statement builds a part before the fact it states:
+    // an argument that is not an atom or a variable -- specifically, a
+    // nested statement, a set, a collection, a list, a number -- or a comma
+    // list, whose members are asserted one after the other. The fact()
+    // function might still refuse the statement after that part has been
+    // written: `x says ((a p b) r (a p b) (c d e))` kept `a p b` and
+    // `c d e`, which answered queries as data afterwards.
+    static bool builds_parts(Janet node)
+    {
+        const Janet* data;
+        int32_t      len;
+        if (!janet_indexed_view(node, &data, &len) || len < 1) return false;
+        if (!janet_checktype(data[0], JANET_KEYWORD)) return false;
+        if (std::string(reinterpret_cast<const char*>(janet_unwrap_keyword(data[0]))) == "conjunction") return true;
+
+        for (int32_t i = 1; i < len; ++i)
+        {
+            const Janet* part;
+            int32_t      part_len;
+            if (!janet_indexed_view(data[i], &part, &part_len) || part_len < 1 || !janet_checktype(part[0], JANET_KEYWORD)) continue;
+            const std::string type = reinterpret_cast<const char*>(janet_unwrap_keyword(part[0]));
+            if (type != "atom" && type != "var") return true;
+        }
+        return false;
+    }
+
+    // The fact F associated with a line `(F) ~ refuted` or `*(F) ~ refuted`,
+    // based on its subject: a statement enclosed in parentheses, with no
+    // focus among its own parts -- `(a *p b) ~ refuted` marks `p`. `data`
+    // and `len` receive F's AST node.
+    //
+    // A group around F or around its focus is read through, and likewise
+    // a focus encompassing an entire value: "((a p b)) ~ refuted",
+    // "(*(a p b)) ~ refuted", and "*(*(a p b)) ~ refuted" were constructed
+    // via zelph/fact and refuted a fact the graph claimed.
+    static bool refutation_operand(Janet subject, const Janet*& data, int32_t& len, bool& focus)
+    {
+        focus = false;
+        if (!janet_indexed_view(unwrapped(subject, focus), &data, &len) || len <= 3 || !janet_checktype(data[0], JANET_KEYWORD)
+            || std::string(reinterpret_cast<const char*>(janet_unwrap_keyword(data[0]))) != "nested")
+            return false;
+        for (int32_t i = 1; i < len; ++i)
+        {
+            const Janet* part;
+            int32_t      part_len;
+            if (janet_indexed_view(data[i], &part, &part_len) && part_len >= 1 && janet_checktype(part[0], JANET_KEYWORD)
+                && std::string(reinterpret_cast<const char*>(janet_unwrap_keyword(part[0]))) == "focused")
+                return false;
+        }
+        return true;
+    }
+
+    // The fact F associated with a line `(S P *(F)) ~ refuted`: the subject
+    // is a statement whose focus marks one of its parts, the statement F,
+    // which the subject evaluates to; the line refutes F and writes `S P F`
+    // beside it, mirroring how the focus operates in any context. The
+    // focused part can hand on F via its own focus, as in
+    // `(x says *(y says *(a p b))) ~ refuted`. `levels` receives the parts
+    // of each statement en route to F, starting with the outermost, `whole`
+    // indicates whether a focus marks the whole subject, and `data` and
+    // `len` hold the AST node corresponding to F.
+    static bool focused_refutation_operand(Janet subject, std::vector<std::vector<Janet>>& levels, bool& whole, const Janet*& data, int32_t& len)
+    {
+        whole = false;
+        for (Janet statement = unwrapped(subject, whole);;)
+        {
+            const Janet* outer;
+            int32_t      outer_len;
+            if (!janet_indexed_view(statement, &outer, &outer_len) || outer_len <= 3 || !janet_checktype(outer[0], JANET_KEYWORD)
+                || std::string(reinterpret_cast<const char*>(janet_unwrap_keyword(outer[0]))) != "nested")
+                return false;
+
+            int focused = -1;
+            for (int32_t i = 1; i < outer_len; ++i)
+            {
+                const Janet* part;
+                int32_t      part_len;
+                if (janet_indexed_view(outer[i], &part, &part_len) && part_len == 2 && janet_checktype(part[0], JANET_KEYWORD)
+                    && std::string(reinterpret_cast<const char*>(janet_unwrap_keyword(part[0]))) == "focused")
+                {
+                    if (focused != -1) return false;
+                    focused = i;
+                }
+            }
+            if (focused == -1) return false;
+
+            levels.emplace_back(outer + 1, outer + outer_len);
+            bool focus = false;
+            if (refutation_operand(outer[focused], data, len, focus)) return true;
+            statement = unwrapped(outer[focused], focus);
+        }
     }
 
     // The code of a condition operator, constructed such that its
@@ -255,6 +445,57 @@ namespace zelph
         return true;
     }
 
+    // Whether a PEG-AST node qualifies as a rule statement whose focus marks
+    // its condition list, `(*(A, B) => C)`, or as a rule containing such a
+    // statement within its consequences, at any nesting level. When a focus or
+    // group contains only one value, it is traversed, both around the
+    // statement and situated between the focus and the comma list:
+    // `((*(A, B) => C))` and `*(*(*(A, B)) => C)` represent identical
+    // statements. The expression evaluates to the comma list, which thus
+    // serves as the consequence of the rule that holds it (see
+    // refuse_rule_slots).
+    static bool focuses_condition_list(Janet node)
+    {
+        // The value lying under foci and groups of a single value, as
+        // zelph-peel interprets it within the grammar.
+        const auto peel = [](Janet value)
+        {
+            const Janet* part;
+            int32_t      part_len;
+            while (janet_indexed_view(value, &part, &part_len) && part_len == 2 && janet_checktype(part[0], JANET_KEYWORD))
+            {
+                const std::string type = reinterpret_cast<const char*>(janet_unwrap_keyword(part[0]));
+                if (type != "focused" && type != "nested") break;
+                value = part[1];
+            }
+            return value;
+        };
+
+        const Janet* data;
+        int32_t      len;
+        if (!janet_indexed_view(peel(node), &data, &len) || len < 4 || !janet_checktype(data[0], JANET_KEYWORD)) return false;
+        if (std::string(reinterpret_cast<const char*>(janet_unwrap_keyword(data[0]))) != "nested" || !is_atom(data[2], "=>")) return false;
+
+        const Janet* part;
+        int32_t      part_len;
+        if (janet_indexed_view(data[1], &part, &part_len) && part_len == 2 && janet_checktype(part[0], JANET_KEYWORD)
+            && std::string(reinterpret_cast<const char*>(janet_unwrap_keyword(part[0]))) == "focused")
+        {
+            const Janet* inner;
+            int32_t      inner_len;
+            if (janet_indexed_view(peel(part[1]), &inner, &inner_len) && inner_len >= 1 && janet_checktype(inner[0], JANET_KEYWORD)
+                && std::string(reinterpret_cast<const char*>(janet_unwrap_keyword(inner[0]))) == "conjunction")
+                return true;
+        }
+
+        // At a lower level, the rule written by the rule that a generator
+        // writes: `(A) => ((B) => (*(C, D) => (E)))` hands the comma list to
+        // the rule positioned in the centre.
+        for (int32_t i = 3; i < len; ++i)
+            if (focuses_condition_list(data[i])) return true;
+        return false;
+    }
+
     // The rules that a value mentions, each one positioned where it
     // appears: what resides within a rule is its own (a rule generator's
     // inner rule among them).
@@ -274,6 +515,79 @@ namespace zelph
 
         for (int32_t i = 1; i < len; ++i)
             mentioned_rules(data[i], rules);
+    }
+
+    // Whether a value consists of a focus, via groups containing a single
+    // value: `*(a p b)` and `((*(a p b)))`. A focus there marks the whole
+    // value, not any individual part, thus it hands on nothing that the
+    // value would not be anyway.
+    static bool focuses_whole_value(Janet value)
+    {
+        for (;;)
+        {
+            const Janet* part;
+            int32_t      part_len;
+            if (!janet_indexed_view(value, &part, &part_len) || part_len != 2 || !janet_checktype(part[0], JANET_KEYWORD)) return false;
+            const std::string type = reinterpret_cast<const char*>(janet_unwrap_keyword(part[0]));
+            if (type == "focused") return true;
+            if (type != "nested") return false;
+            value = part[1];
+        }
+    }
+
+    // A rule that another statement holds is mentioned whole
+    // (zelph/rule-text), and a focus on one of its slots passes that part to
+    // the surrounding statement: nothing names the rule at that point, hence
+    // it was in force from a line that reads as a mention, and outside the
+    // duplicate check -- "y says ((X p Y) => *(X q Y))" typed twice left two
+    // distinct rules. The focus on the arrow names the rule, and the grammar
+    // has by now interpreted it as the arrow (zelph-arrow).
+    //
+    // The refutation of a rule holds the rule as well (`¬`), and `refuted`
+    // words the refusal for that line.
+    static void refuse_focus_in_held_rule(const std::vector<Janet>& args, const bool refuted = false)
+    {
+        for (const Janet& arg : args)
+        {
+            const Janet* data;
+            int32_t      len;
+            if (janet_indexed_view(arg, &data, &len) && len >= 2 && janet_checktype(data[0], JANET_KEYWORD)
+                && std::string(reinterpret_cast<const char*>(janet_unwrap_keyword(data[0]))) == "focused")
+            {
+                if (refuted)
+                    throw std::runtime_error(
+                        "\"¬\" refutes a rule as a whole, and a focus on one of its parts would hand that part to the "
+                        "line, which claimed it while it refuted the rule. Refute the rule without the focus.");
+                throw std::runtime_error(
+                    "A rule inside another statement is mentioned, not asserted, and a focus on one of its parts "
+                    "would hand that part to the statement and leave the rule on its own, where nothing mentions "
+                    "it: in force, from a line that only talks about it. Mention the rule whole -- without the "
+                    "focus, or with the focus on its arrow, \"(A *=> B)\", which names the rule -- or type it on "
+                    "a line of its own.");
+            }
+        }
+
+        // A focus on one condition of the comma list was dropped without
+        // comment: "x says ((*(X R Y), Y R Z) => (X R Z))" mentioned the rule
+        // as though the focus had never been present. A focus positioned
+        // deeper within a condition writes a fact beside it and remains
+        // permitted.
+        const Janet* list;
+        int32_t      list_len;
+        if (args.empty() || !janet_indexed_view(args[0], &list, &list_len) || list_len < 2 || !janet_checktype(list[0], JANET_KEYWORD)
+            || std::string(reinterpret_cast<const char*>(janet_unwrap_keyword(list[0]))) != "conjunction")
+            return;
+        for (int32_t i = 1; i < list_len; ++i)
+        {
+            const Janet* member;
+            int32_t      member_len;
+            if (!janet_indexed_view(list[i], &member, &member_len) || member_len != 2) continue;
+            if (focuses_whole_value(member[1]))
+                throw std::runtime_error(
+                    "Condition " + std::to_string(i) + " of the comma list carries a focus, which would make the list evaluate "
+                                                       "to that condition, and in a rule that another statement holds it changes nothing: the rule is "
+                                                       "mentioned whole. Write the condition without the focus.");
+        }
     }
 
     std::string ScriptEngine::parse_zelph_to_janet(const std::string& input, const bool pattern) const
@@ -343,6 +657,12 @@ namespace zelph
         // pattern (zelph/query-text). A statement that asserts does not
         // possess a condition slot.
         const bool island_asks = _pImpl->_scoped_vars_preloaded && _pImpl->has_scoped_variables();
+
+        // A command's pattern names a node and makes no assertion, hence a
+        // ground path within it gets no guard, just as in a query
+        // (_query_code): `.node` prints a path condition in the form "a p⁺ b"
+        // and must locate it using that exact spelling.
+        const Impl::BlockScope pattern_code(_pImpl->_query_code, _pImpl->_query_code || pattern);
 
         // The operators in a statement that ASSERTS. The sugar builds its
         // operand using zelph/fact and tags the outcome, meaning a statement
@@ -514,6 +834,20 @@ namespace zelph
                         "a rule cannot assert what a network believes. Consult the net in a "
                         "condition and derive an ordinary fact from it.");
 
+                // A rule situated within a consequence that focuses its own
+                // conditions hands them to the outer rule:
+                // `(R is transitive) => (*(X R Y, Y R Z) => (X R Z))` writes
+                // the comma list as the consequence. Zelph::fact refused it,
+                // and its message advised against a comma list typed as the
+                // consequence, a mistake the line had not made.
+                if (focuses_condition_list(fact_args[i]))
+                    throw std::runtime_error(
+                        "The consequence is a rule with a focus on its condition list, and a focus makes a "
+                        "statement evaluate to the part it marks: this rule's consequence would be that "
+                        "condition list, a conjunction, which a rule cannot have as its consequence. A rule "
+                        "that derives a rule writes the inner rule without that focus: "
+                        "\"(A) => ((B, C) => (D))\".");
+
                 // Expressed as the fact it builds, each of the three
                 // refers to the identical node, and when derived it
                 // asserted what that node concerns: "(A p B) => ((A q
@@ -637,14 +971,41 @@ namespace zelph
                 "condition as \"¬(P)\" or \"((P) ~ negation)\".");
         };
 
-        // The code behind a query. A query that carries a condition operator
-        // executes within zelph/query-text, which records what the statement
-        // creates so that whatever lies below an operator gets marked as a
-        // pattern before evaluation. A command's pattern marks nothing: the
-        // command undoes everything its pattern built.
-        const auto query_code = [pattern](const std::string& code, const bool carries)
+        // `*(P) ~ refuted`, refused in identical positions to those of the
+        // negation's focus spelling, naming the spelling that conveys the
+        // intended meaning.
+        const auto refuse_focused_refutation = [](const bool in_rule)
         {
-            return carries && !pattern ? "(zelph/query-text (fn [] " + code + "))" : code;
+            throw std::runtime_error(
+                std::string(in_rule ? "In a rule, \"*(P) ~ refuted\" is not a refutation: the focus makes it the pattern P "
+                                      "itself, so the rule would read or derive P positively. "
+                                    : "In a condition -- in a rule, or in a query -- \"*(P) ~ refuted\" is not a refutation: "
+                                      "the focus makes it the pattern P itself, so the condition would read P positively. ")
+                + "Write the marking in parentheses, \"((P) ~ refuted)\": as a condition it asks that P is refuted, "
+                  "as a consequence it derives the refutation.");
+        };
+
+        // The code behind a query. Each query runs inside zelph/query-text,
+        // which records what the statement generates: anything situated
+        // beneath an operator is marked as a pattern before evaluation, and
+        // anything containing the query's variables is removed after the
+        // query is answered (Zelph::drop_query_text). A command's pattern
+        // marks nothing: the command reverses all that its pattern built.
+        const auto query_code = [pattern](const std::string& code)
+        {
+            return !pattern ? "(zelph/query-text (fn [] " + code + "))" : code;
+        };
+
+        // The code of a claimed statement that carries a refutation in
+        // addition to what it writes runs within zelph/claim-text, so that a
+        // statement that the refusal of the refutation stops keeps nothing it
+        // built. This also applies to one that takes a node by reference,
+        // where the claim at the line's end may be refused, and to one that
+        // builds a part before its own fact (builds_parts).
+        const auto claim_code = [this](const std::string& code, const bool claims, const Janet ast)
+        {
+            const bool scratch = claims && (_pImpl->writes_refuted_marking(ast) || Impl::takes_reference(ast) || builds_parts(ast));
+            return scratch ? "(zelph/claim-text (fn [] " + code + "))" : code;
         };
 
         if (type == "root")
@@ -681,7 +1042,12 @@ namespace zelph
                     // it. Its two siblings are refused a few lines below and in
                     // zelph/path-guard; this is the same refusal. With a variable,
                     // "≈net(X p b)" constitutes a query and inquires of the net.
-                    if (val_type == "approx" && !asks)
+                    //
+                    // A command's pattern asserts nothing either: it names the
+                    // node the condition is, which `.node` prints as
+                    // "≈net(a p b)" and must be located using that exact
+                    // spelling.
+                    if (val_type == "approx" && !asks && !pattern)
                         throw std::runtime_error(
                             "\"≈\" is a condition operator and has no meaning in a statement that asserts: it asks "
                             "what a network believes, which a condition can read -- in a rule, or in a query (a "
@@ -754,6 +1120,15 @@ namespace zelph
                             std::vector<Janet> inner_args;
                             for (int32_t i = 1; i < inner_len; ++i)
                                 inner_args.push_back(inner_data[i]);
+
+                            // A refutation holds the rule it refutes, and a
+                            // focus on one of the rule's parts caused the line
+                            // to evaluate to that part and claim it:
+                            // `¬((a p b) => *(c q d))` refuted the rule and
+                            // asserted `c q d`.
+                            if (inner_args.size() >= 3 && is_atom(inner_args[1], "=>")) refuse_focus_in_held_rule(inner_args, true);
+
+                            const Impl::BlockScope claim(_pImpl->_claim_code, !pattern);
                             return _pImpl->build_smart_call("zelph/refute", inner_args);
                         }
 
@@ -778,14 +1153,11 @@ namespace zelph
 
                         refuse_in_mentions(root_data[1]);
                         if (focused_negation(root_data[1], true)) refuse_focused_negation();
+                        if (_pImpl->focused_refutation(root_data[1], true)) refuse_focused_refutation(false);
                         refuse_misplaced(Impl::misplaced_condition_op(root_data[1], true, true), true);
 
                         const Impl::BlockScope query(_pImpl->_query_code, true);
-                        const bool             carries = Impl::nested_condition_op(root_data[1], false) != NestedOp::None
-                                                      || _pImpl->written_out_condition_op(root_data[1]) != NestedOp::None
-                                                      || Impl::writes_path_marker(root_data[1])
-                                                      || _pImpl->mentions_condition_op(root_data[1]);
-                        return query_code(_pImpl->transform_arg(root_data[1]), carries);
+                        return query_code(_pImpl->transform_arg(root_data[1]));
                     }
 
                     // A rule that this value holds -- "{((X go Y, ¬(X p b))
@@ -805,7 +1177,9 @@ namespace zelph
                         refuse_written_out(_pImpl->written_out_condition_op(root_data[1]));
                     }
                 }
-                return _pImpl->transform_arg(root_data[1]);
+                const bool             claims = !pattern && !island_asks && !names_query_variable(root_data[1]);
+                const Impl::BlockScope claim(_pImpl->_claim_code, claims);
+                return claim_code(_pImpl->transform_arg(root_data[1]), claims, root_data[1]);
             }
             else
             {
@@ -833,7 +1207,23 @@ namespace zelph
                             "P itself, so the rule would read P positively. Write a negated condition as "
                             "\"¬(P)\" or \"((P) ~ negation)\".");
                     if (asks && focused_negation(arg, true)) refuse_focused_negation();
+                    if (_pImpl->focused_refutation(arg, is_name(fact_args[1], "=>"))) refuse_focused_refutation(true);
+                    if (asks && _pImpl->focused_refutation(arg, true)) refuse_focused_refutation(false);
                 }
+
+                // The whole line constitutes a marking: `(F) ~
+                // refuted` or `*(F) ~ refuted`, as stated by
+                // fact_args[0] (refutation_operand).
+                const Janet* refuted_data  = nullptr;
+                int32_t      refuted_len   = 0;
+                bool         refuted_focus = false;
+                const bool   marking_line  = !rule && fact_args.size() == 3 && is_name(fact_args[1], "~")
+                                          && _pImpl->denotes_zelph_name(fact_args[2], "refuted")
+                                          && refutation_operand(fact_args[0], refuted_data, refuted_len, refuted_focus);
+
+                // The query condition, when read through the focus, is P
+                // itself, interpreted in a positive manner.
+                if (asks && marking_line && refuted_focus) refuse_focused_refutation(false);
 
                 // The fact a negation builds, expressed as the statement itself
                 // -- "(X p b) ~ negation" -- constitutes the negated condition,
@@ -925,8 +1315,42 @@ namespace zelph
                 // does not reach that shape -- its positions are atoms, not nested
                 // arguments. See janet_cfun_zelph_path_guard for the ground case.
 
-                const Impl::BlockScope query(_pImpl->_query_code, asks);
-                std::string            call = _pImpl->build_smart_call("zelph/fact", fact_args);
+                // A line standing alone with a ground marking serves as the
+                // refutation of F, expressed exactly as the fact the refutation
+                // writes, and carries the same meaning as "¬(F)": refused for
+                // an F the graph claims, the probability half written for one
+                // it does not, and the identical statement repeated alters
+                // nothing -- thus, the printed marking re-enters. Built via
+                // zelph/fact, the marking first asserted F as a nested
+                // statement, then took it out of every query: following
+                // "a p b", the line "*(a p b) ~ refuted" quietly un-claimed it,
+                // and after "¬(a p b)", the line was refused as known to be
+                // wrong.
+                if (marking_line && !asks && !pattern)
+                {
+                    const Impl::BlockScope claim(_pImpl->_claim_code, true);
+
+                    std::vector<Janet> refuted_args(refuted_data + 1, refuted_data + refuted_len);
+                    const std::string  refute = _pImpl->build_smart_call("zelph/refute", refuted_args);
+                    if (refuted_focus) return refute;
+                    return "(zelph/fact " + refute + " " + _pImpl->transform_arg(fact_args[1]) + " " + _pImpl->transform_arg(fact_args[2]) + ")";
+                }
+
+                // A focus on a part of the rule itself --
+                // `*{(X p Y)} => (X q Y)` -- makes the statement evaluate to
+                // that part. The thunk returns the `=>` fact beside it,
+                // enabling dedup-rule to perform its checks and mark the rule,
+                // then return the same part of the rule that it keeps.
+                const bool focused_rule = rule && std::any_of(fact_args.begin(), fact_args.end(), [](const Janet& arg)
+                                                              {
+                                                                  const Janet* data;
+                                                                  int32_t      len;
+                                                                  return janet_indexed_view(arg, &data, &len) && len >= 1 && janet_checktype(data[0], JANET_KEYWORD)
+                                                                      && std::string(reinterpret_cast<const char*>(janet_unwrap_keyword(data[0]))) == "focused"; });
+
+                const Impl::BlockScope query(_pImpl->_query_code, asks || pattern);
+                const Impl::BlockScope claim(_pImpl->_claim_code, !rule && !asks && !pattern);
+                std::string            call = _pImpl->build_smart_call("zelph/fact", fact_args, "", focused_rule);
 
                 const NestedOp written_out = _pImpl->explicit_condition_op(fact_args.data(), static_cast<int32_t>(fact_args.size()));
                 if (written_out != NestedOp::None) call = operand_code(call);
@@ -937,23 +1361,11 @@ namespace zelph
                 // already has. See janet_cfun_zelph_dedup_rule. Recognising the
                 // statement here, at the one place that knows it is a top-level
                 // `S => O`, keeps the check off every other input line.
-                if (rule) return "(zelph/dedup-rule (fn [] " + call + "))";
+                if (rule) return "(zelph/dedup-rule (fn [] " + call + (focused_rule ? ") :focus)" : "))");
 
-                if (asks)
-                {
-                    std::string token;
-                    std::string base;
-                    std::string mode;
-                    bool        carries = written_out != NestedOp::None
-                                       || (Impl::atom_text(fact_args[1], token) && Impl::split_path_marker(token, base, mode));
-                    for (const Janet& arg : fact_args)
-                        carries = carries || Impl::nested_condition_op(arg, false) != NestedOp::None
-                               || _pImpl->written_out_condition_op(arg) != NestedOp::None || Impl::writes_path_marker(arg)
-                               || _pImpl->mentions_condition_op(arg);
-                    return query_code(call, carries);
-                }
+                if (asks) return query_code(call);
 
-                return call;
+                return claim_code(call, !rule && !pattern, tree->data[0]);
             }
         }
         else if (type == "conjunction")
@@ -970,6 +1382,7 @@ namespace zelph
             if (asks)
             {
                 if (focused_negation(list, true)) refuse_focused_negation();
+                if (_pImpl->focused_refutation(list, true)) refuse_focused_refutation(false);
                 refuse_misplaced(Impl::misplaced_condition_op(list, true, true), true);
             }
             else if (!pattern)
@@ -985,12 +1398,10 @@ namespace zelph
                 if (Impl::writes_path_marker(list)) refuse_in_assertion(NestedOp::Path);
             }
 
-            const Impl::BlockScope query(_pImpl->_query_code, asks);
-            const std::string      code    = _pImpl->transform_arg(list);
-            const bool             carries = Impl::nested_condition_op(list, false) != NestedOp::None
-                                          || _pImpl->written_out_condition_op(list) != NestedOp::None
-                                          || Impl::writes_path_marker(list) || _pImpl->mentions_condition_op(list);
-            return asks ? query_code(code, carries) : code;
+            const Impl::BlockScope query(_pImpl->_query_code, asks || pattern);
+            const Impl::BlockScope claim(_pImpl->_claim_code, !asks && !pattern);
+            const std::string      code = _pImpl->transform_arg(list);
+            return asks ? query_code(code) : claim_code(code, !pattern, list);
         }
 
         return "";
@@ -1431,6 +1842,98 @@ namespace zelph
         return lang == "zelph" && text == name;
     }
 
+    // Whether a predicate token refers to a predicate declared as opaque,
+    // read by lookup within the session's language: compiling a statement
+    // creates no node, and a predicate lacking any existing node is not
+    // considered declared. A variable does not constitute an atom, hence a
+    // statement employing a variable as a predicate remains unwrapped.
+    bool ScriptEngine::Impl::denotes_opaque_predicate(Janet token) const
+    {
+        if (!_n->has_opaque_predicates()) return false;
+
+        const Janet* data;
+        int32_t      len;
+        if (!janet_indexed_view(token, &data, &len) || len < 2 || !janet_checktype(data[0], JANET_KEYWORD)) return false;
+        const std::string type = reinterpret_cast<const char*>(janet_unwrap_keyword(data[0]));
+        if (type == "focused") return denotes_opaque_predicate(data[1]);
+        if (type != "atom") return false;
+
+        std::string text = token_text(data[1]);
+        if (text.size() >= 2 && text.front() == '"' && text.back() == '"')
+            text = string::unescape_atom(text.substr(1, text.size() - 2));
+        return _n->is_opaque_predicate(_n->get_node(text, _n->lang()));
+    }
+
+    // The counterpart of focused_negation for a refutation: `*(P) ~ refuted`
+    // within a rule evaluates to the pattern P directly, meaning a
+    // consequence derived P and a condition read P, both positively, while
+    // the marking was written on the side as data -- a ground one at once
+    // refuted what the rule then derived. Asked at the same positions, by
+    // the node that the name denotes (denotes_zelph_name): `refuted` is a
+    // named node in language `zelph`.
+    bool ScriptEngine::Impl::focused_refutation(Janet node, const bool in_rule) const
+    {
+        const Janet* data;
+        int32_t      len;
+        if (!janet_indexed_view(node, &data, &len) || len < 1) return false;
+        if (!janet_checktype(data[0], JANET_KEYWORD)) return false;
+
+        const std::string type = reinterpret_cast<const char*>(janet_unwrap_keyword(data[0]));
+        const bool        slot = type == "nested" || type == "condition";
+
+        if (in_rule && slot && len == 4 && is_name(data[2], "~") && denotes_zelph_name(data[3], "refuted"))
+        {
+            const Janet* subject;
+            int32_t      subject_len;
+            if (janet_indexed_view(data[1], &subject, &subject_len) && subject_len >= 1
+                && janet_checktype(subject[0], JANET_KEYWORD)
+                && std::string(reinterpret_cast<const char*>(janet_unwrap_keyword(subject[0]))) == "focused")
+                return true;
+        }
+
+        const bool rule = in_rule || (slot && len > 3 && is_name(data[2], "=>"));
+        for (int32_t i = 1; i < len; ++i)
+            if (focused_refutation(data[i], rule)) return true;
+        return false;
+    }
+
+    // Whether a statement writes a refuted marking `S ~ refuted` at any
+    // location: a statement that is claimed and writes one runs within
+    // zelph/claim-text (claim_code), so that a refusal leaves nothing it
+    // built.
+    bool ScriptEngine::Impl::writes_refuted_marking(Janet node) const
+    {
+        const Janet* data;
+        int32_t      len;
+        if (!janet_indexed_view(node, &data, &len) || len < 1) return false;
+        if (!janet_checktype(data[0], JANET_KEYWORD)) return false;
+
+        const std::string type = reinterpret_cast<const char*>(janet_unwrap_keyword(data[0]));
+        if ((type == "nested" || type == "condition" || type == "root") && len == 4 && is_name(data[2], "~") && denotes_zelph_name(data[3], "refuted"))
+            return true;
+
+        for (int32_t i = 1; i < len; ++i)
+            if (writes_refuted_marking(data[i])) return true;
+        return false;
+    }
+
+    // Whether a statement takes a node by reference at any location: a Janet
+    // variable `,name`, which is also what an inline-keyword island
+    // transforms into. The node may represent a rule's pattern whose claim
+    // is refused, and the claim reaches it solely at the end of the line.
+    bool ScriptEngine::Impl::takes_reference(Janet node)
+    {
+        const Janet* data;
+        int32_t      len;
+        if (!janet_indexed_view(node, &data, &len) || len < 1) return false;
+        if (!janet_checktype(data[0], JANET_KEYWORD)) return false;
+        if (std::string(reinterpret_cast<const char*>(janet_unwrap_keyword(data[0]))) == "unquote") return true;
+
+        for (int32_t i = 1; i < len; ++i)
+            if (takes_reference(data[i])) return true;
+        return false;
+    }
+
     // Which condition operator corresponds to a statement expressed as S P
     // O: the fact that the sugar builds -- `((P) ~ negation)` for `¬(P)`,
     // `((S p O) closure one-or-more)` for `S p⁺ O`, `((P) nn net)` for
@@ -1480,42 +1983,14 @@ namespace zelph
         return NestedOp::None;
     }
 
-    // Whether a rule that this value mentions holds a condition operator,
-    // in any spelling and at any level of nesting within the rule. What a
-    // query constructs under an operator constitutes a pattern
-    // (zelph/query-text), and any operator within a rule that the query
-    // mentions also qualifies as one: "R knows ((X go Y, ¬(a p b)) => (X ok
-    // Y))" would otherwise leave `a p b` as data.
-    bool ScriptEngine::Impl::mentions_condition_op(Janet node, const bool in_rule) const
-    {
-        const Janet* data;
-        int32_t      len;
-        if (!janet_indexed_view(node, &data, &len) || len < 1) return false;
-        if (!janet_checktype(data[0], JANET_KEYWORD)) return false;
-
-        const std::string type = reinterpret_cast<const char*>(janet_unwrap_keyword(data[0]));
-        const bool        slot = type == "nested" || type == "condition";
-        const bool        rule = in_rule || (slot && len > 3 && is_atom(data[2], "=>"));
-
-        if (rule)
-        {
-            std::string token;
-            std::string base;
-            std::string mode;
-            if (type == "negation" || type == "approx" || (type == "selffact" && is_path_ast(node))) return true;
-            if (slot && len >= 4 && atom_text(data[2], token) && split_path_marker(token, base, mode)) return true;
-            if (explicit_condition_op(node) != NestedOp::None) return true;
-        }
-
-        for (int32_t i = 1; i < len; ++i)
-            if (mentions_condition_op(data[i], rule)) return true;
-        return false;
-    }
-
     // `role` names the place the statement stands in, taken from the AST node
     // the caller is transforming -- "condition 2 of the comma list" and the
     // like. Empty where the surrounding form adds nothing to the message.
-    std::string ScriptEngine::Impl::build_smart_call(const std::string& func_name, const std::vector<Janet>& args, const std::string& role) const
+    // Using `with_fact`, a focused call yields the fact and the focused part
+    // as a tuple: the shape zelph/dedup-rule takes with :focus. A non-empty
+    // `focused_code` represents the code of the focused part, built by the
+    // caller and accepted exactly as provided.
+    std::string ScriptEngine::Impl::build_smart_call(const std::string& func_name, const std::vector<Janet>& args, const std::string& role, const bool with_fact, const std::string& focused_code) const
     {
         if (args.empty()) return "nil";
 
@@ -1536,6 +2011,62 @@ namespace zelph
         // after the graph had already grown.
         if ((func_name == "zelph/fact" || func_name == "zelph/refute") && args.size() < 3)
             script::refuse_short_statement(role, args);
+
+        // A marking that a claimed statement writes is itself claimed, and a
+        // claimed marking serves as a refutation: it is constructed just like
+        // the line "(F) ~ refuted" is, via zelph/refute, which refuses it for
+        // an F the graph claims and accepts it again for one already
+        // refuted. Built through zelph/fact, the operand F was initially
+        // asserted, and the marking subsequently removed it from every query:
+        // after "a p b", both "x says ((a p b) ~ refuted)" and "c q d, (a p
+        // b) ~ refuted" un-claimed `a p b` without comment, and after "¬(a p
+        // b)" both were refused as known to be wrong.
+        if ((func_name == "zelph/fact" || func_name == "zelph/refute") && _claim_code && args.size() == 3 && is_name(args[1], "~")
+            && denotes_zelph_name(args[2], "refuted"))
+        {
+            const Janet* refuted_data = nullptr;
+            int32_t      refuted_len  = 0;
+            bool         focus        = false;
+            if (refutation_operand(args[0], refuted_data, refuted_len, focus))
+            {
+                // Zelph::fact rejects the refutation of a marking, yet a call
+                // evaluates its arguments first, with the operand F being built
+                // and asserted by that time. Refused in this context, a typed
+                // line writes nothing.
+                if (func_name == "zelph/refute")
+                    throw std::runtime_error("\"(F) ~ refuted\" is a refutation, and a refutation cannot itself be refuted: it is withdrawn by "
+                                             "removing its marking (.remove or .prune-facts)");
+
+                const std::string refute = build_smart_call("zelph/refute", std::vector<Janet>(refuted_data + 1, refuted_data + refuted_len));
+                if (focus) return refute;
+                return "(zelph/fact " + refute + " " + transform_arg(args[1]) + " " + transform_arg(args[2]) + ")";
+            }
+
+            // A focus on a part of the subject transfers that part to the
+            // marking, which refutes it, causing the code to construct the
+            // part using zelph/refute. Built with zelph/fact, the marking
+            // bypassed the refusal. Following "a p b", the line
+            // "(x says *(a p b)) ~ refuted" refuted the claimed `a p b`. On a
+            // graph excluding `a p b`, the line refuted `a p b` and claimed
+            // `x says (a p b)`, which holds it. Both two-line spellings of
+            // this are refused.
+            std::vector<std::vector<Janet>> levels;
+            bool                            whole = false;
+            if (focused_refutation_operand(args[0], levels, whole, refuted_data, refuted_len))
+            {
+                if (func_name == "zelph/refute")
+                    throw std::runtime_error("\"(F) ~ refuted\" is a refutation, and a refutation cannot itself be refuted: it is withdrawn by "
+                                             "removing its marking (.remove or .prune-facts)");
+
+                // Each statement on the way to F is constructed around the code
+                // of the part it hands on, starting with the innermost.
+                std::string subject = build_smart_call("zelph/refute", std::vector<Janet>(refuted_data + 1, refuted_data + refuted_len));
+                for (auto level = levels.rbegin(); level != levels.rend(); ++level)
+                    subject = build_smart_call("zelph/fact", *level, "", false, subject);
+                if (whole) return subject;
+                return "(zelph/fact " + subject + " " + transform_arg(args[1]) + " " + transform_arg(args[2]) + ")";
+            }
+        }
 
         // Path sugar, before anything else looks at the arguments: the
         // statement becomes the plain one-step fact, tagged.
@@ -1578,6 +2109,20 @@ namespace zelph
             }
         }
 
+        // Every argument of an opaque predicate constitutes a mention scope
+        // (as detailed below), and any refutation marking placed within it
+        // also counts as a mention: since it does not refute anything, it is
+        // not built as a claim.
+        //
+        // A refutation within a claimed statement claims the marking rather
+        // than the fact it refutes (Zelph::refute), and the content that the
+        // fact holds is mentioned in the same way: `¬(x says (a p b))` used to
+        // write a new `a p b` as data, while a marking inside the fact fails
+        // to refute anything.
+        const bool       opaque     = (func_name == "zelph/fact" || func_name == "zelph/refute") && args.size() >= 3 && denotes_opaque_predicate(args[1]);
+        const bool       refutation = func_name == "zelph/refute" && _claim_code;
+        const BlockScope opaque_arguments(_claim_code, _claim_code && !opaque && !refutation);
+
         int                      focused_index = -1;
         std::vector<std::string> arg_codes;
         arg_codes.reserve(args.size());
@@ -1601,12 +2146,21 @@ namespace zelph
                 focused_index = (int)i;
                 // Recursively transform the actual value inside the focus tag
                 // [:focused val] -> data[1] is val
-                arg_codes.push_back(transform_arg(data[1]));
+                arg_codes.push_back(focused_code.empty() ? transform_arg(data[1]) : focused_code);
             }
             else
             {
                 arg_codes.push_back(transform_arg(args[i]));
             }
+        }
+
+        // Each argument of an opaque predicate constitutes a mention scope,
+        // as a rule nested in a statement is rule text (zelph/rule-text):
+        // what the argument creates is written down without being claimed.
+        if (opaque || refutation)
+        {
+            for (size_t i = 0; i < args.size(); ++i)
+                if ((i != 1 || refutation) && !is_plain_token(args[i])) arg_codes[i] = "(zelph/mention (fn [] " + arg_codes[i] + "))";
         }
 
         if (focused_index == -1)
@@ -1627,12 +2181,19 @@ namespace zelph
             {
                 let_block += "$" + std::to_string(i) + " " + arg_codes[i] + " ";
             }
-            let_block += "_ (" + func_name;
+            // The fact that a focus writes beside the part it hands on passes
+            // through zelph/aside, which records it for the statement around
+            // it: a line claims it as it claims what it writes, and a mention
+            // marks it with what the mention wrote. A rule's own focus hands
+            // on a part of the rule itself, whose `=>` fact is no such fact.
+            const bool aside = func_name == "zelph/fact" && !with_fact;
+            let_block += (aside ? "_ (zelph/aside (" : "_ (") + func_name;
             for (size_t i = 0; i < arg_codes.size(); ++i)
             {
                 let_block += " $" + std::to_string(i);
             }
-            let_block += ")] $" + std::to_string(focused_index) + ")";
+            const std::string focused = "$" + std::to_string(focused_index);
+            let_block += (aside ? "))] " : ")] ") + (with_fact ? "[_ " + focused + "]" : focused) + ")";
             return let_block;
         }
     }
@@ -1686,7 +2247,11 @@ namespace zelph
             // collections it writes belong exclusively to it
             // (zelph/rule-text).
             if (args.size() >= 3 && is_atom(args[1], "=>"))
+            {
+                refuse_focus_in_held_rule(args);
+                const BlockScope mention(_claim_code, false);
                 return "(zelph/rule-text (fn [] " + build_smart_call("zelph/fact", args) + "))";
+            }
 
             // A condition operator expressed in full is the operator,
             // with its operand being a pattern as the sugar's is.
@@ -1726,6 +2291,18 @@ namespace zelph
                 int cond_val_count = cond_len - 1; // excluding :condition tag
                 if (cond_val_count == 1)
                 {
+                    // A comma list evaluates to the list, thus a focus on any
+                    // of its conditions as a whole changed nothing and was
+                    // dropped without comment: "*(a p b), c q d" asserted both,
+                    // and "(*(X R Y), Y R Z) => (X R Z)" built the plain rule.
+                    // A rule that another statement holds expresses this in
+                    // its own words (refuse_focus_in_held_rule).
+                    if (focuses_whole_value(cond_data[1]))
+                        throw std::runtime_error(
+                            "Condition " + std::to_string(i) + " of the comma list carries a focus, which would make the list evaluate "
+                                                               "to that condition, and a comma list evaluates to the list itself: the focus changes "
+                                                               "nothing. Write the condition without the focus.");
+
                     // Single value (e.g. a nested conjunction or negated pattern)
                     cond_codes.push_back(transform_arg(cond_data[1]));
                 }
@@ -1738,7 +2315,23 @@ namespace zelph
                     // The AST says which condition this is, so the message can
                     // say it too -- the same courtesy zelph/conjunction pays
                     // for a member that is not a statement.
-                    std::string code = build_smart_call("zelph/fact", args, "condition " + std::to_string(i) + " of the comma list");
+                    const std::string role = "condition " + std::to_string(i) + " of the comma list";
+
+                    // A rule among the members is a rule that another
+                    // statement holds, as is the case within parentheses (the
+                    // nested case above). Written with zelph/fact, its parts
+                    // were claims: "x says ((m n o) => (c q d), j r s)"
+                    // answered `c q d` and `m n o`, which the set spelling of
+                    // the same line left as patterns.
+                    if (args.size() >= 3 && is_atom(args[1], "=>"))
+                    {
+                        refuse_focus_in_held_rule(args);
+                        const BlockScope mention(_claim_code, false);
+                        cond_codes.push_back("(zelph/rule-text (fn [] " + build_smart_call("zelph/fact", args, role) + "))");
+                        continue;
+                    }
+
+                    std::string code = build_smart_call("zelph/fact", args, role);
                     if (explicit_condition_op(args.data(), static_cast<int32_t>(args.size())) != NestedOp::None) code = operand_code(code);
                     cond_codes.push_back(code);
                 }
@@ -1775,6 +2368,14 @@ namespace zelph
                     "needs a second negation level. Write the plain pattern for the "
                     "positive condition.");
             }
+
+            // A focus on the whole operand had no effect and was dropped
+            // without comment: "(¬*(X R Y), Y R Z) => (X R Z)" built the rule
+            // using "¬(X R Y)".
+            if (focuses_whole_value(data[1]))
+                throw std::runtime_error(
+                    "A focus directly inside \"¬\" changes nothing: \"¬\" negates the whole pattern that follows it, and the "
+                    "condition is that negation, never the pattern alone. Write \"¬(P)\" without the focus.");
 
             // The operand is constructed in a context where it functions as a
             // pattern rather than a claim (zelph/operand): a fact refuted on

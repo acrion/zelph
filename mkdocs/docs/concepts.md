@@ -83,11 +83,20 @@ A parenthesised statement `(s p o)` creates the fact and evaluates to the **stat
 
 Here, the subject of the outer statement is the node representing the inner fact.
 
-The outer statement asserts the inner fact as well: a statement claims itself and every fact nested in it, also those in a set constant or a collection literal it writes, excluding what resides within a rule it mentions (see [Mentioning a Rule Is Not Asserting It](logic.md#mentioning-a-rule-is-not-asserting-it)). The order in which the two were written is irrelevant, so a rule that names the inner fact as its condition fires once a statement holds it:
+The outer statement asserts the inner fact as well: a statement claims itself and every fact nested in it, also those in a set constant, a collection literal, or a comma list it writes, excluding what stands in an opaque position, of which `=>` is one: what resides within a rule it mentions (see [Mentioning a Rule Is Not Asserting It](logic.md#mentioning-a-rule-is-not-asserting-it)), and what an argument of a predicate declared opaque holds (see [Mentioning a Statement: Opaque Predicates](logic.md#mentioning-a-statement-opaque-predicates)). The order in which the two were written is irrelevant, so a rule that names the inner fact as its condition fires once a statement holds it:
 
 ```
 zelph> (Berlin is-capital-of Germany) => (Germany has-capital yes)
 zelph> atlas lists (Berlin is-capital-of Germany)
+zelph+> X has-capital Y
+Answer: Germany has-capital yes
+```
+
+A comma list lacking variables, when placed on a separate line, asserts every one of its members, thereby claiming each one together with what it nests, just as the line of each individual member does:
+
+```
+zelph> (Berlin is-capital-of Germany) => (Germany has-capital yes)
+zelph> Berlin is-capital-of Germany, Paris is-capital-of France
 zelph+> X has-capital Y
 Answer: Germany has-capital yes
 ```
@@ -160,6 +169,8 @@ Answer: blue is-a-colour yes
 Answer: red is-a-colour yes
 ```
 
+A statement that holds a variable quantifies over the members identically: `(X p z) in {(x p z) c}` inquires which member matches the structure `X p z`. Similar to the `X` in `X in {red green blue}`, the statement functions as a pattern over the set and never constitutes one of its members, thus the set remains `{c (x p z)}` as long as the question or a rule with this condition exists.
+
 Membership in a constant is definitional rather than asserted, so extending
 one is refused — and the message names the literal that can be extended:
 
@@ -172,6 +183,8 @@ membership can grow.
 
 Saying what already holds is not an extension: `a in {a b}` is true by
 construction and is simply a no-op.
+
+For the same reason, two set constants never merge by name: `.name` declines to assign to `{b c}` the name currently held by `{b d}`, because equating the two would say that `c` equals `d`, rather than indicating that the set is `{b c d}`.
 
 A **rule consequence** is the one place where the refusal arrives during
 reasoning rather than while the line is read: `X in {a b}` is how a rule
@@ -187,6 +200,25 @@ zelph> (X p Y) => (X in {a b})
 the collection literal @{...} for a container that membership can grow.
 Found one or more contradictions!
 ```
+
+A refused consequence leaves the graph in its prior state. Whatever the firing built for it before the refusal goes with it – a statement that the consequence nests, a fresh witness, a member added to the rule’s own collection, the relation-type declaration (`b ~ ->`) for a node that the consequence used as a predicate for the first time – thus no other rule fires on it. The declaration stays only if something external to the firing still uses it: a fact utilizing that predicate, or a statement concerning the declaration. In the example below, the firing builds `m q n` for the outer statement before encountering the membership, and the rule over `q` derives nothing:
+
+```
+zelph> m p n
+zelph> n ~ known
+zelph> (X q Y) => (X ok Y)
+zelph> (X p Y, Y ~ known) => ((X q Y) says (X in {a b}))
+! ⇐ {(m p n) (n ~ known)}
+   └─ refused: a set constant cannot be extended -- {a b} IS its members. Write
+the collection literal @{...} for a container that membership can grow.
+Found one or more contradictions!
+zelph> S q O
+zelph> S ok O
+```
+
+A rule that a generator writes is refused similarly when it would extend a set constant, either within its consequence or within any of its conditions, and a typed statement that is refused retains none of the components it wrote before its own fact.
+
+A consequence that the binding turns into a fact whose predicate is one of its objects is not written: typed, such a statement is refused, and a firing skips it without notification. It produces no residue either, neither a nested statement nor a fresh witness, thus `(X p Y) => (Z Y X)` adds no node to `a p a`, regardless of how frequently it runs.
 
 #### Collections
 
@@ -306,14 +338,53 @@ This is also what keeps the engine's own conjunction form working, whose
 members are condition patterns and therefore never ground — see
 [the rule section](rules.md#rules-and-inference) for `*{...} ~ conjunction`.
 
-A rule is considered a member with a variable wherever its variables appear, within its conditions as well, thus making both of these literals collections. Neither serves as an answer to a query regarding its member, because a rule containing variables constitutes rule text, not data:
+A rule is regarded as a member with a variable wherever its variables occur, even within its conditions, thereby classifying both of these literals as containers, which when not inside a rule are displayed as the literal they were originally typed as. Neither serves as an answer to a query regarding its member, because a rule containing variables constitutes rule text, not data:
 
 ```
 zelph> x has {((A r B) => (c q d))}
-x has @{((A r B) => (c q d))}
+x has {((A r B) => (c q d))}
 zelph> y has {((A r B, A s B) => (c q d))}
-y has @{(((A s B), (A r B)) => (c q d))}
+y has {(((A s B), (A r B)) => (c q d))}
 zelph> S in O
+```
+
+#### A literal with a variable in a pattern
+
+In a pattern – the condition within a rule, a query, or a statement held by a condition – such a literal represents a set: under a binding, it refers to the set formed by substituting its members, thus matching a set constant whose members correspond to its own in a one-to-one fashion. A set constant that varies by a single member, or holds one additional or one fewer member, constitutes a distinct set:
+
+```
+zelph> {(john enters card1) (card1 ~ card)} can nil
+zelph> {(eve enters card3) (card3 ~ card) (card3 ~ red)} can nil
+zelph> ({(X enters C) (C ~ card)} can nil) => (X ~ able)
+(john ~ able) ⇐ ({(john enters card1) (card1 ~ card)} can nil)
+zelph> {(X enters C) (C ~ card) (C ~ red)} can nil
+Answer: {(eve enters card3) (card3 ~ card) (card3 ~ red)} can nil
+```
+
+When the members can form multiple pairings, such as `{(X p Y) (X p Z)}` versus `{(a p b) (a p c)}`, each possible pairing constitutes an independent match, and a guard or an additional condition determines which one is selected. Only a set constant is matched by its members, as it is its members: a collection may expand, so its current contents are not an enduring trait, and thus `{(X p Y)}` does not match `@{(a p b)}`. A literal lacking a variable is a set constant and is matched via identity, while a variable bound to a set refers to that node, just as it does for any other value. A literal that includes such a literal among its members is also a set pattern and is matched level by level: `{{X} a}` matches `{{b} a}`, and `{a {b X}}` matches `{a {b q}}`. Within a rule, a collection literal `@{...}` containing a variable is interpreted identically, since the rule prints its literals using that marker; in a query, `@{...}` builds a new container, which no fact names. Outside a rule, the literal appears exactly as originally entered, `{...}`, thus the echo of a query re-enters as the identical query.
+
+A membership condition writes its subject into the literal it designates, just as a membership in a consequence does: `(Z in {Y})` prints as `(Z in @{Z Y})` and represents the set containing precisely Z and Y, thus matching the memberships of a set constant having two members.
+
+A query functions as a statement too, and the variables inside it are what transform it into a pattern instead of raw data. Variables present in a set pattern are counted toward this, regardless of their placement among the members, unless they appear within a rule that a member mentions, in which case those variables are considered part of the rule. Upon answering the query, all content it wrote that holds one of its variables is removed – its statement, its set patterns and their memberships, the conjunction set derived from a comma list – while anything it wrote without a variable remains, just like a ground fact placed outside any condition operator is asserted. The collection that its literal built is an exception, regardless of whether it includes a variable: no fact outside the query names the newly created collection, so it is eliminated along with the facts that hold it. The same applies to the relation-type declaration established by the query’s first use of a predicate: `X b Y`, posed when `b` has never served as a predicate, declares `b ~ ->` just as any first fact of `b` would, and this declaration goes with the query unless a fact with that predicate that the query asserts, or a statement the query makes about the declaration, still uses it. The subsequent question thus answers with the fact alone, both in the current session and after a `.save` followed by a `.load`, and `.explain` as well as `.node` without an argument refer to the fact named by the last answer. `.prune-nodes` removes what such a variable binds, whether or not the variable is named: the sole variable in a pattern names what is erased wherever it resides, whether in a set or within a nested fact, except when it acts as the predicate of a fact, which the unnamed form rejects at any level, just as it does at the top level, and two such variables must be explicitly named:
+
+```
+zelph> {(john enters card1) (card1 ~ card)} can nil
+zelph> {(bob enters card2) (card2 ~ ticket)} can work
+zelph> {(X enters C) (C ~ card)} can nil
+Answer: {(john enters card1) (card1 ~ card)} can nil
+zelph> .explain
+{(john enters card1) (card1 ~ card)} can nil  [axiom]
+zelph> S can nil
+Answer: {(john enters card1) (card1 ~ card)} can nil
+zelph> .prune-nodes {(X enters card2) (card2 ~ ticket)} can work
+Pruned 5 matching facts and 1 nodes.
+Consider running .cleanup.
+zelph> X enters Y
+Answer: john enters card1
+zelph> .prune-nodes X ({(X enters C) (C ~ card)} can nil)
+Pruned 5 matching facts and 1 nodes.
+Consider running .cleanup.
+zelph> S can nil
 ```
 
 #### A literal a rule derives
@@ -515,8 +586,9 @@ A parenthesized statement evaluates to the fact it generates. Placing a `*` in f
 - `(A B C)` creates the fact and evaluates to the fact node.
 - `(*A B C)` creates the fact and evaluates to node `A`.
 - `(*{...} ~ conjunction)` creates the fact stating the set is a conjunction and evaluates to the set node.
+- `(A *=> B)` evaluates to the rule, as `(A => B)` does: at the arrow, the focus names the rule itself.
 
-A statement carries no more than one focus, and a statement nested within it is a distinct statement, with a focus of its own.
+A statement carries no more than one focus, and a statement nested within it is a distinct statement, with a focus of its own. A group enclosing a single value is that value itself, including its focus: `x says (*(a p b))` is `x says *(a p b)` and evaluates to `a p b`, while `(*k) says (*(l p m))` constitutes a statement with two foci, which is refused.
 
 **Example – a second fact on the side:**
 
@@ -546,7 +618,25 @@ zelph> socrates ~ greek
 (socrates ~ mortal) ⇐ {(socrates ~ greek) (socrates ~ human)}
 ```
 
-The echo matches the comma list, as both formats generate the same rule: the comma list is the preferred form to write, while the explicit version reveals its fundamental meaning (see [Rules and Inference](rules.md#rules-and-inference)). Absent the `=>`, the identical structure serves as the explicit notation for a query involving multiple conditions (refer to [Querying](queries.md#key-features)). Within a condition, a focus alters what that condition is. Placed at the top of a condition in a comma list or a condition set, it makes that condition evaluate to a node, which inherently fails to match and thus is [rejected](rules.md#syntax-sugar-for-conditions). Positioned before the sole condition of a rule, it results in no rule at all: the statement reduces to a simple fact concerning the focused node, with `=>` acting as the predicate. One level deeper, it creates a fact alongside, as demonstrated in the first example.
+The echo matches the comma list, as both formats generate the same rule: the comma list is the preferred form to write, while the explicit version reveals its fundamental meaning (see [Rules and Inference](rules.md#rules-and-inference)). Absent the `=>`, the identical structure serves as the explicit notation for a query involving multiple conditions (refer to [Querying](queries.md#key-features)). Within a condition, a focus alters what that condition is. Placed at the top of a condition in a comma list or a condition set, it makes that condition evaluate to a node, which inherently fails to match and thus is [rejected](rules.md#syntax-sugar-for-conditions). Positioned before the sole condition of a rule, it results in no rule at all: the statement reduces to a simple fact concerning the focused node, with `=>` acting as the predicate. One level deeper, it creates a fact alongside, as demonstrated in the first example. This fact constitutes a claim just like any other and claims the facts nested in it: `(x says *(a p b)) => (c q d)` asserts `x says (a p b)` and, by extension, `a p b`, thereby firing the rule at once. The same applies when a rule has already written that fact as its pattern, and when the focus is positioned on a line by itself. Within a rule that a statement mentions, and within an argument of an opaque predicate, the fact that the focus writes is mentioned along with them, whereas a fact that was present beforehand keeps its status.
+
+**Example – the focus on a rule’s arrow:**
+
+On the arrow, the focus names the rule directly, which is what the statement of a rule evaluates to when no focus is applied. A line containing a single rule beneath a focus is interpreted identically, as a focus applied to an entire line lacks a surrounding statement to hand a part to. In both cases, the line is the rule statement it spells: when repeated, neither adds a second rule, and the ground parts of the rule stay patterns.
+
+```
+zelph> (X p Y) *=> (X q Y)
+(X p Y) => (X q Y)
+zelph> *((A p B) => (A q B))
+(X p Y) => (X q Y)
+zelph> .list-rules
+Listing all rules:
+------------------------
+(X p Y) => (X q Y)
+------------------------
+```
+
+The second line echoes the rule authored by the first, using that rule’s designated variable names. Within a statement, a focus on the arrow names the rule equally well: `x notes ((a p b) *=> (c q d))` mentions the rule, just as `x notes ((a p b) => (c q d))` does. A focus on any other part of a rule that a statement holds is refused: it would hand that part to the statement and leave the rule on its own, named by nothing, and therefore in force, even though a rule within another statement is merely mentioned. So is a focus on a single condition within such a rule’s comma list, which would change nothing. Any additional comma list – whether from a typed rule, a query, or one asserted by a statement – likewise refuses such a focus, because a comma list evaluates to the list as a whole, and `¬` does the same for a focus placed directly within it, as `¬` negates the whole pattern that comes after it. The arrow is the identical node whether enclosed in parentheses or within quotation marks, meaning that `(a p b) (=>) (c q d)` and `(a p b) "=>" (c q d)` both represent the rule `(a p b) => (c q d)`, regardless of whether a focus is applied.
 
 ### The Self-Fact Prefix `:`
 

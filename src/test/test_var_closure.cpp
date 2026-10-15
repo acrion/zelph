@@ -112,6 +112,50 @@ TEST_CASE("var_in_closure: trusted import disarms the flag store; walk fallback 
     CHECK(z.var_in_closure(tmpl2));
 }
 
+// A condition `X in {b c}` writes the membership of a variable within the set
+// constant, while a condition `(X op b) in {b c}` writes the membership of a
+// statement containing one: patterns applied to the set, not its components.
+// The flag store never counted them as part of the set's text, yet the walk
+// did, so after the store was disarmed, the set read as a rule template, and
+// unification rejected every membership within it as a candidate. A set
+// constant around a rule's own collection that contains a variable, `{@{Y}}`,
+// constitutes rule text in both readings.
+TEST_CASE("var_in_closure: the walk reads a set constant's own members, not a pattern's membership in it")
+{
+    Zelph      z(null_handler());
+    const Node b  = z.node("b");
+    const Node c  = z.node("c");
+    const Node op = z.node("op");
+    const Node V  = z.var();
+
+    const Node set = z.set({b, c});
+    REQUIRE(z.is_set_constant(set));
+
+    Node own_set = 0;
+    {
+        const Zelph::TemplateScope scope(z);
+        own_set = z.set({z.collection({V})});
+    }
+
+    SUBCASE("the membership of a variable")
+    {
+        z.fact(V, z.core.PartOf, {set});
+    }
+    SUBCASE("the membership of a statement holding a variable")
+    {
+        z.fact(z.fact(V, op, {b}), z.core.PartOf, {set});
+    }
+
+    CHECK_FALSE(z.var_in_closure(set)); // the flag store
+    CHECK(z.var_in_closure(own_set));
+
+    z.fact_import_trusted_single_object(b, op, c);
+    REQUIRE_FALSE(z.fact_stores_enabled());
+
+    CHECK_FALSE(z.var_in_closure(set)); // the walk
+    CHECK(z.var_in_closure(own_set));
+}
+
 namespace
 {
     std::unordered_set<Node> vars_of(Zelph& z, const Node n)

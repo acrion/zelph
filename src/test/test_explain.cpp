@@ -905,6 +905,20 @@ z q green
         } });
 }
 
+// A rule authored by zelph/mention is one that no one has put in force, and
+// the label indicates this, just as it does for a rule that a statement
+// mentions. Without a mark, the mention was in force, and `.explain`
+// classified it as an input, "[axiom]".
+TEST_CASE("explain: a rule zelph/mention wrote is labelled rule mentioned; not in force")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process(R"(%(zelph/mention (fn [] (zelph/fact (zelph/fact "a" "p" "b") "=>" (zelph/fact "c" "q" "d")))))");
+        collector.clear();
+        interactive.process(".explain ((a p b) => (c q d)) 0");
+        CHECK(explained(collector) == "(a p b) => (c q d)  [rule mentioned; not in force]"); });
+}
+
 // A rule authored by a generator is explained by the generator's premise,
 // also where the rule holds a nested rule whose conditions the generator's
 // binding reaches. The nested rule was copied with the generator's variable
@@ -934,6 +948,192 @@ t go k
             interactive.process(".explain ((X p Y) => (X hates @{((A r k, A s B) => (c q d))})) 0");
             CHECK(explained(collector).ends_with("\n   └─ t go k  [axiom]"));
         } });
+}
+
+// zelph records no derivation, thus a pruned premise results in its
+// consequence remaining: following `bob ~ man` and
+// `(X ~ man) => (X ~ mortal)`, pruning `bob ~ man` still allows
+// `bob ~ mortal` to persist. A program that must not leave such a fact
+// behind asks first, and the answer is the search of .explain, executed by
+// advancing one step forward from the fact.
+TEST_CASE("janet: zelph/dependents lists the derived facts that rest on a fact")
+{
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+    process_lines(interactive, "(X ~ man) => (X ~ mortal)\nbob ~ man\n");
+    const auto value = [&](const std::string& expression)
+    { return janet_value(collector, interactive, expression); };
+    const auto dependents = [&](const std::string& fact)
+    { return value("(sort (map string (zelph/dependents " + fact + ")))"); };
+
+    SUBCASE("the fact a rule derived from it")
+    {
+        const std::size_t before = node_count(collector, interactive);
+        CHECK(dependents(R"("bob" "~" "man")") == R"js(@["bob ~ mortal"])js");
+        CHECK(value(R"((apply < (zelph/dependents "bob" "~" "man")))") == "true");
+        CHECK(node_count(collector, interactive) == before);
+    }
+    SUBCASE("a fact nothing rests on gives the empty tuple, an absent one nil")
+    {
+        CHECK(value(R"((zelph/dependents "bob" "~" "mortal"))") == "()");
+        CHECK(value(R"((zelph/dependents "bob" "~" "god"))") == "nil");
+    }
+    SUBCASE("a fact with a second justification is listed too")
+    {
+        process_lines(interactive, "(X ~ human) => (X ~ mortal)\nbob ~ human\n");
+        CHECK(dependents(R"("bob" "~" "man")") == R"js(@["bob ~ mortal"])js");
+    }
+    SUBCASE("a fact that rests on it only through another is not listed")
+    {
+        interactive.process("(X ~ mortal) => (X ~ fallible)");
+        interactive.run(true, false, false);
+        REQUIRE(value(R"((zelph/exists "bob" "~" "fallible"))") == "true");
+        CHECK(dependents(R"("bob" "~" "man")") == R"js(@["bob ~ mortal"])js");
+    }
+    SUBCASE("a NAF rule the fact blocks lists nothing")
+    {
+        // `bob ~ walker`, asserted manually, lacks justification while the
+        // rule's negation does not hold, thus it rests on neither fact.
+        process_lines(interactive, "bob has wings\n(¬(X has wings), X ~ man) => (X ~ walker)\nbob ~ walker\n");
+        CHECK(value(R"((zelph/dependents "bob" "has" "wings"))") == "()");
+        CHECK(dependents(R"("bob" "~" "man")") == R"js(@["bob ~ mortal"])js");
+    }
+    SUBCASE("a denial lists nothing")
+    {
+        interactive.process("(X ~ man, X ~ woman) => !");
+        CHECK(dependents(R"("bob" "~" "man")") == R"js(@["bob ~ mortal"])js");
+    }
+    SUBCASE("an edge a path condition walks is used")
+    {
+        // A second route connecting the same endpoints renders the
+        // conclusion independent of the edge.
+        process_lines(interactive, "(X isa D, ((D sub C) closure zero-or-more)) => (X ok C)\nx isa d1\nd1 sub d2\nd2 sub d3\n");
+        CHECK(dependents(R"("d2" "sub" "d3")") == R"js(@["x ok d3"])js");
+        interactive.process("d1 sub d3");
+        CHECK(value(R"((zelph/dependents "d2" "sub" "d3"))") == "()");
+    }
+    SUBCASE("a path condition binds the end that no other condition binds")
+    {
+        // The forward pass enumerates what the walk reaches starting from
+        // `D`, and likewise, the search: explain() binds `C` from the
+        // consequence instead.
+        process_lines(interactive, "(X isa D, ((D sub C) closure one-or-more)) => (X in-class C)\nx isa d1\nd1 sub d2\nd2 sub d3\n");
+        CHECK(dependents(R"("x" "isa" "d1")") == R"js(@["x in-class d2" "x in-class d3"])js");
+    }
+    SUBCASE("a walk steps over each object of a fact with two")
+    {
+        // The walk of a path condition steps over every object of a fact,
+        // just as the forward pass does: `d1 sub d2 d3` constitutes an edge
+        // to d2 and an edge to d3. The search took only a fact having a
+        // single object as an edge, thus what was derived across a wider one
+        // rested on nothing it listed.
+        process_lines(interactive, "(X isa D, ((D sub C) closure one-or-more)) => (X in C)\nx isa d1\nd1 sub d2 d3\nd3 sub d4\n");
+        REQUIRE(value(R"((zelph/exists "x" "in" "d4"))") == "true");
+        CHECK(dependents(R"("d1" "sub" "d2" "d3")") == R"js(@["x in d2" "x in d3" "x in d4"])js");
+    }
+    SUBCASE("a condition with a statement as its predicate reads the fact")
+    {
+        // A condition having a predicate that constitutes a statement
+        // pattern, (Y r s), is matched against every fact whose predicate
+        // unifies with it. The search tried only a condition whose
+        // predicate is the fact's own, thus `.explain y ok b` named
+        // x (b r s) y as its premise, whereas the premise listed nothing
+        // that rests on it.
+        process_lines(interactive, "(X (Y r s) Z) => (Z ok Y)\nx (b r s) y\n");
+        REQUIRE(value(R"((zelph/exists "y" "ok" "b"))") == "true");
+        CHECK(dependents(R"("x" (zelph/fact "b" "r" "s") "y")") == R"js(@["y ok b"])js");
+    }
+    SUBCASE("a rule a generator derived from the fact is listed")
+    {
+        interactive.process("(X ~ man) => ((X ~ mortal, X ~ old) => (X ~ fallible))");
+        CHECK(dependents(R"("bob" "~" "man")") == R"js(@["((bob ~ mortal), (bob ~ old)) => (bob ~ fallible)" "bob ~ mortal"])js");
+    }
+    SUBCASE("a witness a rule made for a fresh variable is listed")
+    {
+        interactive.process("(X ~ man) => (X has _H)");
+        CHECK(dependents(R"("bob" "~" "man")") == R"js(@["bob has ??" "bob ~ mortal"])js");
+    }
+    SUBCASE("witnesses that two heads share are found together")
+    {
+        // Every fact `a q Y` comes with its own witness; the witness for
+        // `a q b` is not `?? from c`, hence it does not rest on `a q c`.
+        process_lines(interactive, "(X q Y) => (X has _W) (_W from Y)\na q b\na q c\n");
+        interactive.process(R"(%(def w (first (zelph/sources "from" "c"))))");
+        CHECK(value(R"((length (zelph/dependents "a" "q" "c")))") == "2");
+        CHECK(value(R"((all |(or (= $ (zelph/fact "a" "has" w)) (= $ (zelph/fact w "from" "c"))) (zelph/dependents "a" "q" "c")))") == "true");
+    }
+    SUBCASE("a pattern, a node that is no fact and a rule-building thunk are refused")
+    {
+        CHECK_THROWS_WITH(interactive.process(R"(%(zelph/dependents (zelph/var) "~" "man"))"), doctest::Contains("zelph/dependents: the fact holds a variable"));
+        CHECK_THROWS_WITH(interactive.process(R"(%(zelph/dependents "bob"))"), doctest::Contains("zelph/dependents: bob is no fact"));
+        CHECK_THROWS_WITH(interactive.process(R"(%(zelph/build-rule (fn [] (zelph/dependents "bob" "~" "man"))))"),
+                          doctest::Contains("zelph/dependents: refused while a rule is being built"));
+    }
+    SUBCASE("on a partially loaded graph it is blocked, as zelph/prune-fact is")
+    {
+        // A partial view may omit the rules and the facts upon which a
+        // derivation rests, and the answer gave no sign of this: an empty
+        // tuple read as "nothing rests on the fact" which a program prunes
+        // on.
+        namespace fs       = std::filesystem;
+        const auto network = fs::temp_directory_path() / "zelph_dependents_partial_view.bin";
+        interactive.process(".save \"" + network.string() + "\"");
+        interactive.process(".new");
+        interactive.process(".load-partial \"" + network.string() + "\"");
+        CHECK_THROWS_WITH(interactive.process(R"(%(zelph/dependents "bob" "~" "man"))"),
+                          doctest::Contains("Blocked in partial load mode; full graph required for zelph/dependents"));
+        fs::remove(network);
+    }
+}
+
+// A rule employing a fresh variable generates a single witness for each
+// firing and writes it into every consequence that names it:
+// `(X q Y) => (X has _W) (_W from Y)` applied to `a q b` and `a q c` makes
+// two witnesses, one `from b` and one `from c`. The search unified
+// `a has <witness>` with the first consequence, joined the condition, and
+// took its first solution, thereby causing one of the two `a has` facts to
+// be explained by the premise whose firing produced the other witness,
+// while zelph/dependents, which reads the consequences collectively,
+// disagreed.
+TEST_CASE("explain: the witness of a fresh variable is explained by the firing that made it")
+{
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+    const auto                  premises = [&]
+    { return janet_value(collector, interactive, R"((map |(string ($ :fact)) ((zelph/explain "a" "has" w) :premises)))"); };
+
+    SUBCASE("two consequences share the witness")
+    {
+        process_lines(interactive, "(X q Y) => (X has _W) (_W from Y)\na q b\na q c\n");
+        interactive.process(R"(%(def w (first (zelph/sources "from" "b"))))");
+        CHECK(premises() == R"js(@["a q b"])js");
+        interactive.process(R"(%(def w (first (zelph/sources "from" "c"))))");
+        CHECK(premises() == R"js(@["a q c"])js");
+    }
+    SUBCASE("a third consequence ties the witness to the condition")
+    {
+        // The witness reaches the condition solely via a second fresh
+        // variable, which a third consequence ties to `Y`.
+        process_lines(interactive, "(X q Y) => (X has _W) (_W from _V) (_V of Y)\na q b\na q c\n");
+        interactive.process(R"(%(def w (first (zelph/sources "from" (first (zelph/sources "of" "b"))))))");
+        CHECK(premises() == R"js(@["a q b"])js");
+        interactive.process(R"(%(def w (first (zelph/sources "from" (first (zelph/sources "of" "c"))))))");
+        CHECK(premises() == R"js(@["a q c"])js");
+    }
+    SUBCASE("a negated condition names the witness")
+    {
+        // A variable that the conditions name exclusively under `¬` is
+        // quantified within the negation, thus the firing still makes a fresh
+        // witness for it. Counted as bound by the conditions, it tied no
+        // consequence to the one that was matched, and one of the two
+        // `a has` facts was explained by the premise whose firing made the
+        // other witness.
+        process_lines(interactive, "(X q Y, ¬(_W blocks Y)) => (X has _W) (_W from Y)\na q b\na q c\n");
+        interactive.process(R"(%(def w (first (zelph/sources "from" "b"))))");
+        CHECK(premises() == R"js(@["a q b"])js");
+        interactive.process(R"(%(def w (first (zelph/sources "from" "c"))))");
+        CHECK(premises() == R"js(@["a q c"])js");
+    }
 }
 
 // A rule authored by a generator whose premise no longer holds has lost
@@ -1220,6 +1420,114 @@ a p b c
     CHECK(explained(collector) == "a r b\n"
                                   "   ├─ a p b c  [axiom]\n"
                                   "   └─ a q b  [axiom]");
+}
+
+// A statement within a condition is stated by a fact that carries more
+// objects at the level it stands, as the forward pass reads it: (a p b c)
+// states (a p c), hence ((a p b c) bad k) matches the condition
+// ((a p c) bad k), and x (a p b c) y matches x (a p c) Z. The search
+// sought the exact node of such a condition and widened only its top
+// level, where nothing carries more objects. It found no derivation and
+// printed a fact the rule had derived as "[asserted; no derivation
+// found]". A rule's own pattern of the narrow statement constitutes no
+// data, and the search stopped at it too. Each subcase checks that
+// zelph/dependents of the premise .explain names lists the fact: both
+// searches read the rules alike.
+TEST_CASE("explain: a statement within a condition takes the wider fact it matched as its premise")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, "a p b c\n(a p b c) bad k\n");
+        const auto proof = [&](const std::string& fact)
+        {
+            collector.clear();
+            interactive.process(".explain " + fact + " 0");
+            return explained(collector);
+        };
+        const auto rests_on_premise = [&](const std::string& s, const std::string& p, const std::string& o)
+        {
+            const std::string premise = "(get (first ((zelph/explain \"" + s + "\" \"" + p + "\" \"" + o + "\") :premises)) :fact)";
+            return janet_value(collector, interactive, "(truthy? (find |(= (string $) \"" + s + " " + p + " " + o + "\") (zelph/dependents " + premise + ")))");
+        };
+
+        SUBCASE("a ground statement as the subject")
+        {
+            interactive.process("((a p c) bad k) => (x ok y)");
+            CHECK(proof("(x ok y)") == "x ok y\n   └─ (a p b c) bad k  [axiom]");
+            CHECK(rests_on_premise("x", "ok", "y") == "true");
+        }
+        SUBCASE("a statement the consequence binds, beside a rule's pattern of the narrow one")
+        {
+            interactive.process("((a p c) bad k) => (z s z)");
+            interactive.process("((a p Y) bad k) => (Y ok y)");
+            CHECK(proof("(c ok y)") == "c ok y\n   └─ (a p b c) bad k  [axiom]");
+            CHECK(rests_on_premise("c", "ok", "y") == "true");
+        }
+        SUBCASE("a statement the join enumerates, beside a rule's pattern of each narrow one")
+        {
+            interactive.process("((a p b) bad k) => (z s z)");
+            interactive.process("((a p c) bad k) => (z t z)");
+            interactive.process("((a p Y) bad k) => (x ok y)");
+            CHECK(proof("(x ok y)") == "x ok y\n   └─ (a p b c) bad k  [axiom]");
+            CHECK(rests_on_premise("x", "ok", "y") == "true");
+        }
+        SUBCASE("two levels down")
+        {
+            interactive.process("((a p b c) bad k) seen q");
+            interactive.process("(((a p c) bad k) seen q) => (x ok y)");
+            CHECK(proof("(x ok y)") == "x ok y\n   └─ ((a p b c) bad k) seen q  [axiom]");
+            CHECK(rests_on_premise("x", "ok", "y") == "true");
+        }
+        SUBCASE("two levels down, a statement the join enumerates, beside a rule's pattern of each narrow one")
+        {
+            interactive.process("((a p b c) bad k) seen q");
+            interactive.process("(a p b) => (z s z)");
+            interactive.process("(a p c) => (z t z)");
+            interactive.process("(((a p Y) bad k) seen W) => (W ok y)");
+            CHECK(proof("(q ok y)") == "q ok y\n   └─ ((a p b c) bad k) seen q  [axiom]");
+            CHECK(rests_on_premise("q", "ok", "y") == "true");
+        }
+        SUBCASE("a concrete statement as the predicate")
+        {
+            interactive.process("x (a p b c) y");
+            interactive.process("(x (a p c) Z) => (Z ok c)");
+            CHECK(proof("(y ok c)") == "y ok c\n   └─ x (a p b c) y  [axiom]");
+            CHECK(rests_on_premise("y", "ok", "c") == "true");
+        } });
+}
+
+// The case above in which the narrow statement exists as well: a rule
+// within a cycle derives ((a p b) bad k) through (b q a), which the wider
+// ((a p b c) bad k) derived. The search took the narrow fact, observed
+// only (b q a) <= ((a p b) bad k) <= (b q a), and printed the derived
+// (b q a) as resting on a fact with no derivation, even though the forward
+// pass derived it from the wider fact, one step away -- as the top level
+// does in "a wider fact derives a premise also where the narrow one
+// exists". The rule's condition is ground with respect to the bindings the
+// consequence gives, or the join enumerates it when a variable remains
+// unbound.
+TEST_CASE("explain: a wider statement within a condition derives a premise also where the narrow one exists")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        SUBCASE("a ground condition")
+        {
+            interactive.process("((X p Y) bad k) => (Y q X)");
+        }
+        SUBCASE("a condition the join enumerates")
+        {
+            interactive.process("((X p Y) bad Z) => (Y q X)");
+        }
+        process_lines(interactive, "(Y q X) => ((X p Y) bad k)\na p b c\n(a p b c) bad k\n");
+        interactive.run(true, false, false);
+
+        collector.clear();
+        interactive.process(".explain (b q a) 0");
+        CHECK(explained(collector) == "b q a\n   └─ (a p b c) bad k  [axiom]");
+
+        collector.clear();
+        interactive.process(".explain ((a p b) bad k) 0");
+        CHECK(explained(collector) == "(a p b) bad k\n   └─ b q a\n      └─ (a p b c) bad k  [axiom]"); });
 }
 
 TEST_CASE("explain: a rule that derives the narrow fact does not derive the wider one")
@@ -1902,6 +2210,27 @@ TEST_CASE("explain-budget: a small budget makes the depth-limited search take ov
                                   "   └─ :b c  [asserted; no derivation found]");
 }
 
+// The quest to locate dependents performs the work of .explain and
+// concludes when the session's budget is exhausted. A search incapable of
+// completing must never yield an answer identical to an empty one: a program
+// that rejects a non-empty result then rejects, which represents the correct
+// interpretation of an unfinished search.
+TEST_CASE("explain-budget: zelph/dependents ends with :truncated when the budget is spent")
+{
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+    process_lines(interactive, "(X ~ man) => (X r1 y)\n(X ~ man) => (X r2 y)\n(X ~ man) => (X r3 y)\n(X ~ man) => (X r4 y)\nbob ~ man\n");
+    const auto value = [&](const std::string& expression)
+    { return janet_value(collector, interactive, expression); };
+
+    interactive.process(".explain-budget 1");
+    CHECK(value(R"((last (zelph/dependents "bob" "~" "man")))") == ":truncated");
+
+    interactive.process(".explain-budget default");
+    CHECK(value(R"((length (zelph/dependents "bob" "~" "man")))") == "4");
+    CHECK(value(R"((find keyword? (zelph/dependents "bob" "~" "man")))") == "nil");
+}
+
 TEST_CASE("explain-budget: default restores the default budget")
 {
     zelph::io::OutputCollector  collector;
@@ -1994,6 +2323,108 @@ TEST_CASE("explain-budget: .new restores the default")
     interactive.process(".explain-budget");
     CHECK(any_output_contains(collector, "Explain budget: 80000 work units (default)"));
     CHECK(interactive.graph()->explain_budget() == zelph::network::Reasoning::default_explain_budget);
+}
+
+// The proof, as Janet data, for a program that provides answers to the
+// question why through a language of its own, requiring the rule and the
+// premises instead of the printed tree. The fact is resolved without
+// creating anything: zelph/fact would claim the derived fact it is asked
+// about.
+TEST_CASE("janet: zelph/explain returns the rule and premises of a derived fact")
+{
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+    process_lines(interactive, "(X ~ man) => (X ~ mortal)\nsocrates ~ man\nk doubts ((plato ~ man) => (plato ~ mortal))\n");
+    const auto value = [&](const std::string& expression)
+    { return janet_value(collector, interactive, expression); };
+
+    const std::size_t before = node_count(collector, interactive);
+
+    interactive.process(R"(%(def t (zelph/explain "socrates" "~" "mortal")))");
+    CHECK(value("(t :fact)") == "<zelph/node socrates ~ mortal>");
+    CHECK(value("(t :status)") == ":derived");
+    CHECK(value("(get (zelph/parse (t :rule)) 1)") == "<zelph/node =>>");
+    CHECK(value("(length (t :premises))") == "1");
+    CHECK(value("(get-in t [:premises 0 :fact])") == "<zelph/node socrates ~ man>");
+    CHECK(value("(get-in t [:premises 0 :status])") == ":axiom");
+    CHECK(value("(t :bindings)") == "{<zelph/node X> <zelph/node socrates>}");
+    CHECK(value("(t :fallback)") == "nil");
+
+    CHECK(node_count(collector, interactive) == before);
+
+    SUBCASE("the node of a fact names it as its parts do")
+    {
+        CHECK(value("(= t (zelph/explain (t :fact)))") == "true");
+    }
+    SUBCASE("the ground part of a mentioned rule is a rule pattern")
+    {
+        CHECK(value(R"((get (zelph/explain "plato" "~" "mortal") :status))") == ":rule-pattern");
+    }
+    SUBCASE("the rule a statement mentions, named by its node")
+    {
+        // A statement that holds a rule is accessed via its node: when
+        // restated as text, a rule containing a comma list would construct
+        // a condition set of its own.
+        CHECK(value(R"((get (zelph/explain (first (zelph/targets "k" "doubts"))) :status))") == ":rule-mentioned");
+    }
+    SUBCASE("a fact the graph does not hold gives nil")
+    {
+        CHECK(value(R"((zelph/explain "socrates" "~" "god"))") == "nil");
+        CHECK(value(R"((zelph/explain "nobody" "~" "mortal"))") == "nil");
+        CHECK(value(R"((zelph/explain "socrates"))") == "nil");
+        CHECK(node_count(collector, interactive) == before);
+    }
+}
+
+// A conclusion whose negated premise has become valid remains within the
+// graph, and no derivation continues to sustain it: the status granted by
+// removing a premise also applies. Check mode raises an error at exactly
+// the state this scenario establishes, so the case runs under the REPL's
+// default setting, where the conclusion persists silently -- this is the
+// state a program finds when it inquires why.
+TEST_CASE("janet: zelph/explain calls a conclusion unfounded once a later fact defeats its negated premise")
+{
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+    interactive.process(".semi-naive on");
+    process_lines(interactive, "(¬(M h1 nil), (M ~ man)) => (M is happy)\nbill ~ man\n");
+    const auto value = [&](const std::string& expression)
+    { return janet_value(collector, interactive, expression); };
+
+    CHECK(value(R"((get (zelph/explain "bill" "is" "happy") :status))") == ":derived");
+    CHECK(value(R"((get (zelph/explain "bill" "is" "happy") :absent))") == "(<zelph/node M h1 nil>)");
+
+    interactive.process("bill h1 nil");
+    CHECK(value(R"((zelph/exists "bill" "is" "happy"))") == "true");
+    CHECK(value(R"((get (zelph/explain "bill" "is" "happy") :status))") == ":unfounded");
+}
+
+TEST_CASE("janet: zelph/explain calls a conclusion unfounded once its premise is pruned")
+{
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+    process_lines(interactive, "(X ~ man) => (X ~ mortal)\nsocrates ~ man\n.prune-facts socrates ~ man\n");
+
+    CHECK(janet_value(collector, interactive, R"((get (zelph/explain "socrates" "~" "mortal") :status))") == ":unfounded");
+}
+
+// The session's budget applies as it does for .explain, and because it
+// bounds the search, it likewise limits the data built from the proof. A
+// search that exhausts its budget returns the proof found within the
+// default depth of .explain, and the root states this fact.
+TEST_CASE("janet: zelph/explain answers within the depth limit when the budget runs out, and says so")
+{
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+    process_lines(interactive, too_large_program);
+    interactive.run(true, false, false);
+
+    CHECK(janet_value(collector, interactive, R"((get (zelph/explain "c" "r" "c") :fallback))") == "nil");
+    CHECK_FALSE(interactive.graph()->last_explain_counts().limited);
+
+    interactive.process(".explain-budget 2");
+    CHECK(janet_value(collector, interactive, R"((get (zelph/explain "c" "r" "c") :fallback))") == "true");
+    CHECK(interactive.graph()->last_explain_counts().limited);
 }
 
 // The budget limits the search for the proof of the queried fact, not the
@@ -2519,6 +2950,38 @@ TEST_CASE("explain: a proof the size of the documentation's is searched whole" *
                                       + cut + "\n"
                                               "      └─ :topoly $( x ^ &2 - &1 )\n"
                                               "         └─ $( x ^ &2 - &1 ) ≡ ((x - &1) * (x + &1))  [axiom]");
+}
+
+// The identical proof, searched after a .save and a .load restored the
+// network. Each load took a fact with multiple objects for possible,
+// interpreting every statement inside a condition by examining the facts that
+// could state it with additional objects. The search performed tenfold the
+// work of the session that originally saved the network, even though that
+// network did not contain such a fact, and exhausted its budget: the tree was
+// the one found within the depth limit, under a note. The file now says
+// whether its network may hold such a fact (see test_partial_anchor.cpp).
+TEST_CASE("explain: a proof the size of the documentation's is searched whole after a .save and a .load" * doctest::test_suite("slow"))
+{
+    const std::string           path = (std::filesystem::temp_directory_path() / "zelph_test_explain_identity.bin").string();
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+    process_lines(interactive, R"(
+.import math
+<x> ~ polyring
+? $( (1+x)*(1-x) ) ≡ $( 1 - x^2 )
+<a1 a2 a3 a4 b1 b2 b3 b4> ~ polyring
+? $( (a1^2+a2^2+a3^2+a4^2) * (b1^2+b2^2+b3^2+b4^2) ) ≡ $( (a1*b1-a2*b2-a3*b3-a4*b4)^2 + (a1*b2+a2*b1+a3*b4-a4*b3)^2 + (a1*b3-a2*b4+a3*b1+a4*b2)^2 + (a1*b4+a2*b3-a3*b2+a4*b1)^2 )
+? $( x^2-1 ) ≡ $( (x-1)*(x+1) )
+)");
+    interactive.process(".save " + path);
+    interactive.process(".load " + path);
+    interactive.process("? $( x^2-1 ) ≡ $( (x-1)*(x+1) )");
+
+    collector.clear();
+    interactive.process(".explain 3");
+    CHECK_FALSE(any_output_contains(collector, "Note:"));
+    CHECK_FALSE(interactive.graph()->last_explain_counts().limited);
+    std::filesystem::remove(path);
 }
 
 // The tree searched within the limit may contain multiple results for a
@@ -4463,6 +4926,41 @@ a sub b
                                       "      └─ a sub b  [asserted; no derivation found]"); });
 }
 
+// The walk that explains a path condition steps along the same route the path
+// condition traversed, and a closure walks around the engine's bookkeeping. s
+// reaches `refuted` in two steps via the record of a contradiction
+// concerning the set s names, and in three steps through facts someone
+// wrote, the last one being derived; the walk took the record's marking, a
+// step the closure had not taken. The record's set is that
+// statement's set, hence its memberships constitute data, whereas the marking
+// remains exclusive to the record.
+TEST_CASE("explain: a path condition's walk steps along no record of a contradiction")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+x p y
+x q y
+(A p B, A q B) => !
+s ~ {(x p y) (x q y)}
+s ~ m1
+m1 ~ m2
+(M leads N) => (M ~ N)
+m2 leads refuted
+s go k
+(X go Y, X ~⁺ refuted) => (X flagged Y)
+)");
+        interactive.run(true, false, false);
+
+        auto* const graph = interactive.graph();
+        const auto  proof = graph->explain(fact_node(graph, "s", "flagged", "k"), 0);
+        REQUIRE(proof != nullptr);
+        const std::vector<zelph::network::Node> walk = first_walk(*proof);
+        REQUIRE(walk.size() == 3);
+        CHECK(walk[0] == fact_node(graph, "s", "~", "m1"));
+        CHECK(walk[1] == fact_node(graph, "m1", "~", "m2")); });
+}
+
 // A walk can traverse not only the facts under investigation but also a
 // derived edge whose sole derivation relies on the fact explained, a fact
 // involving multiple objects, or one of two possible routes. The edges
@@ -5812,7 +6310,7 @@ TEST_CASE("help: every label .explain prints is explained in .help .explain")
     zelph::io::OutputCollector  collector;
     zelph::console::Interactive interactive(collector.sink());
     interactive.process(".help .explain");
-    for (const char* label : {"[axiom]", "[asserted; no derivation found]", "[rule pattern; not asserted]", "[rule mentioned; not in force]", "[closure]", "[absent]", "[depth limit", "[see above]", "[one of several justifications]"})
+    for (const char* label : {"[axiom]", "[asserted; no derivation found]", "[rule pattern; not asserted]", "[mentioned; not asserted]", "[rule mentioned; not in force]", "[closure]", "[absent]", "[depth limit", "[see above]", "[one of several justifications]"})
     {
         CAPTURE(label);
         CHECK(any_event_contains(collector, label));
@@ -5823,17 +6321,21 @@ TEST_CASE("help: every label .explain prints is explained in .help .explain")
 // The operand of a query bears the label of a rule's pattern ("X go Y, ¬(a
 // p b)" builds `a p b` as a pattern), but the two help texts that explain
 // the label named only a rule as the justification for a node possessing
-// it.
+// it. The operator's own fact, `(a p b) ~ negation`, carries it as well
+// ("display: the fact of a condition operator a query wrote is labelled a
+// rule pattern"), and both texts say so.
 TEST_CASE("help: the rule-pattern label names a query's operand too")
 {
     zelph::io::OutputCollector  collector;
     zelph::console::Interactive interactive(collector.sink());
     interactive.process(".help .explain");
     CHECK(any_event_contains(collector, "or a query wrote it beneath a"));
+    CHECK(any_event_contains(collector, "or as the operator's own"));
 
     collector.clear();
     interactive.process(".help .node");
     CHECK(any_event_contains(collector, "wrote it beneath a condition operator"));
+    CHECK(any_event_contains(collector, "or as the operator's own"));
 }
 
 TEST_CASE("help: a topic may be named with or without its dot")

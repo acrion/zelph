@@ -236,6 +236,16 @@ namespace zelph::test
         return it != rev.end() ? it->text : std::string{};
     }
 
+    // The value of a Janet expression, as rendered by `%q`, is retrieved
+    // from the single output line it is written to. Initially, the
+    // collector is cleared.
+    inline std::string janet_value(zelph::io::OutputCollector& collector, const zelph::console::Interactive& interactive, const std::string& expression)
+    {
+        collector.clear();
+        interactive.process("%(zelph/out (string/format \"%q\" " + expression + "))");
+        return last_out_text(collector);
+    }
+
     // Check whether the last Out line starts with the expected pattern
     // after whitespace normalization on both sides.
     [[maybe_unused]] inline bool last_output_starts_with(const zelph::io::OutputCollector& collector, const std::string& expected)

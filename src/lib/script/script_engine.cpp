@@ -158,6 +158,26 @@ void ScriptEngine::process_janet(const std::string& code, bool is_zelph_ast)
     statement.asks = preloaded && _pImpl->has_scoped_variables();
     if (is_zelph_ast) statement.island_created = std::exchange(_pImpl->_island_created, {});
     const Impl::StatementScope current(_pImpl->_statement, is_zelph_ast ? &statement : nullptr);
+    const Impl::AsideScope     aside(_pImpl->_aside, is_zelph_ast ? &statement.aside : nullptr);
+    const Impl::AsideScope     mentioned_aside(_pImpl->_mention_aside, nullptr);
+
+    // The scratch cluster that zelph/claim-text leaves active for the claim
+    // at the end of the statement vanishes if the statement fails at any
+    // point; a statement that succeeds merges it below.
+    struct ClaimScratch
+    {
+        Impl* const impl;
+        ~ClaimScratch()
+        {
+            try
+            {
+                impl->end_claim_scratch(false);
+            }
+            catch (...)
+            {
+            }
+        }
+    } const claim_scratch{_pImpl};
 
     // Parser-generated code builds a statement's SUBTERMS using the same
     // zelph/fact calls as those at the top level, and a call is unable to
@@ -169,6 +189,8 @@ void ScriptEngine::process_janet(const std::string& code, bool is_zelph_ast)
     // claim inside zelph/fact belongs to a user's Janet block -- which this
     // is when is_zelph_ast is false.
     Impl::BlockScope block(_pImpl->_in_janet_block, !is_zelph_ast);
+
+    const Impl::EvaluationScope evaluation(*_pImpl);
 
     Janet out;
     int   status = janet_dostring(_pImpl->_janet_env, code.c_str(), "zelph-script", &out);
@@ -193,14 +215,59 @@ void ScriptEngine::process_janet(const std::string& code, bool is_zelph_ast)
     {
         // Throw a C++ exception so the error propagates correctly through import
         // chains and other nested call contexts (e.g. .import, process_file).
-        std::string err = "Janet error";
-        if (janet_checktype(out, JANET_STRING))
-            err = reinterpret_cast<const char*>(janet_unwrap_string(out));
-        else if (janet_checktype(out, JANET_BUFFER))
+        // An error value that is not a string or a buffer is printed by
+        // format_janet, the same output that .import of a .janet file prints
+        // for such cases. Previously, `%(error {:a 1})` and a
+        // `zelph/run-script` whose script raised a struct were reported as a
+        // bare "Janet error".
+        //
+        // A signal distinct from an error stops the code identically, since
+        // nothing resumes execution, and its value does not constitute a
+        // message: `%(yield 1)` printed `Error in line "%(yield 1)": 1`.
+        // This signal is named in the report, accompanied by its value as the
+        // echo would print it. janet_dostring merely indicates that the code
+        // encountered failure. The status of the `fiber` that ceased
+        // execution leads Janet's stack trace, as in "pending: 1", and the
+        // status of a `fiber` corresponds to the signal it raised
+        // (janet_status_names, janet_signal_names).
+        std::string err;
+        if (!is_zelph_ast)
         {
-            JanetBuffer* b = janet_unwrap_buffer(out);
-            err            = std::string(reinterpret_cast<const char*>(b->data), b->count);
+            std::string head = trace.substr(0, trace.find(": "));
+            if (head.starts_with("\x1b[31m")) head.erase(0, 5);
+            for (int signal = JANET_SIGNAL_DEBUG; signal <= JANET_SIGNAL_USER9 && trace.find(": ") != std::string::npos; ++signal)
+            {
+                if (head != janet_status_names[signal]) continue;
+                janet_gcroot(out);
+                const std::string value = Impl::format_janet(out);
+                janet_gcunroot(out);
+                err = std::string("signal :") + janet_signal_names[signal] + " with the value " + value
+                    + ", not an error: nothing resumes the code of a line, so it stopped there";
+                break;
+            }
         }
+
+        if (err.empty())
+        {
+            if (janet_checktype(out, JANET_STRING))
+                err = reinterpret_cast<const char*>(janet_unwrap_string(out));
+            else if (janet_checktype(out, JANET_BUFFER))
+            {
+                JanetBuffer* b = janet_unwrap_buffer(out);
+                err            = std::string(reinterpret_cast<const char*>(b->data), b->count);
+            }
+            else
+            {
+                janet_gcroot(out);
+                err = Impl::format_janet(out);
+                janet_gcunroot(out);
+            }
+        }
+
+        // After an error, whatever the code wrote remains in the graph, a rule
+        // in force included, and is checked as it is after successful code
+        // execution; the refusal follows the error.
+        if (const std::string refused = evaluation.settle(); !refused.empty()) err += "\n" + refused;
         throw std::runtime_error(err);
     }
     else
@@ -208,8 +275,17 @@ void ScriptEngine::process_janet(const std::string& code, bool is_zelph_ast)
         if (is_zelph_ast)
         {
             if (!statement.asks)
+            {
                 for (const auto& created : statement.mentions)
                     _pImpl->mark_mentioned_rules(created);
+                for (const auto& mention : statement.statement_mentions)
+                    _pImpl->mark_mention(mention);
+            }
+
+            // The statement now holds what its islands returned, and the `=>`
+            // facts they authored are verified before the line echoes, just as
+            // its other refusals are.
+            if (const std::string refused = evaluation.settle(); !refused.empty()) throw std::runtime_error(refused);
 
             // A pattern is what a query constructed under a condition
             // operator becomes, and it must be established as such
@@ -219,7 +295,47 @@ void ScriptEngine::process_janet(const std::string& code, bool is_zelph_ast)
             // evaluates to no node: a focus on "negation" returns the
             // name.
             network::Node n = zelph_unwrap_node(out);
-            if (!statement.query_created.empty()) _pImpl->_n->mark_query_operands(n, statement.query_created);
+            if (!statement.query_created.empty()) _pImpl->_n->mark_query_operands(n, statement.query_created, statement.query_refutations);
+
+            // How far the claim of a statement walks (below).
+            const auto reach = [&statement](const network::Node node, bool)
+            {
+                const bool wrote = network::Zelph::is_hash(node)
+                                || std::find(statement.collections.begin(), statement.collections.end(), node) != statement.collections.end();
+                return wrote ? network::Zelph::ClaimStep::Enter : network::Zelph::ClaimStep::Claim;
+            };
+
+            // The query's ground markings, now claimed with the query since
+            // it stands complete, as "(F) ~ refuted" on a line by itself is.
+            for (const network::Node refuted : statement.query_refutations)
+                _pImpl->_n->mark_refuted_fact(refuted);
+
+            // What a rule statement wrote beside its rule is claimed as the
+            // line of that fact would claim it: following
+            // "(x says *(a p b)) => (c q d)", the fact `x says (a p b)` was
+            // answered, and `a p b` stayed the rule's pattern, hence the rule
+            // never fired; when typed as two lines, it did fire.
+            //
+            // The same applies to any fact a focus writes, on a line of its
+            // own just like in a rule's slot, even if a rule previously wrote
+            // it as a pattern: following "(m n o) => (x says (a p b))", the
+            // line "x says *(a p b)" claimed `a p b` and left
+            // `x says (a p b)` the rule's pattern. A statement that evaluates
+            // to a name also claims that fact, as "x *says y" does.
+            //
+            // These facts are claimed before the line's echo, just as the
+            // statement is claimed before it. When such a claim was
+            // refused, the line had already echoed, and subsequently, the
+            // error followed.
+            if (!statement.asks)
+            {
+                for (const network::Node fact : statement.aside)
+                {
+                    if (!_pImpl->_n->exists(fact)) continue;
+                    _pImpl->_n->unmark_rule_pattern(fact);
+                    _pImpl->_n->claim_nested(fact, reach);
+                }
+            }
 
             if (n)
             {
@@ -238,14 +354,61 @@ void ScriptEngine::process_janet(const std::string& code, bool is_zelph_ast)
                 // it one. The walk proceeds into what the statement wrote:
                 // its facts, its set constants, and the collections created
                 // by its literals, not any it merely names.
-                if (!statement.asks)
+                //
+                // A rule statement claims its rule, also when a focus causes it
+                // to evaluate to a part of the rule: `*(a p b) => (c q d)`
+                // asserted `a p b`, which fired the rule it had just written.
+                //
+                // A refutation claims its marking, which zelph/refute has
+                // already claimed, and not the fact it evaluates to: following
+                // `(a p b) => (c q d)`, the line `¬(a p b)` removed `a p b`
+                // from the rule's patterns, and after its marking was pruned,
+                // `a p b` answered and fired the rule.
+                const network::Node claimed = statement.rule != 0 ? statement.rule : n;
+                const bool          refuted = statement.rule == 0 && std::find(statement.refuted.begin(), statement.refuted.end(), n) != statement.refuted.end();
+                if (!statement.asks && !refuted)
                 {
-                    _pImpl->_n->unmark_rule_pattern(n);
-                    _pImpl->_n->claim_nested(n, [&statement](const network::Node node, bool)
-                                             {
-                                                 const bool wrote = network::Zelph::is_hash(node)
-                                                                 || std::find(statement.collections.begin(), statement.collections.end(), node) != statement.collections.end();
-                                                 return wrote ? network::Zelph::ClaimStep::Enter : network::Zelph::ClaimStep::Claim; });
+                    _pImpl->_n->unmark_rule_pattern(claimed);
+                    _pImpl->_n->claim_nested(claimed, reach);
+
+                    // A ground comma list claims every one of its members,
+                    // just as the line of each member does. The claim
+                    // beginning at the conjunction set, which lacks a fact
+                    // structure, never reached them: following
+                    // "(a p b) => (c q d)", the line "a p b, x q y" left
+                    // `a p b` a pattern of the rule, which never fired, and
+                    // "a p b, (a p b) ~ refuted" was accepted and lost the
+                    // assertion without a word.
+                    //
+                    // A member that constitutes a comma list the statement
+                    // wrote causes the statement to assert its members, just
+                    // as its line would: the claim originated at a
+                    // conjunction set too, and following the rule stated
+                    // earlier, "(a p b, j r s), x q y" treated `a p b` as a
+                    // pattern. A conjunction set that the statement only
+                    // references, a rule's condition set among them, is not
+                    // entered.
+                    const auto is_list = [this](const network::Node node)
+                    { return _pImpl->_n->check_fact(node, _pImpl->_n->core.IsA, {_pImpl->_n->core.Conjunction}).is_known(); };
+                    std::vector<network::Node> lists;
+                    if (statement.rule == 0 && is_list(n)) lists.push_back(n);
+                    while (!lists.empty())
+                    {
+                        network::adjacency_set members;
+                        const network::Node    list = lists.back();
+                        lists.pop_back();
+                        if (!_pImpl->_n->condition_set_members(list, members)) continue;
+                        for (const network::Node member : members)
+                        {
+                            if (reach(member, false) == network::Zelph::ClaimStep::Enter && !network::Zelph::is_hash(member) && is_list(member))
+                            {
+                                lists.push_back(member);
+                                continue;
+                            }
+                            _pImpl->_n->unmark_rule_pattern(member);
+                            _pImpl->_n->claim_nested(member, reach);
+                        }
+                    }
                 }
 
                 // A query's echo corresponds to its condition, expressed
@@ -265,14 +428,34 @@ void ScriptEngine::process_janet(const std::string& code, bool is_zelph_ast)
                     if (!output.empty() && output != "??") _pImpl->_n->out(string::unmark_identifiers(output), true);
                 }
 
-                if (asks)
+                // The variables within a rule statement belong to the rule
+                // itself, so the statement asks nothing: when evaluated as a
+                // query, it answered with a rule its own pattern matched, and
+                // with the data its focused consequence matched.
+                if (asks && statement.rule == 0)
                 {
                     _pImpl->_n->apply_rule(0, n);
                 }
             }
+
+            _pImpl->end_claim_scratch(true);
+
+            // Once the query has been answered, what it wrote that holds its
+            // variables goes (Zelph::drop_query_text). The input focus first
+            // examines the statement's structure: reduced following the
+            // removal, its components no longer had the fact that encompassed
+            // them, and the subterms within `(&6 * &7) = X` became independent
+            // anchors.
+            if (statement.rule == 0 && !statement.query_created.empty())
+            {
+                _pImpl->_n->settle_input_capture();
+                _pImpl->_n->drop_query_text(statement.query_created, statement.query_declared);
+            }
         }
         else
         {
+            if (const std::string refused = evaluation.settle(); !refused.empty()) throw std::runtime_error(refused);
+
             if (_pImpl->echo_enabled() && !janet_checktype(out, JANET_NIL))
             {
                 _pImpl->_n->out(Impl::format_janet(out), true);
@@ -284,7 +467,8 @@ void ScriptEngine::process_janet(const std::string& code, bool is_zelph_ast)
 void ScriptEngine::run_janet_script(const std::string& path, const std::vector<std::string>& args)
 {
     _pImpl->clear_scoped_variables();
-    const Impl::StatementScope outside(_pImpl->_statement, nullptr); // marks at once
+    const Impl::StatementScope  outside(_pImpl->_statement, nullptr); // marks at once
+    const Impl::EvaluationScope evaluation(*_pImpl);
 
     Janet runner;
     if (janet_resolve(_pImpl->_janet_env, janet_csymbol("zelph/run-script"), &runner) != JANET_BINDING_DEF
@@ -370,14 +554,22 @@ void ScriptEngine::run_janet_script(const std::string& path, const std::vector<s
 
     janet_gcunroot(janet_wrap_fiber(fiber));
 
+    const std::string refused = evaluation.settle(); // as the `process_janet` function performs
     if (failed)
-        throw std::runtime_error("Script '" + path + "' failed: " + err);
+        throw std::runtime_error("Script '" + path + "' failed: " + err + (refused.empty() ? "" : "\n" + refused));
+    if (!refused.empty()) throw std::runtime_error(refused);
+}
+
+std::string ScriptEngine::Impl::EvaluationScope::settle() const
+{
+    return _impl._evaluation_depth == 1 ? _impl._n->settle_fact_rules() : std::string{};
 }
 
 // Helper function to evaluate a Janet expression and return a Node (used by prune commands)
 network::Node ScriptEngine::evaluate_expression(const std::string& janet_code, const bool quiet, const bool resolving_pattern)
 {
     Impl::BlockScope resolving(_pImpl->_resolving_pattern, resolving_pattern);
+    Impl::BlockScope command(_pImpl->_resolving_command, resolving_pattern);
 
     if (_pImpl->_scoped_vars_preloaded)
         _pImpl->_scoped_vars_preloaded = false; // scope prepared by inline-keyword expansion
@@ -452,6 +644,16 @@ void ScriptEngine::set_echo_predicate(EchoPredicate predicate)
     _pImpl->_echo_predicate = std::move(predicate);
 }
 
+void ScriptEngine::set_auto_run_predicate(AutoRunPredicate predicate)
+{
+    _pImpl->_auto_run_predicate = std::move(predicate);
+}
+
+void ScriptEngine::set_full_graph_guard(FullGraphGuard guard)
+{
+    _pImpl->_full_graph_guard = std::move(guard);
+}
+
 bool ScriptEngine::has_keyword(const std::string& keyword) const
 {
     // Block keywords only: inline keywords are detected inside statements
@@ -468,9 +670,34 @@ bool ScriptEngine::invoke_keyword(const std::string& keyword, const std::string&
 
     _pImpl->_scoped_variables.clear();
 
-    Janet result;
-    if (_pImpl->call_keyword_handler(keyword, it->second.handler, text, force, result) == Impl::HandlerCall::Incomplete)
-        return false;
+    // A zelph/fact belonging to a handler constitutes a claim, just as it
+    // does within a `%` block. Without this scope, the handler
+    // inherited whatever the surrounding input had set: a ground rule
+    // condition that the handler asserted stayed a pattern following
+    // `.import`, transformed into data when under `%(zelph/import ...)`,
+    // and at the prompt was determined by whether the rule or the handler's
+    // fact was encountered first.
+    Impl::BlockScope            block(_pImpl->_in_janet_block, true);
+    const Impl::EvaluationScope evaluation(*_pImpl);
+
+    // When a handler returns, its `=>` facts undergo verification, just as
+    // a block's do (process_janet). A veto performs no checks: the handler
+    // is invoked once more with additional text, and the next evaluation
+    // checks what was written.
+    Janet             result;
+    Impl::HandlerCall call = Impl::HandlerCall::Dispatched;
+    try
+    {
+        call = _pImpl->call_keyword_handler(keyword, it->second.handler, text, force, result);
+    }
+    catch (const std::exception& ex)
+    {
+        const std::string refused = evaluation.settle();
+        if (refused.empty()) throw;
+        throw std::runtime_error(std::string(ex.what()) + "\n" + refused);
+    }
+    if (call == Impl::HandlerCall::Incomplete) return false;
+    if (const std::string refused = evaluation.settle(); !refused.empty()) throw std::runtime_error(refused);
 
     // String results are emitted verbatim, line by line, through the output
     // handler (so they reach OutputCollector in tests and the REPL alike).

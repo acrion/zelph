@@ -325,6 +325,216 @@ TEST_CASE("rules: asking which implications exist does not create a rule")
         CHECK(any_output_contains(collector, "Rules: 0")); });
 }
 
+TEST_CASE("rules: asking which implications exist leaves nothing behind")
+{
+    // A line in the rule's shape where the condition or consequence is a
+    // bare variable asks which implications exist, as the preceding case
+    // indicates, and it answered just like a query would. It was constructed
+    // as a rule's text, though, and never discarded like a query's text is:
+    // each asking left its `=>` fact and its variables behind, three nodes
+    // for `S => O` and five for `(X p Y) => O`. The residue of a query is
+    // never data.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, "(a p b) => (c q d)\n(X p Y) => (X r Y)\na p b");
+        interactive.run(true, false, false);
+
+        std::string query;
+        SUBCASE("every implication") { query = "S => O"; }
+        SUBCASE("the implications of a condition with variables") { query = "(X p Y) => O"; }
+        SUBCASE("the implications of a ground condition") { query = "(a p b) => O"; }
+
+        const std::size_t before = node_count(collector, interactive);
+        for (int asked = 0; asked < 2; ++asked)
+        {
+            collector.clear();
+            interactive.process(query);
+            CHECK(collect_answers(collector) == std::vector<std::string>{"(a p b) => (c q d)"});
+        }
+        CHECK(node_count(collector, interactive) == before);
+
+        collector.clear();
+        interactive.process("A p B");
+        CHECK(collect_answers(collector) == std::vector<std::string>{"a p b"});
+
+        collector.clear();
+        interactive.process(".stat");
+        CHECK(any_output_contains(collector, "Rules: 2")); });
+}
+
+TEST_CASE("rules: a line with variables that derives nothing asks which implications exist")
+{
+    // A `=>` line containing variables and lacking a consequence that could
+    // be asserted -- a name, a set -- cannot be a rule: it was answered as a
+    // question about implications, yet retained as the rule's text
+    // regardless, so each asking left its `=>` fact and its variables
+    // behind. It is a query now, just as `(X p Y) => O` is in the case
+    // above.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, "(a p b) => (c q d)\nx notes ((a p b) => k)\nx notes ((a p b) => {(a q b)})");
+
+        std::string query;
+        std::string answer;
+        SUBCASE("a name as the consequence")
+        {
+            query  = "(X p Y) => k";
+            answer = "(a p b) => k";
+        }
+        SUBCASE("a set as the consequence")
+        {
+            query  = "(X p Y) => {(X q Y)}";
+            answer = "(a p b) => {(a q b)}";
+        }
+
+        const std::size_t before = node_count(collector, interactive);
+        for (int asked = 0; asked < 2; ++asked)
+        {
+            collector.clear();
+            interactive.process(query);
+            CHECK(collect_answers(collector) == std::vector<std::string>{answer});
+        }
+        CHECK(node_count(collector, interactive) == before);
+
+        collector.clear();
+        interactive.process(".stat");
+        CHECK(any_output_contains(collector, "Rules: 1")); });
+}
+
+TEST_CASE("rules: a statement that holds a question about implications leaves nothing behind")
+{
+    // The same question held by a statement or a comma list was answered
+    // in the same way, with its code mirroring that of a claim: each asking
+    // left the statement and its variables behind, four nodes for
+    // "x says (S => O)" and seven for "S => O, j r s". The parser now reads
+    // such a `=>` as a question, and the statement asks.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, "(a p b) => (c q d)\nx says ((e f g) => (h i j))\nj r s\na p b");
+
+        std::string              query;
+        std::vector<std::string> answer{"x says ((e f g) => (h i j))"};
+        SUBCASE("every implication") { query = "x says (S => O)"; }
+        SUBCASE("the implications of a condition with variables") { query = "x says ((X f Y) => O)"; }
+        SUBCASE("in a comma list")
+        {
+            query  = "S => O, j r s";
+            answer = {"(a p b) => (c q d), j r s", "(e f g) => (h i j), j r s"};
+        }
+        // Under "¬" the line was regarded as a refutation. It provided an
+        // answer for every fact it matched, displayed with "¬" preceding
+        // it, and each inquiry left the statement behind. Now it functions
+        // as a query akin to "¬(j says Y)", yielding a response only when
+        // no matches are found.
+        SUBCASE("under a negation")
+        {
+            query  = "¬(j says (S => O))";
+            answer = {"¬(j says (S => O))"};
+        }
+        // An argument that is opaque encloses its content within a
+        // mention, and the inquiry contained within left four nodes in its
+        // wake with each request.
+        SUBCASE("in an opaque argument")
+        {
+            process_lines(interactive, "believes ~ opaque\njohn believes ((e f g) => (h i j))");
+            query  = "john believes (S => O)";
+            answer = {"john believes ((e f g) => (h i j))"};
+        }
+        // A consequence taken from a Janet variable is accessed exclusively
+        // during execution, thus the line is written as a claim and poses
+        // a query only after the name is confirmed not to be a statement.
+        // It was answered, and each inquiry left five nodes behind.
+        SUBCASE("with a Janet value as the consequence")
+        {
+            process_lines(interactive, "x notes ((e f g) => k)\n%(def kk (zelph/resolve \"k\"))");
+            query  = "x notes ((X f Y) => ,kk)";
+            answer = {"x notes ((e f g) => k)"};
+        }
+
+        const std::size_t before = node_count(collector, interactive);
+        for (int asked = 0; asked < 2; ++asked)
+        {
+            collector.clear();
+            interactive.process(query);
+            std::vector<std::string> answers = collect_answers(collector);
+            std::sort(answers.begin(), answers.end());
+            CHECK(answers == answer);
+        }
+        CHECK(node_count(collector, interactive) == before);
+
+        collector.clear();
+        interactive.process("S says O");
+        CHECK(collect_answers(collector) == std::vector<std::string>{"x says ((e f g) => (h i j))"});
+
+        collector.clear();
+        interactive.process(".stat");
+        CHECK(any_output_contains(collector, "Rules: 1")); });
+}
+
+// A query about implications, where the condition is the first fact of `b`
+// expressed as a predicate, wrote the declaration `b ~ ->`, and this remained
+// after the query was answered, in each of the three ways a line poses such a
+// question: independently, held by a statement, and with a Janet value as the
+// consequence, with the line only posing the question once it has run. The
+// declaration now accompanies the query's text.
+TEST_CASE("rules: a question about implications takes back the relation-type declaration it wrote for an older predicate")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, "a likes b\nx says y\n%(def kk (zelph/resolve \"k\"))");
+        std::string query;
+        SUBCASE("on its own line") { query = "(X b Y) => O"; }
+        SUBCASE("held by a statement") { query = "x says ((X b Y) => O)"; }
+        SUBCASE("with a Janet value as the consequence") { query = "x says ((X b Y) => ,kk)"; }
+
+        const std::size_t before = node_count(collector, interactive);
+        collector.clear();
+        interactive.process(query);
+        CHECK(collect_answers(collector).empty());
+        CHECK(node_count(collector, interactive) == before);
+
+        collector.clear();
+        interactive.process("P ~ ->");
+        CHECK_FALSE(answers_contain(collector, "b ~ ->"));
+        collector.clear();
+        interactive.process(".fact-stores");
+        CHECK(any_event_contains(collector, "Fact-path stores: on"));
+
+        interactive.process("c b d");
+        collector.clear();
+        interactive.process("P ~ ->");
+        CHECK(answers_contain(collector, "b ~ ->")); });
+}
+
+TEST_CASE("rules: a statement that holds a question about implications asserts the ground parts it creates")
+{
+    // A query asserts what it creates beneath a `=>` it mentions, and a
+    // question about implications asks just as any query does, even when a
+    // statement holds it: the ground parts of its mention were marked as
+    // rule patterns at the end of the line, thus `r s t` answered nothing,
+    // whereas the identical question entered on a separate line asserted
+    // it.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        std::string query;
+        SUBCASE("held by a statement") { query = "x says ((r s t) => O)"; }
+        SUBCASE("typed on its own line") { query = "(r s t) => O"; }
+        // A line that asks only when it executes, with a Janet value as the
+        // consequence, passes whatever it wrote to the query's text
+        // (end_claim_scratch), and a ground condition of its comma list is
+        // asserted regardless.
+        SUBCASE("beside a question with a Janet value as the consequence")
+        {
+            process_lines(interactive, "x notes ((e f g) => k)\n%(def kk (zelph/resolve \"k\"))");
+            query = "x notes ((X f Y) => ,kk), r s t";
+        }
+        interactive.process(query);
+
+        collector.clear();
+        interactive.process("R s T");
+        CHECK(collect_answers(collector) == std::vector<std::string>{"r s t"}); });
+}
+
 TEST_CASE("rules: .remove-rules also removes the rules that only removed rules mentioned")
 {
     // The rule contained within a rule generator is a mention, not a rule in
@@ -1129,6 +1339,111 @@ tim _predicate _object
         CHECK(any_output_starts_with(collector, "tim ~ male"));
         CHECK(answers_contain(collector, "tim ~ human"));
         CHECK(answers_contain(collector, "tim ~ male")); });
+}
+
+// A group around a single value equates to that value itself, and a focus
+// within it hands its part to the statement enclosing the group, just as the
+// same focus does when not enclosed by the group. The group removed it
+// without comment: `x says (*(a p b))` asserted `x says (a p b)` and
+// evaluated to that statement, thus `y knows (x says (*(a p b)))` wrote
+// `y knows (x says (a p b))`, while the spelling lacking the group hands on
+// `a p b`.
+TEST_CASE("focus operator: a focus in a group of its own hands on its part as it does without the group")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        std::string              line;
+        std::string              echo;
+        std::string              query;
+        std::vector<std::string> expected;
+        SUBCASE("in an object")
+        {
+            line     = "x says (*(a p b))";
+            echo     = "a p b";
+            query    = "S says O";
+            expected = {"x says (a p b)"};
+        }
+        SUBCASE("in the subject")
+        {
+            line     = "(*(a p b)) q c";
+            echo     = "a p b";
+            query    = "S q O";
+            expected = {"(a p b) q c"};
+        }
+        SUBCASE("on a name")
+        {
+            line     = "((*tim) ~ human) ~ male";
+            echo     = "tim ~ male";
+            query    = "tim ~ O";
+            expected = {"tim ~ human", "tim ~ male"};
+        }
+        SUBCASE("in a statement that another one holds")
+        {
+            line     = "y knows (x says (*(a p b)))";
+            echo     = "y knows (a p b)";
+            query    = "S knows O";
+            expected = {"y knows (a p b)"};
+        }
+        SUBCASE("in two groups")
+        {
+            line     = "y knows (x says ((*(a p b))))";
+            echo     = "y knows (a p b)";
+            query    = "S knows O";
+            expected = {"y knows (a p b)"};
+        }
+
+        CAPTURE(line);
+        collector.clear();
+        interactive.process(line);
+        CHECK(normalize(last_out_text(collector)) == echo);
+
+        collector.clear();
+        interactive.process(query);
+        std::vector<std::string> answers = collect_answers(collector);
+        std::ranges::sort(answers);
+        CHECK(answers == expected); });
+}
+
+// The boundary: a focus that a statement within the group carries for its own
+// sake is not attributable to the group, and these spellings hand on the same
+// part as before the group was read through.
+TEST_CASE("focus operator: a statement in a group keeps the focus it carries")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        for (const auto& [line, echo] : std::vector<std::pair<std::string, std::string>>{{"x says *(a p b)", "a p b"},
+                                                                                        {"y knows (x says *(c p d))", "y knows (c p d)"},
+                                                                                        {"(x says *(e p f)) q g", "(e p f) q g"}})
+        {
+            CAPTURE(line);
+            collector.clear();
+            interactive.process(line);
+            CHECK(normalize(last_out_text(collector)) == echo);
+        }
+
+        collector.clear();
+        interactive.process("S says O");
+        std::vector<std::string> answers = collect_answers(collector);
+        std::ranges::sort(answers);
+        CHECK(answers == std::vector<std::string>{"x says (a p b)", "x says (c p d)", "x says (e p f)"}); });
+}
+
+// Read through its group, a focus may make a statement one with two foci,
+// which is refused as `*k says *(l p n)` is. The group used to hide the
+// focus, and the line asserted the statement without either of them.
+TEST_CASE("focus operator: a focus in a group beside a second focus is refused as two foci are")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        std::string line;
+        SUBCASE("on the subject and in an object") { line = "(*k) says (*(l p m))"; }
+        SUBCASE("in two objects") { line = "x says (*(a p b)) (*(c p d))"; }
+
+        CAPTURE(line);
+        CHECK_THROWS_WITH_AS(interactive.process(line), doctest::Contains("Multiple focus markers"), std::runtime_error);
+        collector.clear();
+        interactive.process("S says O");
+        CHECK(collect_answers(collector).empty()); });
 }
 
 // ---------------------------------------------------------------------------
@@ -2414,6 +2729,214 @@ alice parent_of bob charlie
         CHECK(any_output_starts_with(collector, "( charlie child_of alice )")); });
 }
 
+// A narrower fact located next to a wider one states a binding on two
+// occasions: `a p c` and `a p b c` both state `a p c`. The query answered
+// it once per fact it was read from, and since both rows presented the
+// identical binding in the same format, the second entry provided the
+// reader with no new information. A query answers each binding exactly
+// once, following the sequence in which they are first discovered, along
+// every route.
+TEST_CASE("multiple objects: a binding that a narrower and a wider fact both state is answered once")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, "a p b c\na p c\n");
+        const auto answers = [&](const std::string& query)
+        {
+            collector.clear();
+            interactive.process(query);
+            std::vector<std::string> rows = collect_answers(collector);
+            std::ranges::sort(rows);
+            return rows;
+        };
+
+        SUBCASE("a typed query")
+        {
+            CHECK(answers("X p Y") == std::vector<std::string>{"a p b", "a p c"});
+            CHECK(answers("X p c") == std::vector<std::string>{"a p c"});
+            // The next query begins anew.
+            CHECK(answers("X p Y") == std::vector<std::string>{"a p b", "a p c"});
+        }
+        SUBCASE("a join through a statement that both facts state")
+        {
+            process_lines(interactive, "(a p b c) bad k\n(a p c) bad k\nn w (a p c)\n");
+            const std::vector<std::string> rows = answers("n w V, V bad k");
+            REQUIRE(rows.size() == 1);
+            CHECK(rows.front().find("n w (a p c)") != std::string::npos);
+        }
+        SUBCASE("zelph/query")
+        {
+            CHECK(janet_value(collector, interactive, R"((length (zelph/query (zelph/fact 'X "p" 'Y))))") == "2");
+        }
+        // A condition that has been negated and a `!=` guard pass along the
+        // binding associated with the condition preceding them, one for
+        // each fact it was read from, instead of creating a binding of
+        // their own: the two bindings that are equal end up as two separate
+        // maps.
+        SUBCASE("a binding a negated condition hands on")
+        {
+            CHECK(answers("X p Y, ¬(Y q k)").size() == 2);
+        }
+        SUBCASE("a binding a != guard hands on")
+        {
+            CHECK(answers("X p Y, Y != b").size() == 1);
+        } });
+}
+
+// A fact involving multiple objects states a statement inside a pattern for
+// each of them: `(a p b c)` states `(a p Y)` where Y equals b and also where
+// Y equals c. Unification took the first object that matched, hence
+// `(a p Y) bad k` answered one of the two cases, and the rule did not fire
+// when the planner took the nested condition first and the first object was
+// not the one the other condition needed. Thirty statements of the nested
+// shape change the order the planner picks; the rule fires either way.
+TEST_CASE("multiple objects: a statement inside a pattern takes every object of a fact that carries more")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, "a p b c\n(a p b c) bad k\na q c");
+        SUBCASE("alone") {}
+        SUBCASE("beside thirty statements of the nested shape")
+        {
+            interactive.process(R"js(%(for i 0 30 (zelph/fact (zelph/fact (string "m" i) "p" (string "n" i)) "bad" (string "z" i))))js");
+        }
+
+        collector.clear();
+        interactive.process("(a p Y) bad k");
+        std::vector<std::string> answers = collect_answers(collector);
+        std::ranges::sort(answers);
+        CHECK(answers == std::vector<std::string>{"(a p b) bad k", "(a p c) bad k"});
+
+        interactive.process("(X q Y, (X p Y) bad Z) => (X ok Z)");
+        interactive.run(true, false, false);
+        collector.clear();
+        interactive.process("S ok O");
+        CHECK(collect_answers(collector) == std::vector<std::string>{"a ok k"}); });
+}
+
+// A statement within a set pattern receives the same reading: a member of
+// the pattern, `(a p Y)`, is linked to a member of a set constant,
+// `(a p b c)`, via unify_members, with every object in the latter serving
+// as a potential match. Unification took the first object that satisfied
+// the criteria, hence `{(a p Y)} can Z` answered with one of the two, and
+// the rule did not fire when the planner took the set condition first and
+// the first object was not the one the other condition needed. Thirty set
+// statements of the same structure alter the order in which the planner
+// takes the conditions; the rule fires regardless.
+TEST_CASE("multiple objects: a statement inside a set pattern takes every object of a fact that carries more")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, "a p b c\n{(a p b c)} can nil\na q c");
+        SUBCASE("alone") {}
+        SUBCASE("beside thirty set statements of the same shape")
+        {
+            interactive.process(R"js(%(for i 0 30 (zelph/fact (zelph/set (zelph/fact (string "m" i) "p" (string "n" i))) "can" (string "z" i))))js");
+        }
+
+        collector.clear();
+        interactive.process("{(a p Y)} can Z");
+        std::vector<std::string> answers = collect_answers(collector);
+        std::ranges::sort(answers);
+        CHECK(answers == std::vector<std::string>{"{(a p b)} can nil", "{(a p c)} can nil"});
+
+        interactive.process("(X q Y, {(X p Y)} can Z) => (X ok Z)");
+        interactive.run(true, false, false);
+        collector.clear();
+        interactive.process("S ok O");
+        CHECK(collect_answers(collector) == std::vector<std::string>{"a ok nil"}); });
+}
+
+// When the rules precede the facts they are meant to match, each incoming
+// fact acts as a seed: it is matched against the condition it fits, and
+// that condition is processed initially. Upon arrival of `(a p b c) bad k`
+// as the final input, it seeds `(X p Y) bad Z`, requiring Y to be assigned
+// b for one rule and c for the other. Unification processed only the first
+// object, thus causing one of the two rules to fail to fire. A seed
+// enforces this order; the planner's order in the cases above does not
+// reach it.
+TEST_CASE("multiple objects: a rule over a nested statement fires when the fact with more objects is written after it")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+(((X p Y) bad Z), (X q1 Y)) => (X ok1 Z)
+(((X p Y) bad Z), (X q2 Y)) => (X ok2 Z)
+a q1 b
+a q2 c
+a p b c
+(a p b c) bad k
+)");
+        for (const char* query : {"S ok1 O", "S ok2 O"})
+        {
+            CAPTURE(query);
+            collector.clear();
+            interactive.process(query);
+            CHECK(collect_answers(collector).size() == 1);
+        } });
+}
+
+// A statement within a condition is stated by a fact that includes
+// additional objects at each level of the condition except one: the
+// top-level predicate, where a concrete statement was read as the relation
+// it denotes, which applies exclusively to facts written precisely with it,
+// whereas a pattern in that same place, `(a p Y)`, took the subset reading.
+// Beside `x (a p b c) y`, `x (a p c) Z` yielded no result and a rule over it
+// never fired, even though `x (a p Y) Z` answered `x (a p c) y`.
+TEST_CASE("multiple objects: a concrete statement as a condition's predicate is stated by a fact with more objects")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, "a p b c\nx (a p b c) y\nw q c");
+        collector.clear();
+        interactive.process("x (a p c) Z");
+        CHECK(collect_answers(collector) == std::vector<std::string>{"x (a p c) y"});
+        collector.clear();
+        interactive.process("W q Y, x (a p Y) Z");
+        CHECK(collect_answers(collector) == std::vector<std::string>{"w q c, x (a p c) y"});
+
+        interactive.process("(x (a p c) Z) => (Z okc c)");
+        interactive.process("(x (a p b) y) => (u okb v)");
+        interactive.run(true, false, false);
+        collector.clear();
+        interactive.process("S okc O");
+        CHECK(collect_answers(collector) == std::vector<std::string>{"y okc c"});
+        collector.clear();
+        interactive.process("S okb O");
+        CHECK(collect_answers(collector) == std::vector<std::string>{"u okb v"}); });
+}
+
+// A negated condition reads a statement as its predicate in the same manner:
+// beside `x (a p b c) y`, the fact states `x (a p c) y`, thus
+// `¬(x (a p c) y)` fails to hold. Read as the relation it names, the
+// concrete predicate found no fact written exactly with it, and both rules
+// fired; the rule concerning `a p d` serves as the control, whose negation
+// holds.
+TEST_CASE("multiple objects: a negated condition with a concrete statement as its predicate fails beside a fact with more objects")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+a p b c
+x (a p b c) y
+u go v
+(u go v, ¬(x (a p c) y)) => (u bad1 v)
+(u go v, ¬(x (a p c) Z)) => (u bad2 v)
+(u go v, ¬(x (a p d) y)) => (u fine v)
+)");
+        interactive.run(true, false, false);
+        for (const char* query : {"S bad1 O", "S bad2 O"})
+        {
+            CAPTURE(query);
+            collector.clear();
+            interactive.process(query);
+            CHECK(collect_answers(collector).empty());
+        }
+        collector.clear();
+        interactive.process("S fine O");
+        CHECK(collect_answers(collector) == std::vector<std::string>{"u fine v"}); });
+}
+
 // ---------------------------------------------------------------------------
 // Deep unification: function composition (using lists for ordering)
 // ---------------------------------------------------------------------------
@@ -2573,44 +3096,128 @@ y ancestor z
 }
 
 // ---------------------------------------------------------------------------
-// Bound-pattern grounding: exact object-set semantics for nested patterns
+// Bound-pattern grounding: nested patterns and facts with additional objects
 // ---------------------------------------------------------------------------
 
-TEST_CASE("grounding: fully bound nested pattern requires the exact fact node")
+// This case pinned the opposite reading as a conscious choice, named
+// "grounding: fully bound nested pattern requires the exact fact node": the
+// grounding of `((a d+ b1) ci c)` sought that specific fact precisely,
+// failed to locate `((a d+ b1 b2) ci c)`, and thus the rule was not to fire.
+// It ran without `.deductions all`, meaning the expected deduction was never
+// printed, so it held whatever the engine produced, and in a session the
+// rule fired whenever the planner took the nested condition first. Every
+// other path interprets a statement within a condition as stated by a fact
+// containing additional objects as well (unify_nodes, `.anchors off`,
+// `zelph/exists`), and grounding now follows this same reading. Thirty
+// statements of the nested shape change the order the planner picks; the
+// rule fires either way.
+TEST_CASE("grounding: a fully bound nested pattern matches a fact with more objects, whichever condition binds it")
 {
-    // Documents a deliberate design decision of bound-pattern grounding
-    // (ground_pattern in unification.cpp): once all variables of a
-    // structured condition SUBJECT are bound, the pattern denotes exactly
-    // one fact node, resolved via hash lookup with EXACT object-set
-    // semantics -- consistent with instantiate_fact() and the termination
-    // guard. Deep unification's greedy subset matching of objects is
-    // deliberately NOT replicated at this point: a graph fact carrying
-    // additional objects is a different node and is not found. (Top-level
-    // condition objects keep the documented "objects as alternatives"
-    // subset semantics via extract_bindings.) To restore subset matching
-    // for this corner case, ground_pattern would have to return Unbound
-    // instead of Missing -- at the cost of falling back to a full scan.
     run_both_modes([](auto& collector, auto& interactive)
                    {
         process_lines(interactive, R"(
+.deductions all
 x trigger b1
 (a d+ b1 b2) ci c
 ((a d+ b1 b2) ci c) co e
-(x trigger B, ((a d+ B) ci c) co E) => (found B E)
 )");
-        // The first condition binds B = b1 (bound subject x guarantees it
-        // is evaluated first). The grounded pattern ((a d+ b1) ci c) then
-        // denotes a fact node that does not exist -- only the multi-object
-        // variant ((a d+ b1 b2) ci c) does -- so the condition fails
-        // instead of subset-matching the multi-object fact.
-        CHECK_FALSE(any_output_starts_with(collector, "( found")); });
+        SUBCASE("alone") {}
+        SUBCASE("beside thirty statements of the nested shape")
+        {
+            interactive.process(R"js(%(for i 0 30 (zelph/fact (zelph/fact (zelph/fact (string "m" i) "d+" (string "n" i)) "ci" "c") "co" (string "z" i))))js");
+        }
+        collector.clear();
+        interactive.process("(x trigger B, ((a d+ B) ci c) co E) => (found B E)");
+        CHECK(any_output_starts_with(collector, "( found b1 e )")); });
+}
+
+// Under X = a and Y = b, the grounded statement `(X p Y)` denoted `a p b`
+// alone, and `(a p b) bad k` is not a fact: only `(a p b c) bad k` is, which
+// states it. Whether the rule fired depended on which condition the planner
+// took first, and that depended on how many statements of the nested shape
+// the graph contained alongside it: with a single one the rule fired, with
+// thirty it did not.
+TEST_CASE("grounding: whether a rule over a nested statement fires does not depend on unrelated data")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, "a p b c\n(a p b c) bad k\na p b\na q b");
+        SUBCASE("one statement of the same shape beside it")
+        {
+            interactive.process("(m p n) bad z");
+        }
+        SUBCASE("thirty statements of the same shape beside it")
+        {
+            interactive.process(R"js(%(for i 0 30 (zelph/fact (zelph/fact (string "m" i) "p" (string "n" i)) "bad" (string "z" i))))js");
+        }
+        interactive.process("(X q Y, (X p Y) bad Z) => (X ok Z)");
+        interactive.run(true, false, false);
+
+        collector.clear();
+        interactive.process("S ok O");
+        CHECK(collect_answers(collector) == std::vector<std::string>{"a ok k"}); });
+}
+
+// A negation over a nested statement takes the same reading as the
+// statement itself within a positive condition. When grounded under X = a
+// and Y = b, `(X p Y) bad k` denoted `(a p b) bad k`, which is not a fact;
+// thus, the negation held alongside `(a p b c) bad k`, which states it, and
+// the rule derived `a fine b`.
+TEST_CASE("grounding: a negated nested statement that a fact with more objects states does not hold")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, "a p b c\n(a p b c) bad k\na q b");
+
+        collector.clear();
+        interactive.process("X q Y, ¬((X p Y) bad k)");
+        CHECK(collect_answers(collector).empty());
+
+        interactive.process("(X q Y, ¬((X p Y) bad k)) => (X fine Y)");
+        interactive.run(true, false, false);
+        collector.clear();
+        interactive.process("S fine O");
+        CHECK(collect_answers(collector).empty()); });
+}
+
+// A condition that lacks a variable, `(a p c) bad k`, is stated by
+// `(a p b c) bad k` as well, regardless of whether it appears alone in a
+// rule or within a negation. The sequential anchors took its statement
+// subject as the anchor, and that node holds only the facts that hold
+// `(a p c)` itself: the rule did not fire, and the negation held beside the
+// fact that states it. An exact hash probe for a ground condition, such as
+// `zelph/exists :exact` makes, would bring that back.
+TEST_CASE("grounding: a ground nested statement in a condition is stated by a fact with more objects")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, "a p b c\n(a p b c) bad k\nx go y");
+        SUBCASE("as the only condition")
+        {
+            interactive.process("((a p c) bad k) => (x ok y)");
+            collector.clear();
+            interactive.process("S ok O");
+            CHECK(collect_answers(collector) == std::vector<std::string>{"x ok y"});
+        }
+        SUBCASE("negated")
+        {
+            collector.clear();
+            interactive.process("X go y, ¬((a p c) bad k)");
+            CHECK(collect_answers(collector).empty());
+
+            interactive.process("(x go y, ¬((a p c) bad k)) => (x fine y)");
+            collector.clear();
+            interactive.process("S fine O");
+            CHECK(collect_answers(collector).empty());
+        } });
 }
 
 TEST_CASE("grounding: fully bound nested pattern anchors on the exact fact node")
 {
-    // Positive control for the exact-object semantics above: with the
-    // exact single-object fact present, grounding resolves the pattern to
-    // the concrete node and the rule fires via a direct anchor (no scan).
+    // Positive control for the cases above: when the exact single-object
+    // fact is present and there are no facts containing multiple objects
+    // within the graph, grounding resolves the pattern to the concrete node,
+    // and the rule fires through a direct anchor (without requiring a scan).
     run_both_modes([](auto& collector, auto& interactive)
                    {
         process_lines(interactive, R"(
@@ -2796,6 +3403,55 @@ TEST_CASE("rules: a negated consequence is refused, not ignored")
         CHECK(answers_contain(collector, "x q y")); });
 }
 
+// The focus causes `*(P) ~ refuted` to evaluate to P, meaning that within a
+// rule, it was the POSITIVE pattern P, with the marking written beside it as
+// data: as a consequence, the rule derived P itself, as a condition it read
+// P, and a ground one refuted P immediately upon being written, so the fact
+// the rule subsequently derived answered nothing. It reads like a refutation
+// but is not one, thus it is refused before anything is built, at any
+// location where a rule could hold it, and the message names the spelling
+// that says what was meant.
+TEST_CASE("rules: the focus spelling of a refutation is refused in a rule")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        const std::size_t before = node_count(collector, interactive);
+        std::string       statement;
+        SUBCASE("a consequence") { statement = "(X ~ person) => (*(X sleeps nil) ~ refuted)"; }
+        SUBCASE("a condition") { statement = "(X ~ person, *(X sleeps nil) ~ refuted) => (X ~ awake)"; }
+        // Within a group of its own, the focus was dropped without comment,
+        // and the rule asked whether `X sleeps nil` is refuted: a different
+        // rule from the one the line spells, which is refused.
+        SUBCASE("a condition whose focus is in a group of its own") { statement = "(X ~ person, (*(X sleeps nil)) ~ refuted) => (X ~ awake)"; }
+        SUBCASE("a ground consequence") { statement = "(mary ~ person) => (*(mary sleeps nil) ~ refuted)"; }
+        SUBCASE("nested in a consequence") { statement = "(X ~ person) => (x says (*(X sleeps nil) ~ refuted))"; }
+        SUBCASE("in a rule a statement mentions") { statement = "alice says ((*(a p b) ~ refuted) => (c q d))"; }
+        SUBCASE("in a rule a generator writes") { statement = "(T is t) => ((X go Y, *(T p b) ~ refuted) => (X ok Y))"; }
+        SUBCASE("with a quoted name") { statement = R"((X ~ person) => (*(X sleeps nil) ~ "refuted"))"; }
+
+        CAPTURE(statement);
+        CHECK_THROWS_WITH_AS(interactive.process(statement), doctest::Contains("((P) ~ refuted)"), std::runtime_error);
+        CHECK(node_count(collector, interactive) == before);
+        CHECK(listed_rule_texts(collector, interactive).empty()); });
+}
+
+// The same spelling as a query's condition reads P positively in the same way.
+TEST_CASE("rules: the focus spelling of a refutation is refused in a query")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("mary ~ person");
+        // With the focus in a group of its own, the spelling is the same one.
+        // The query had rejected it previously, when the group still hid the
+        // focus, since the parser reads a marked statement through its
+        // groups, and the query continues to reject it.
+        for (const char* query : {"X ~ person, *(X sleeps nil) ~ refuted", "*(X sleeps nil) ~ refuted", "(*(X sleeps nil)) ~ refuted"})
+        {
+            CAPTURE(query);
+            CHECK_THROWS_WITH_AS(interactive.process(query), doctest::Contains("((P) ~ refuted)"), std::runtime_error);
+        } });
+}
+
 TEST_CASE("rules: a condition operator written out as a consequence is refused")
 {
     // Expressed through the facts they build, the three condition operators
@@ -2931,6 +3587,28 @@ TEST_CASE("rules: two consequences are two objects, not a conjunction")
         CHECK(any_output_contains(collector, "=>")); });
 }
 
+TEST_CASE("rules: zelph/rule with several consequences is ONE rule, like => (A) (B)")
+{
+    // `zelph/rule` produced a single `=>` fact for each consequence,
+    // meaning a call involving two resulted in two distinct rules under a
+    // single condition set. Each rule fired independently, and a fresh
+    // variable, referenced by both consequences, acquired a witness within
+    // each one: the two heads never met. The typed form shown above is a
+    // single `=>` fact with multiple objects, and so is the one
+    // `zelph/rule` writes now.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process(R"js(%(zelph/rule [(zelph/fact 'X "p" 'Y)] (zelph/fact 'X "q" 'N) (zelph/fact 'N "r" 'Y)))js");
+        collector.clear();
+        interactive.process(".list-rules");
+        CHECK(count_outputs_containing(collector, "=>") == 1);
+
+        interactive.process("a p b");
+        collector.clear();
+        interactive.process(R"js(%(zelph/out (string "JOINED-" (length (zelph/query (zelph/conjunction (zelph/fact "a" "q" 'M) (zelph/fact 'M "r" "b")))))))js");
+        CHECK(any_output_contains(collector, "JOINED-1")); });
+}
+
 // ---------------------------------------------------------------------------
 // Fresh variables: a firing creates a witness solely when no prior
 // instance is present
@@ -3058,6 +3736,39 @@ TEST_CASE("fresh variables: a head whose variables are all fresh holds through a
         CHECK(collect_answers(collector) == std::vector<std::string>{"?? likes ??"}); });
 }
 
+// A variable that only the consequence names constitutes a fresh variable,
+// even if the condition does not bind any variable whatsoever (logic.md,
+// "Fresh Variables: Generative Rules"): the firing makes a witness,
+// `?? ok y`, and precisely one such witness, since a later pass finds it
+// ("No duplicate witnesses"), and no witness where a node already makes the
+// consequence a fact, as `k ok2 y` does. The shape was reported as a rule
+// that fires with its variable unbound; what it prints is the documented
+// witness.
+TEST_CASE("fresh variables: a rule whose condition binds no variable makes one witness")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process(".semi-naive on");
+
+        interactive.process("a p b");
+        interactive.process("(a p b) => (X ok y)");
+        interactive.process("u v w");
+        interactive.run(true, false, false);
+
+        collector.clear();
+        interactive.process("S ok O");
+        CHECK(collect_answers(collector) == std::vector<std::string>{"?? ok y"});
+
+        interactive.process("k ok2 y");
+        interactive.process("(m n o) => (X ok2 y)");
+        interactive.process("m n o");
+        interactive.run(true, false, false);
+
+        collector.clear();
+        interactive.process("S ok2 O");
+        CHECK(collect_answers(collector) == std::vector<std::string>{"k ok2 y"}); });
+}
+
 TEST_CASE("fresh variables: a rule's own consequence pattern is no witness")
 {
     // The consequence of a rule is a pattern within the graph, and the
@@ -3119,6 +3830,77 @@ h is m
         collector.clear();
         interactive.process("X near h");
         CHECK(collect_answers(collector) == std::vector<std::string>{"y near h"}); });
+}
+
+// Under the binding, the predicate in the first consequence is one of its
+// objects, meaning no firing writes it and no witness can fulfil it. The
+// check for an earlier witness required it nonetheless, and the second
+// consequence, which can be written, acquired a new witness and a new fact
+// with each pass; under `.semi-naive off` and `check`, the run never ended.
+// The first consequence now counts as present, just as one that keeps a
+// variable from a rule it mentions does, and a single witness is made. The
+// passes are single ones, as counts_over_passes runs them, ensuring a
+// regression fails rather than hangs, and the run toward the fixpoint follows
+// afterwards.
+TEST_CASE("fresh variables: a consequence that the binding gives its predicate as an object counts as there")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        std::string rule;
+        SUBCASE("a name") { rule = "(X p Y) => (Z Y X) (Z r X)"; }
+        SUBCASE("a statement") { rule = "(X p Y) => (Z (X q Y) (Y q X)) (Z r X)"; }
+
+        CAPTURE(rule);
+        const std::vector<std::size_t> counts = counts_over_passes(collector, interactive, "a p a\n" + rule + "\n");
+        REQUIRE(counts == std::vector<std::size_t>(4, counts.front()));
+
+        interactive.process(".semi-naive off");
+        interactive.process(".run");
+        CHECK(node_count(collector, interactive) == counts.front());
+
+        collector.clear();
+        interactive.process("S r O");
+        CHECK(collect_answers(collector) == std::vector<std::string>{"?? r a"});
+        collector.clear();
+        interactive.process("S q O");
+        CHECK(collect_answers(collector).empty()); });
+}
+
+// The check for an earlier witness decides a flat consequence -- an atom
+// serving as its predicate, atoms and variables acting as its objects --
+// based on the binding, without predicting the instance, and defers to the
+// prediction the aspects the binding cannot resolve. In this case, the
+// binding assigns to the object variable the atom that the consequence uses
+// as its predicate: `?? of of` is never written, so the first consequence is
+// counted as present, and the second finds its witness from the first run
+// on. A check that read the first consequence as one requiring discovery
+// generated a new witness and a new `?? r a` with each pass, and under
+// `.semi-naive off` or `check` the run never ended; the single passes come
+// first, causing such a check to fail rather than hang.
+TEST_CASE("fresh variables: a consequence whose constant predicate the binding gives as its object counts as there in every mode")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        const std::vector<std::size_t> counts = counts_over_passes(collector, interactive, "a p of\n(X p Y) => (Z of Y) (Z r X)\n");
+        REQUIRE(counts == std::vector<std::size_t>(4, counts.front()));
+
+        for (const char* mode : {".semi-naive on", ".semi-naive off", ".semi-naive check"})
+        {
+            CAPTURE(mode);
+            interactive.process(mode);
+            for (int run = 0; run < 2; ++run)
+            {
+                interactive.process(".run");
+                CHECK(node_count(collector, interactive) == counts.front());
+            }
+        }
+
+        collector.clear();
+        interactive.process("S r O");
+        CHECK(collect_answers(collector) == std::vector<std::string>{"?? r a"});
+        collector.clear();
+        interactive.process("S of O");
+        CHECK(collect_answers(collector).empty()); });
 }
 
 TEST_CASE("fresh variables: a fact that mentions a rule with variables in its conditions gets no witness")
@@ -3264,11 +4046,19 @@ TEST_CASE("fresh variables: the consequence that can bind a witness is joined fi
         } });
 }
 
-TEST_CASE("fresh variables: a fresh predicate is matched like any other position")
+TEST_CASE("fresh variables: a fresh variable in a composite predicate is matched like any other position")
 {
     // The walk gave up immediately upon encountering a consequence
     // predicate that was fresh, plain or nested within a composite
     // predicate, causing such a rule to fire anew with each input line.
+    //
+    // This case was "fresh variables: a fresh predicate is matched like any
+    // other position" and held the plain shape `(A is p) => (A N b)` as
+    // well. A predicate that no condition binds is now rejected when the
+    // rule is written (the case below), because the sole node a firing has
+    // for it is a witness, a relation type unnamed by anybody. Inside a
+    // composite predicate, N serves as the subject of `N r s`, an ordinary
+    // place for a witness.
     //
     // `.semi-naive on`: refer to the note located
     // directly above this group.
@@ -3276,18 +4066,146 @@ TEST_CASE("fresh variables: a fresh predicate is matched like any other position
                    {
         interactive.process(".semi-naive on");
 
-        interactive.process("(A is p) => (A N b)");
         interactive.process("(A is p) => (A (N r s) c)");
         interactive.process("a is p");
         interactive.process("u v w");
 
-        for (const char* query : {"a R b", "a R c"})
+        collector.clear();
+        interactive.process("a R c");
+        CHECK(collect_answers(collector).size() == 1); });
+}
+
+TEST_CASE("fresh variables: a predicate that no condition binds is refused when the rule is written")
+{
+    // A variable serving as the predicate in a fact that a consequence
+    // writes, and in no condition, had no binding when the rule fired. In
+    // cases where it appears solely in that role, the rule derived nothing,
+    // and no message conveyed this. When it additionally functions as a
+    // subject or object, it got a witness, which then stood as the
+    // predicate: a relation type lacking a name, printed as "->", as in
+    // `(-> -> nil) ⇐ (ann waits nil)`. A negated condition does not bind
+    // anything, thus a variable named exclusively by a negated condition is
+    // considered unbound. The rule is rejected, none of its components are
+    // retained, and a fact matching its conditions yields no derivation.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        std::string rule;
+        bool        negated = false;
+        SUBCASE("the predicate alone") { rule = "(X waits nil) => (X W nil)"; }
+        SUBCASE("the predicate and the subject") { rule = "(X waits nil) => (W W nil)"; }
+        SUBCASE("a fact the consequence holds") { rule = "(X waits nil) => (a says (X W nil))"; }
+        SUBCASE("one of two consequences") { rule = "(X waits nil) => (X q nil) (X W nil)"; }
+        // A composite predicate constitutes a fact that the consequence
+        // writes as well, and the walk read solely its subject and objects:
+        // in `(X waits nil) => (X (b W s) nil)`, nothing binds W either, and
+        // the firing derived `ann (b -> s) nil`, featuring a witness serving
+        // as the relation type for `b -> s`.
+        SUBCASE("the predicate of a composite predicate") { rule = "(X waits nil) => (X (b W s) nil)"; }
+        SUBCASE("named by a negated condition")
         {
-            CAPTURE(query);
-            collector.clear();
-            interactive.process(query);
-            CHECK(collect_answers(collector).size() == 1);
-        } });
+            rule    = "(X waits nil, ¬(X W nil)) => (X W nil)";
+            negated = true;
+        }
+
+        const std::size_t before = node_count(collector, interactive);
+        std::string       message;
+        try
+        {
+            interactive.process(rule);
+        }
+        catch (const std::runtime_error& e)
+        {
+            message = e.what();
+        }
+        CHECK(message.find("is the variable W, which no condition binds") != std::string::npos);
+        CHECK((message.find("a negated condition binds nothing") != std::string::npos) == negated);
+        CHECK(node_count(collector, interactive) == before);
+
+        collector.clear();
+        interactive.process(".list-rules");
+        CHECK(any_output_contains(collector, "No rules found"));
+
+        interactive.process("ann waits nil");
+        interactive.run(true, false, false);
+        collector.clear();
+        interactive.process("S P nil");
+        CHECK(collect_answers(collector) == std::vector<std::string>{"ann waits nil"});
+
+        collector.clear();
+        interactive.process("S says O");
+        CHECK(collect_answers(collector).empty()); });
+}
+
+TEST_CASE("fresh variables: a predicate variable that a condition or a generator binds or a mention holds is written")
+{
+    // On the opposite side of the refusal previously described: a condition
+    // binds the predicate, the inner rule of a generator takes its predicate
+    // from the generator's binding at the moment the generator builds it,
+    // and the variables of a mentioned rule are associated with that rule,
+    // which constitutes text and does not fire.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("ann waits nil");
+        std::string              rule;
+        std::string              query;
+        std::vector<std::string> answers;
+        SUBCASE("bound by a condition")
+        {
+            rule    = "(X W nil) => (X W b)";
+            query   = "S P b";
+            answers = {"ann waits b"};
+        }
+        // A member of the set a membership condition names is bound when
+        // the condition matches the set's members.
+        SUBCASE("bound as a member of a set a condition names")
+        {
+            interactive.process("a in {k a}");
+            rule    = "(Z in {W}) => (Z W b)";
+            query   = "S P b";
+            answers = {"a k b", "k a b"};
+        }
+        // In a condition, a composite predicate binds its variables, the
+        // counterpart of the refusal of one within a consequence.
+        SUBCASE("bound in the composite predicate of a condition")
+        {
+            interactive.process("ann (b waits s) c");
+            rule    = "(A (b M s) c) => (A M c)";
+            query   = "S P c";
+            answers = {"ann (b waits s) c", "ann waits c"};
+        }
+        // The first rule written employs `a p b` as a composite predicate,
+        // meaning the fact it writes appears within the objects of
+        // `a p b`, yet it is not a component of `a p b`, nor is its W a
+        // predicate written by the second rule. Walked into, it refused the
+        // second rule.
+        SUBCASE("beside a rule that has the consequence's fact as its predicate")
+        {
+            interactive.process("(Q W nil) => (u (a p b) (Q W nil))");
+            rule    = "(X waits nil) => (X says (a p b))";
+            query   = "S says O";
+            answers = {"ann says (a p b)"};
+        }
+        SUBCASE("bound by a generator")
+        {
+            rule    = "(R is t) => ((X R nil) => (X R c))";
+            query   = "S P c";
+            answers = {"ann waits c"};
+            interactive.process("waits is t");
+        }
+        SUBCASE("held by a mention")
+        {
+            rule    = "x says ((X waits nil) => (X W nil))";
+            query   = "S P nil";
+            answers = {"ann waits nil"};
+        }
+
+        CHECK_NOTHROW(interactive.process(rule));
+        interactive.run(true, false, false);
+        collector.clear();
+        interactive.process(query);
+        std::vector<std::string> found = collect_answers(collector);
+        std::sort(found.begin(), found.end());
+        CHECK(found == answers); });
 }
 
 TEST_CASE("fresh variables: each binding of the conditions gets its own witness")

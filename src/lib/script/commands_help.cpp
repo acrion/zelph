@@ -89,9 +89,9 @@ namespace zelph::console
             "  .list-predicate-value-usage <name|id|fact> [max] – Show object/value usage statistics for a specific predicate (top N most frequent values)",
             "",
             "Inference & Rules",
-            "  .run                                      – Run full inference",
-            "  .run-once                                 – Run a single inference pass",
-            "  .run-delta                                – Run inference seeded only by the facts added since the last run",
+            "  .run [quiet] [derived]                    – Run full inference; 'quiet' prints nothing",
+            "  .run-once [quiet] [derived]               – Run a single inference pass",
+            "  .run-delta [quiet] [derived]              – Run inference seeded only by the facts added since the last run",
 #ifndef __EMSCRIPTEN__
             "  .run-export <file>                        – Run inference and write what that run derives to a JSON Lines file (see .help .run-export)",
 #endif
@@ -99,6 +99,7 @@ namespace zelph::console
             "  .deductions [all|focus|quiet|off]         – Set the deduction printing mode (default: quiet)",
             "  .list-rules                               – List all defined inference rules",
             "  .strata                                   – Show the negation levels of the rules, and the rules that cannot be stratified",
+            "  .help opaque                              – How 'P ~ opaque' makes the arguments of P mentions rather than claims",
             "  .remove-rules                             – Remove all inference rules",
             "",
             "Editing & Removing",
@@ -231,7 +232,14 @@ namespace zelph::console
 
             {".lang", ".lang [language_code]\n"
                       "Without argument: displays the current language used for node names.\n"
-                      "With argument: sets the language (e.g., 'zelph', 'en', 'de', 'wikidata')."},
+                      "With argument: sets the language (e.g., 'zelph', 'en', 'de', 'wikidata').\n"
+                      "From Janet, (zelph/lang) reads it, and (zelph/lang <code>) sets it and\n"
+                      "returns the previous one.\n"
+                      "\n"
+                      "Inside a module (.import, zelph/import) the setting holds for the module's\n"
+                      "own lines: when the import ends, the importer's language is back, also\n"
+                      "after an error. A script run as 'zelph script.zph' is a session, and its\n"
+                      ".lang stays in force as a typed one would."},
 
             {".name", ".name <node|id> <new_name>\n"
                       "Sets the name of the node in the current language.\n"
@@ -245,14 +253,40 @@ namespace zelph::console
                       "a node written by hand and an imported entity are the same thing. A node\n"
                       "IS the hash of what it is built from, so every fact built on the one that\n"
                       "disappears is re-created under the id its new components give it, folding\n"
-                      "into an equal fact where the graph already holds one. Core nodes are never\n"
-                      "the ones that disappear, so two of them cannot merge, and a core node's\n"
+                      "into an equal fact where the graph already holds one. A statement or a\n"
+                      "set constant is identified by its content, any other node by its id\n"
+                      "alone. Two statements of one subject and one predicate merge into the one\n"
+                      "that holds the objects of both (a p b and a p c become a p b c), and the\n"
+                      "survivor takes that statement's id. A node merged with a statement or a\n"
+                      "set constant becomes that term, whichever of the two holds the name: the\n"
+                      "term keeps its id, the node's facts are rebuilt over it, and a claimed one\n"
+                      "claims the statement it now nests, as its typed line would. Every other\n"
+                      "merge of a statement or a set constant is refused, with the reason: two\n"
+                      "statements that differ in subject or predicate (merge the subjects or\n"
+                      "predicates in which they differ, and the two fold into one), two set\n"
+                      "constants (a set constant IS its members: {b c} = {b d} says c = d), a\n"
+                      "statement and a set constant, a node and a term it is part of, a\n"
+                      "statement over a rule's variable, a core node, and a node holding a\n"
+                      "member the set constant lacks. Core nodes are never the ones that\n"
+                      "disappear, so two of them cannot merge, and a core node's\n"
                       "spelling (~, in, nil, ...) names it in every language and is never given\n"
                       "to another node. A variable and a non-variable cannot merge at all, nor\n"
                       "can a collection of a rule's text and any other node. Two variables merge\n"
                       "only across languages, with a warning: a variable belongs to the\n"
                       "statement that quantifies it, so the two statements then share one\n"
                       "variable. Within one language the request is refused.\n"
+                      "The names the engine reads in language zelph (refuted, opaque, rule\n"
+                      "pattern, closure, one-or-more, zero-or-more, nn, nn-layers,\n"
+                      "wikidata:labels-v2) stay with their nodes the same way: such a name is\n"
+                      "never given to another node or taken from its own, and its node merges\n"
+                      "with no other. A merge that would make a fact known to be wrong the same\n"
+                      "statement as a claimed one is refused before anything changes; a rule's\n"
+                      "pattern nobody claimed folds into it and is refuted with it, as a rule\n"
+                      "typed with the wrong statement shares it. A claimed fact that becomes\n"
+                      "the same statement as a rule's pattern stays claimed.\n"
+                      "A merge runs no inference, also with auto-run on: what it changes -- a\n"
+                      "condition it makes hold, a negated premise it makes true -- is read by\n"
+                      "the next run, the one after the next statement or a .run.\n"
                       "\n"
                       "A name a rule's VARIABLE displays is not in the way: the node takes the\n"
                       "name over, the variable goes on rendering under it, and nothing merges.\n"
@@ -263,6 +297,8 @@ namespace zelph::console
                          "Removes the name of the node in the current language (or the specified language if provided).\n"
                          "The <node|id> can be a name (in current language) or numeric node ID.\n"
                          "If the node had no name in the target language, nothing happens.\n"
+                         "A name of the engine's vocabulary in language zelph is not removed (see\n"
+                         ".help .name).\n"
                          "A name that other nodes carry as well -- a label several Wikidata items\n"
                          "share -- then resolves to the one of them that ranks first (see .help .load)."},
 
@@ -300,7 +336,10 @@ namespace zelph::console
                       "A fact ABOUT the node that is engine bookkeeping is reported as a property\n"
                       "instead of being written into the term: 'Rule pattern (not asserted)', for a\n"
                       "statement that exists only because a rule was written with it, or a query\n"
-                      "wrote it beneath a condition operator (¬, ≈, ⁺, ∗)."},
+                      "wrote it beneath a condition operator (¬, ≈, ⁺, ∗) or as the operator's own\n"
+                      "fact; 'Mentioned (not asserted)', for one a statement wrote down without\n"
+                      "claiming it, in an argument of an opaque predicate or with zelph/mention --\n"
+                      "a rule written down so included, which is not in force."},
 
             {".mermaid", ".mermaid [<name|id|fact>] [depth] [max_neighbours]\n"
                          "Generates a Mermaid HTML file visualizing a node and its connections, and outputs\n"
@@ -319,7 +358,7 @@ namespace zelph::console
                          "'a rel b' at depth 2, while '.mermaid a rel 2' is the fact 'a rel 2', because\n"
                          "'a rel' denotes nothing. .in and .out separate their count the same way."},
 
-            {".run", ".run\n"
+            {".run", ".run [quiet] [derived]\n"
                      "Performs full inference: repeatedly applies all rules until no new facts are derived.\n"
                      "Deductions are printed as they are found.\n"
                      "A rule that creates nodes -- through a fresh variable, a nested term or a\n"
@@ -330,12 +369,26 @@ namespace zelph::console
                      "the facts (under .semi-naive check, its safety pass as well) and in every\n"
                      "seeded iteration. It measures work, not results, and is comparable only\n"
                      "between runs in one evaluation mode. See 'What the run summary counts' in\n"
-                     "the rules documentation."},
+                     "the rules documentation.\n"
+                     "\n"
+                     "With 'quiet' the run prints nothing: no banner, deduction, contradiction,\n"
+                     "note or finding, and no 'Ready.'. It is meant for a program, which receives\n"
+                     "what the run met from (zelph/run :quiet) instead: the contradictions, and\n"
+                     "the facts found no longer justified while negation records are kept, which\n"
+                     "check mode then does not raise for.\n"
+                     "'derived', only together with 'quiet', also keeps each fact the run\n"
+                     "derives, with its rule, its premises and its bindings, which\n"
+                     "(zelph/run :quiet :derived) returns; at the prompt nobody receives them.\n"
+                     "Their memory grows with what the run derives. Any other argument is\n"
+                     "refused."},
 
-            {".run-once", ".run-once\n"
-                          "Performs a single inference pass."},
+            {".run-once", ".run-once [quiet] [derived]\n"
+                          "Performs a single inference pass.\n"
+                          "With 'quiet' it prints nothing, as '.run quiet' does, and 'derived' keeps\n"
+                          "what it derives, as for .run. A single pass never re-tests the negation\n"
+                          "records; the next full run does."},
 
-            {".run-delta", ".run-delta\n"
+            {".run-delta", ".run-delta [quiet] [derived]\n"
                            "Like .run, but starts from the facts created since the previous run\n"
                            "instead of from a pass over the whole graph.\n"
                            "\n"
@@ -345,23 +398,47 @@ namespace zelph::console
                            "proportional to everything accumulated so far, not to what was added.\n"
                            ".run-delta removes that term: it seeds the fixpoint with the new facts\n"
                            "and lets semi-naive evaluation take it from there.\n"
-                           "That holds for the rules that can be seeded. A rule with a negated\n"
-                           "condition still takes a classic pass over the facts its positive\n"
-                           "conditions match, at each negation level of the run, and a rule that\n"
-                           "cannot be seeded (a path, neural or nested condition, a condition\n"
-                           "without exactly one predicate, or no positive fact condition at all)\n"
-                           "takes one in every iteration; their cost follows those facts, not the\n"
-                           "addition. With .import math, the simplifier's identity fallback is\n"
-                           "such a rule.\n"
+                           "That holds for the rules that can be seeded. Some rules still take a\n"
+                           "classic pass over the facts their conditions match, and their cost\n"
+                           "follows those facts, not the addition:\n"
+                           "  - a rule created since the previous run, or brought into force since by\n"
+                           "    a claim of a rule that was only written down or by removing the last\n"
+                           "    statement that mentions it, once, to see the facts that are older than\n"
+                           "    itself;\n"
+                           "  - a rule with a path condition, in an iteration whose new facts\n"
+                           "    extend the predicate the path walks;\n"
+                           "  - a rule with a negated condition, at its negation level, when a fact\n"
+                           "    of a predicate it negates was removed since the previous run (a\n"
+                           "    removal can make a negation true), when it negates under a predicate\n"
+                           "    variable, or when its rules negate what they derive (.strata calls\n"
+                           "    them not stratifiable); otherwise it is seeded there too;\n"
+                           "  - a rule that cannot be seeded at all (a neural or nested condition,\n"
+                           "    a condition without exactly one predicate, or no positive fact\n"
+                           "    condition), in every iteration.\n"
+                           "With .import math, the simplifier's identity fallback is a rule with a\n"
+                           "negated condition among rules that negate what they derive.\n"
                            "\n"
                            "This is only equivalent to .run when the graph already is a fixpoint of\n"
                            "the current rules -- otherwise the missing pass is exactly the one that\n"
                            "would have found the older consequences. The command therefore falls\n"
-                           "back to a full pass, with a note, unless a previous run has happened,\n"
-                           "the rule set is unchanged since, and .semi-naive is on.\n"
+                           "back to a full pass, with a note, unless a previous run has reached its\n"
+                           "fixpoint (a .run-once that derived something has not, nor has a run that\n"
+                           "an error stopped before its end), no rule was removed since, no rule was\n"
+                           "created since while a rule with a negated condition is in force (a new\n"
+                           "rule can change the negation levels), no fact a run may have derived was\n"
+                           "removed since (by dropping a cluster a run derived into, or by\n"
+                           ".prune-facts, .prune-nodes, .remove or .cleanup), and .semi-naive is on.\n"
+                           "A statement that mentions a rule, such as\n"
+                           "'john believes ((A p B) => (A q B))', creates no rule; removing the last\n"
+                           "statement that mentions a rule brings the rule into force, which counts\n"
+                           "as creating it when the rule was mentioned at the previous run. A mention\n"
+                           "made and removed again between two runs changes nothing.\n"
                            "\n"
                            "Typical use is a program driving zelph as a library: run once to\n"
-                           "saturate, then assert and .run-delta per unit of new data."},
+                           "saturate, then assert and .run-delta per unit of new data.\n"
+                           "With 'quiet' it prints nothing, as '.run quiet' does, and that includes\n"
+                           "the note about falling back to a full pass. 'derived' keeps what it\n"
+                           "derives, as for .run; a fallback to a full pass keeps all it derived."},
 
             {".explain", ".explain [<fact pattern>] [max-depth]   (alias: .why)\n"
                          "Reconstructs a justification for an asserted fact from the graph\n"
@@ -400,10 +477,16 @@ namespace zelph::console
                          "  [rule pattern; not asserted]  the queried node exists only\n"
                          "      because a rule, typed or mentioned, was written with it\n"
                          "      as a ground pattern, or a query wrote it beneath a\n"
-                         "      condition operator (¬, ≈, ⁺, ∗); such a node is never a\n"
-                         "      premise.\n"
+                         "      condition operator (¬, ≈, ⁺, ∗) or as the operator's own\n"
+                         "      fact; such a node is never a premise.\n"
+                         "  [mentioned; not asserted]  the queried node was written down\n"
+                         "      without being claimed: it stands in an argument of an\n"
+                         "      opaque predicate (.help opaque), or zelph/mention or\n"
+                         "      zelph_mention wrote it. Never a premise until a claim of\n"
+                         "      the same statement makes it data.\n"
                          "  [rule mentioned; not in force]  a queried rule that a\n"
-                         "      statement mentions (above). It may have been typed as\n"
+                         "      statement mentions (above), or that zelph/mention or\n"
+                         "      zelph_mention wrote down. It may have been typed as\n"
                          "      well, since a statement can name a typed rule itself:\n"
                          "      (G => H) => ((G => H) is seen) derives one for each typed\n"
                          "      ground rule, which then no longer fires. As a premise, a\n"
@@ -498,7 +581,9 @@ namespace zelph::console
                          "A collection literal @{...} is the one printed form that cannot\n"
                          "be pasted back: each literal builds a NEW container, so it can\n"
                          "never name an existing one. The command says so and points at\n"
-                         "the argument-less form, which takes the last answer's node."},
+                         "the argument-less form, which takes the last answer's node.\n"
+                         "From Janet, (zelph/explain <s> <p> <o>) or (zelph/explain <node>)\n"
+                         "returns the proof as data, a struct per line of the tree."},
 #ifndef __EMSCRIPTEN__
             {".run-export", ".run-export <file>\n"
                             "Performs full inference and writes what THAT run derives, plus every\n"
@@ -539,7 +624,9 @@ namespace zelph::console
                             "\"atom_A => atom_B\" is data and the query pattern \"S => O\" is a question;\n"
                             "neither can fire, and neither is listed here or removed by .remove-rules.\n"
                             "Nor is a rule that cannot assert what it concludes -- a container or a\n"
-                            "bare name as its consequence."},
+                            "bare name as its consequence -- or a rule that is not in force: one a\n"
+                            "statement mentions, one an opaque argument holds, or one zelph/mention\n"
+                            "or zelph_mention wrote down, until a claim of the same rule."},
 
             {".strata", ".strata\n"
                         "Shows the negation levels of the current rules: the order in which the\n"
@@ -617,7 +704,8 @@ namespace zelph::console
                         "Loads a MODULE: a script whose purpose is to define things for the session\n"
                         "around it. Its own lines are therefore not echoed, its statements are not\n"
                         "focus anchors for the deduction filter, and inference runs once when the\n"
-                        "whole file has been read rather than after every line.\n"
+                        "whole file has been read rather than after every line. A .lang in it holds\n"
+                        "for its own lines only: the importer's language is back when it ends.\n"
                         "\n"
                         "That is NOT how 'zelph script.zph' runs a script. A file named on the\n"
                         "command line is a SESSION: it behaves exactly as if its lines had been\n"
@@ -688,7 +776,8 @@ namespace zelph::console
                       "  full pass), the display registrations of modules (display schemes, the\n"
                       "  digit alphabet, verbose self-fact predicates), the handles of compiled\n"
                       "  nets, and the import registry, so the next .import of a module\n"
-                      "  imported before the load runs it again.\n"
+                      "  imported before the load runs it again. The node annotations are the\n"
+                      "  file's: the session's go, and a file without any leaves none.\n"
                       "- If <file> ends with '.json' or '.json.bz2' (Wikidata dump): when the\n"
                       "  session's network is empty and a '.bin' cache of the dump lies next to\n"
                       "  it, the cache is loaded and replaces the network as a '.bin' does.\n"
@@ -722,7 +811,8 @@ namespace zelph::console
                               "\n"
                               "Load selected chunks from a serialized .bin file or from a JSON manifest\n"
                               "that references chunk locations (local paths or remote URIs).\n"
-                              "The result is a read-only, incomplete graph view.\n"
+                              "The result is a read-only, incomplete graph view, without node\n"
+                              "annotations.\n"
                               "Inference (.run), pruning, cleanup, and destructive edits are blocked.\n"
                               "\n"
                               "Chunk selectors (comma-separated indices, default: load all):\n"
@@ -767,7 +857,10 @@ namespace zelph::console
 
             {".save", ".save <file.bin>\n"
                       "Saves the current network state to a binary file.\n"
-                      "The filename must end with '.bin'."},
+                      "The filename must end with '.bin'.\n"
+                      "Node annotations (zelph/annotate) are saved as a section of their own\n"
+                      "after the names. An engine older than that section loads the file\n"
+                      "without them, and its next .save leaves them out."},
 
             {".save-predicates", ".save-predicates <file.bin> <predicate> [<predicate> ...]\n"
                                  "\n"
@@ -804,7 +897,8 @@ namespace zelph::console
                                  "synapse need not be an edge, so which of them belong to the slice\n"
                                  "cannot be asked. Ordinary facts have no weight entry, so this is\n"
                                  "free unless the network carries a neural substrate. Clusters are\n"
-                                 "session state and are in no .bin at all.\n"
+                                 "session state and are in no .bin at all. Node annotations travel\n"
+                                 "with their nodes: the slice keeps those of the nodes it keeps.\n"
                                  "\n"
                                  "Example (the Wikidata class hierarchy alone):\n"
                                  "  .lang wikidata\n"
@@ -819,28 +913,46 @@ namespace zelph::console
                              "Both commands remove CLAIMS. A statement that exists only as part of a\n"
                              "rule's own condition or consequence is graph structure, not data, and is\n"
                              "left alone; delete it with .remove <id> if that is really what you mean.\n"
+                             "So are, in either form, a condition set's tag and members, which queries\n"
+                             "read as a rule's text, and the engine's own bookkeeping: the mark of a\n"
+                             "rule's pattern, a contradiction record or one of its members.\n"
                              "A statement that is a claim AND part of a rule's condition or consequence\n"
                              "loses the claim and stays as the rule's pattern: the rule stays in force.\n"
+                             "One that a mention holds -- an opaque fact or what zelph/mention wrote\n"
+                             "down -- loses the claim in the same way and stays part of the mention.\n"
                              "Whatever holds it outside a rule's text goes with the claim, together with\n"
-                             "what removing that holder takes along -- but nothing a rule is built from;\n"
+                             "what removing that holder takes along -- but nothing a rule or a mention\n"
+                             "is built from;\n"
                              "a holder that is itself part of a rule loses its claim the same way and\n"
                              "stays.\n"
-                             "A matched fact that is no part of a rule goes in the ground form together\n"
-                             "with what holds it, as with .remove; the variable form removes the matched\n"
-                             "facts alone, and what holds one of them stays. A contradiction record\n"
-                             "about such a fact is one: asserting the fact again then fails with an\n"
-                             "error naming a node, '.remove <that id>' takes it and the record away, and\n"
-                             "the next run reports the contradiction anew.\n"
-                             "Reports how many matching facts were removed; what went with them is not\n"
-                             "counted."},
+                             "A matched fact that is no part of a rule goes, in either form, together\n"
+                             "with what holds it, as with .remove: a statement that nests it, a\n"
+                             "contradiction record about it, and a collection it is a member of with\n"
+                             "whatever holds that collection, a rule written against it included --\n"
+                             "unless a rule or a mention is built from the collection and it is no\n"
+                             "set constant: then only the membership goes, and the collection, the\n"
+                             "rule or the mention and what else holds the collection stay. A set\n"
+                             "constant IS its members and goes.\n"
+                             "The relation-type declaration of a core predicate ('~ ~ ->', 'in ~ ->')\n"
+                             "is part of the engine: both forms keep it and say so.\n"
+                             "Reports how many facts were removed, counting what went with a removed\n"
+                             "fact; a claim withdrawn from a rule's pattern counts as one.\n"
+                             "What was derived from a removed fact stays: zelph records no derivation.\n"
+                             "From Janet, (zelph/dependents s p o) lists the facts derived from a fact\n"
+                             "and (zelph/holders s p o) the statements that would go with it, before\n"
+                             "(zelph/prune-fact s p o) removes it as the ground form does."},
 
             {".prune-nodes", ".prune-nodes <pattern>\n"
                              ".prune-nodes <variable> (<conditions>)\n"
                              "Removes all matching facts AND the nodes bound to the pattern's variable.\n"
                              "Requirements of the single-fact form:\n"
-                             "- The relation (predicate) must be fixed (no variable in predicate position)\n"
-                             "- EXACTLY ONE variable, in subject or object position: it names what gets\n"
-                             "  deleted. Two variables are rejected rather than silently read as one.\n"
+                             "- The relation (predicate) must be fixed (no variable in predicate position,\n"
+                             "  also not inside a nested fact or a set pattern)\n"
+                             "- EXACTLY ONE variable: it names what gets deleted, in subject or object\n"
+                             "  position as deep inside a nested fact or a set pattern -- in\n"
+                             "  '.prune-nodes (X p b) q c' what X binds goes, not c. Two variables are\n"
+                             "  rejected rather than silently read as one: name the one whose bindings\n"
+                             "  die with the second form, '.prune-nodes X ((X p Y) q c)'.\n"
                              "The second form takes a CONJUNCTION and is told which variable names the\n"
                              "victims, which is the one thing a conjunction cannot say by itself:\n"
                              "  .prune-nodes A (A P31 C, C P279∗ Q6999)\n"
@@ -901,7 +1013,8 @@ namespace zelph::console
 #ifndef __EMSCRIPTEN__
             {".stat-file", ".stat-file <file.bin>\n"
                            "Reads only the serialized zelph header from the given .bin file and prints\n"
-                           "file size and chunk counts for left/right adjacency and name maps.\n"
+                           "file size and chunk counts for left/right adjacency and name maps, and\n"
+                           "for node annotations when the file has them.\n"
                            "Does not load the network into memory, and does not read a single chunk --\n"
                            "which is what makes it instant on an 88 GB file, and also means that a file\n"
                            "truncated after the header still reports the counts the header declares.\n"
@@ -910,7 +1023,8 @@ namespace zelph::console
 
             {".index-file", ".index-file <file.bin> <output.json>\n"
                             "Scans a serialized zelph .bin file sequentially and emits a JSON sidecar\n"
-                            "containing byte offsets and lengths for the header and each chunk section.\n"
+                            "containing byte offsets and lengths for the header and each chunk section;\n"
+                            "a file with node annotations lists their chunks under \"annotations\".\n"
                             "Does not load the graph into the live network. Every chunk is read, so this\n"
                             "is the command that notices a truncated or corrupted file -- at the cost of\n"
                             "one pass over the whole file."},
@@ -943,6 +1057,8 @@ namespace zelph::console
             {".auto-run", ".auto-run\n"
                           "Toggles the automatic execution of the inference engine (.run) after every input.\n"
                           "Default is ON. Automatically switches to OFF when .load is used.\n"
+                          "A keyword block whose handler ran the engine after its last write is not\n"
+                          "followed by a run: the graph is still the fixpoint that run left.\n"
                           "It is a TOGGLE and takes no argument -- unlike its neighbours .anchors,\n"
                           ".semi-naive and .fact-stores, which read [on|off]. \".auto-run off\" is\n"
                           "therefore an error rather than a way to switch it off twice."},
@@ -1062,6 +1178,12 @@ namespace zelph::console
                                        "queries. The record is what makes a contradiction reported ONCE\n"
                                        "instead of again on every later reasoning run, the same way a\n"
                                        "derived fact is quiet the second time because the graph holds it.\n"
+                                       "A rule whose ONE condition stands without a condition set --\n"
+                                       "\"(X p Y) => !\" -- has no members to record, so its contradiction is\n"
+                                       "reported again on every run. Written as a one-element set,\n"
+                                       "\"(*{(X p Y)} ~ conjunction) => !\", or built with zelph/rule, it is\n"
+                                       "recorded once like any other -- unless the plain spelling was entered\n"
+                                       "first: the two are one rule, and the one entered first is kept.\n"
                                        "  (no argument) – show the current state\n"
                                        "  off – report every contradiction on every run, and add nothing to\n"
                                        "        the graph. One set node per DISTINCT contradiction is the\n"
@@ -1080,6 +1202,9 @@ namespace zelph::console
                                   "it (see '.help .semi-naive'), and every fact whose negated premise now\n"
                                   "holds, and which nothing else derives, is named in a warning beside the\n"
                                   "rule that derived it. The run succeeds, and the fact stays.\n"
+                                  "A fact is named once. When a run inside a cluster named it and the\n"
+                                  "cluster is dropped, the record comes back, and a later run names the\n"
+                                  "fact again where its negated premise holds; a merge keeps it named.\n"
                                   "The warning names the fact that has lost its support, not what that\n"
                                   "fact blocks: a conclusion it keeps from being derived is not named, nor\n"
                                   "is a fact derived from it by a rule without a negation.\n"
@@ -1095,7 +1220,8 @@ namespace zelph::console
                                   "        and with auto-run on, to each statement that adds a fact to a\n"
                                   "        negated predicate. The records are not facts: a saved network\n"
                                   "        does not hold them, and a .load that replaces the network\n"
-                                  "        discards them while the switch stays on.\n"
+                                  "        discards them while the switch stays on. Removing a rule,\n"
+                                  "        also with the cluster it was written in, discards its records.\n"
                                   "  off – the default; drops the records, unless check mode, which keeps\n"
                                   "        them for its own test, is on. Nothing is recorded or re-tested.\n"
                                   "In check mode the same facts fail the run instead.\n"
@@ -1119,7 +1245,9 @@ namespace zelph::console
                                 "              however much work that takes\n"
                                 "'.explain <fact> 0' has no depth limit and therefore no budget: it\n"
                                 "always searches the complete proof. The budget is a setting of the\n"
-                                "engine, so .new restores the default."},
+                                "engine, so .new restores the default.\n"
+                                "The same budget bounds the search of (zelph/dependents <fact>) from\n"
+                                "Janet, which ends its answer with :truncated where the budget ran out."},
             {".fact-stores", ".fact-stores [on|off]\n"
                              "Shows or disables the fact-path acceleration stores: the genuine-\n"
                              "structure store (exact triple per created fact node) and the\n"
@@ -1137,9 +1265,9 @@ namespace zelph::console
                              "        meaningful while a store is authoritative.\n"
                              "Every command that removes something turns them off as well, whether\n"
                              "or not it finds anything to remove: .remove, .prune-facts, .prune-nodes,\n"
-                             ".remove-rules and .cleanup; .cluster-drop does so when the cluster\n"
-                             "holds nodes. Use .new to start with a fresh engine and the stores\n"
-                             "enabled again."},
+                             ".remove-rules and .cleanup; .cluster-drop does so when a node outside\n"
+                             "the cluster refers to one of its nodes. Use .new to start with a fresh\n"
+                             "engine and the stores enabled again."},
 #ifndef __EMSCRIPTEN__
             {".wikidata-constraints", ".wikidata-constraints <json_file> <output_dir>\n"
                                       "Processes the Wikidata dump and exports constraint scripts\n"
@@ -1163,7 +1291,7 @@ namespace zelph::console
                                      "entity values attach to the existing Q/P nodes via their 'wikidata' names.\n"
                                      "The import is idempotent and incremental: re-running it (e.g. with additional\n"
                                      "qualifier properties) extends the loaded network. Persist the combined result\n"
-                                     "with .save <file.bin>.\n"
+                                     "with .save <file.bin>. Auto-run is switched off, as by .load.\n"
                                      "\n"
                                      "Value handling: entity values use their Q/P ID; time, quantity, string and\n"
                                      "monolingual text values become nodes named by their raw value (e.g.\n"
@@ -1185,11 +1313,13 @@ namespace zelph::console
                          "With argument: activates the named cluster (created if needed). All nodes and\n"
                          "facts created from now on are recorded in it — including relation nodes,\n"
                          "rule definitions, query patterns, and facts deduced by .run. Facts that\n"
-                         "already existed before are never recorded -- with one exception a drop has\n"
+                         "already existed before are never recorded -- with two exceptions a drop has\n"
                          "to undo all the same: claiming a statement that was only a rule's ground\n"
                          "pattern revokes that marking, and .cluster-drop puts it back. The node\n"
                          "existed, so nothing was created and nothing would otherwise be rolled back,\n"
                          "and the experiment would have turned the rule's patterns into data for good.\n"
+                         "Refuting such a statement takes it out of every query and gives it the\n"
+                         "probability 0, and .cluster-drop takes the refutation back the same way.\n"
                          "'.cluster default' deactivates cluster tracking.\n"
                          "A name beginning with '__' is refused: the engine's own scratch clusters\n"
                          "(a rule's build, a construction, .explain, .prune-facts) are named so, and\n"
@@ -1207,8 +1337,17 @@ namespace zelph::console
                               "recorded whenever such a fact existed.\n"
                               "Dropping the ACTIVE cluster falls back to 'default', i.e. tracking stops.\n"
                               "An unknown name is an error, not a no-op.\n"
-                              "Dropping a cluster that holds nodes turns the fact-path stores off until\n"
-                              "the next .new (see .help .fact-stores).\n"
+                              "A member the cluster added to an older collection goes, the collection\n"
+                              "stays as it was before the cluster.\n"
+                              "The relation-type declaration ('likes ~ ->') that the first fact of a\n"
+                              "predicate wrote inside the cluster goes with it, unless a fact outside the\n"
+                              "cluster uses the predicate or a statement outside holds the declaration.\n"
+                              "The engine's own vocabulary ('refuted', 'opaque', the rule-pattern\n"
+                              "predicate, 'closure', 'nn' and the like) belongs to no cluster: created\n"
+                              "inside one, it stays after the drop, and so does what refers to it.\n"
+                              "Dropping a cluster whose nodes something outside it refers to turns the\n"
+                              "fact-path stores off until the next .new; any other drop keeps them on\n"
+                              "(see .help .fact-stores).\n"
                               "WARNING: destructive and irreversible."},
 
             {".cluster-merge", ".cluster-merge <from> <to>\n"
@@ -1236,10 +1375,41 @@ namespace zelph::console
                 if (const auto alias = command_aliases.find(topic); alias != command_aliases.end())
                     topic = alias->second;
 
+                // A topic that is not a command: the help on a declaration.
+                static const std::map<std::string, std::string> topic_help = {
+                    {"opaque", "P ~ opaque\n"
+                               "Declares the predicate P opaque ('opaque' is a node of the language zelph,\n"
+                               "like 'refuted'). A statement claims itself and every fact nested in it,\n"
+                               "except in the argument positions -- subject and objects -- of an opaque\n"
+                               "predicate, and in the fact a refutation marks ('¬(F)' and '(F) ~ refuted'\n"
+                               "claim the marking and nothing in F): what a writer newly creates there is\n"
+                               "a MENTION, written down and not asserted, so no query and no rule condition\n"
+                               "takes it as data until a claim of the same statement makes it data. What\n"
+                               "existed before keeps its status. '=>' is the built-in opaque predicate.\n"
+                               "This holds for typed statements, zelph/fact, zelph_fact and firings alike;\n"
+                               "zelph/mention and zelph_mention write a mention directly. A rule written\n"
+                               "in such an argument or with them is a mention as well: it is not in force,\n"
+                               "and a rule over rules does not read it, until a claim of the same rule --\n"
+                               "typed, zelph/fact, zelph_fact, zelph/dedup-rule, zelph/build-rule -- puts\n"
+                               "it in force. A rule condition still reads inside an opaque argument by its\n"
+                               "structure, the negation levels read nothing there, and a query asserts what\n"
+                               "it creates there, as under a mentioned rule. .explain and .node label such\n"
+                               "a node 'mentioned; not asserted', and .explain labels such a rule 'rule\n"
+                               "mentioned; not in force'.\n"
+                               "The declaration is refused while a fact of P holds a statement in an\n"
+                               "argument position (what those facts claimed could not be told apart\n"
+                               "afterwards), and so is its removal; a core predicate cannot be declared.\n"
+                               "The declaration travels with .save and with a slice of P."},
+                };
+
                 auto it = detailed_help.find(topic);
                 if (it != detailed_help.end())
                 {
                     _n->out(it->second, true);
+                }
+                else if (const auto named = topic_help.find(cmd[1]); named != topic_help.end())
+                {
+                    _n->out(named->second, true);
                 }
                 else
                 {

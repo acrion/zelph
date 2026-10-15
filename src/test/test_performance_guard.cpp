@@ -143,6 +143,7 @@ TEST_CASE("performance guard: the Jacobian workload does the expected amount of 
     const uint64_t misses        = prof_counter(prof, "fs_cache:", "misses");
     const uint64_t full_clears   = prof_counter(prof, "fs_cache:", "full_clears");
     const uint64_t walks         = prof_counter(prof, "genuine:", "walks");
+    const uint64_t unmarked      = prof_counter(prof, "rule_patterns:", "unmarked");
 
     // Non-vacuity: a failed import would leave every ceiling below satisfied.
     // Deliberately far under the baseline -- this is not a second ceiling.
@@ -155,6 +156,16 @@ TEST_CASE("performance guard: the Jacobian workload does the expected amount of 
     // figures. It is exact rather than a ceiling because it is a property, not
     // a quantity: either the store is authoritative or it is not.
     CHECK(walks == 0);
+
+    // The marks a claim revokes. A revocation removes the marking fact, and
+    // eliminating it along the general path is what disarmed the store
+    // above, so each one presents an opportunity for the cliff to reappear.
+    // Exact rather than a ceiling: the import claims the same stdlib
+    // patterns on every run, and a change to what a statement claims in a
+    // nested position becomes visible here before becoming visible
+    // elsewhere. Measured at 15 on the tree before opaque predicates were
+    // introduced, in both sequential and parallel runs.
+    CHECK(unmarked == 15);
 
     // Requests for reconstruction that could not be fulfilled by the
     // fs_cache. Rose from 455644, the August baseline, to 678673 when the
@@ -169,4 +180,37 @@ TEST_CASE("performance guard: the Jacobian workload does the expected amount of 
     CHECK(deduce_calls <= ceiling(39869));
     CHECK(facts_created <= ceiling(15406));
     CHECK(scanned_seq + scanned_par <= ceiling(727256 + 94054));
+}
+
+// The blind spot of the prior scenario formed a case of its own. Its workload
+// drops no cluster, and a cluster drop disarmed the fact-path stores
+// permanently: a dry run within a cluster, dropped before a maths request,
+// caused `genuine walks` to rise from 0 to 2618 on a single identity over a
+// polynomial ring, and nothing above went red. A drop of a cluster with no
+// external references now removes its nodes without disarming them.
+TEST_CASE("performance guard: a dropped cluster leaves the math stack's stores armed" * doctest::test_suite("slow"))
+{
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+
+    interactive.process(".semi-naive on"); // as previously stated: the classic passes in check mode do not constitute the workload
+    interactive.process(".log -1");
+    interactive.process(".deductions off");
+    interactive.process(".import math");
+
+    interactive.process(".cluster dry");
+    interactive.process("c likes d");
+    interactive.process(".cluster default");
+    interactive.process(".cluster-drop dry");
+
+    interactive.process("<x y> ~ polyring");
+    interactive.process("(x + y) ≡ (y + x)");
+
+    collector.clear();
+    interactive.process(".prof");
+    const std::string prof = all_event_text(collector);
+
+    // Non-vacuity: the request managed to arrive at the stores.
+    CHECK(prof_counter(prof, "genuine:", "hits") > 0);
+    CHECK(prof_counter(prof, "genuine:", "walks") == 0);
 }

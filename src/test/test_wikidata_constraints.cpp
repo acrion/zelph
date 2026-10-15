@@ -176,6 +176,36 @@ TEST_CASE("wikidata constraints: a qualifier without a value produces no rule")
     fs::remove(dump);
 }
 
+TEST_CASE("wikidata constraints: a constraint whose main snak carries a hash yields its rule")
+{
+    namespace fs = std::filesystem;
+
+    // The dumps refrain from inserting a hash within a main snak, whereas
+    // the entity data returned by Wikidata's API includes one, positioned
+    // between the property and the value. A constraint statement was
+    // identified solely when the value immediately followed the property,
+    // resulting in no script being generated for this none-of constraint.
+    const char* kHashDump = R"json([
+{"type":"property","datatype":"wikibase-item","id":"P9999","labels":{"en":{"language":"en","value":"probe property"}},"claims":{"P2302":[{"mainsnak":{"snaktype":"value","property":"P2302","hash":"9a3c","datavalue":{"value":{"entity-type":"item","numeric-id":52558054,"id":"Q52558054"},"type":"wikibase-entityid"},"datatype":"wikibase-item"},"type":"statement","qualifiers":{"P2305":[{"snaktype":"value","property":"P2305","hash":"d1","datavalue":{"value":{"entity-type":"item","numeric-id":5,"id":"Q5"},"type":"wikibase-entityid"},"datatype":"wikibase-item"}]},"qualifiers-order":["P2305"],"id":"P9999$H1","rank":"normal"}]},"sitelinks":{}}
+]
+)json";
+    const auto  dump      = write_dump(kHashDump, "zelph_constraints_hash_test.json");
+    const auto  dir       = fs::temp_directory_path() / "zelph_constraints_hash_out";
+    fs::remove_all(dir);
+
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+
+    interactive.process(".wikidata-constraints \"" + dump.string() + "\" \"" + dir.string() + "\"");
+
+    const auto script = dir / "P9999.zph";
+    REQUIRE(fs::exists(script));
+    CHECK(read_file(script).find("(I P9999 Q5) => !") != std::string::npos);
+
+    fs::remove_all(dir);
+    fs::remove(dump);
+}
+
 TEST_CASE("wikidata constraints: the output directory is created, or refused with a message")
 {
     namespace fs = std::filesystem;

@@ -58,15 +58,40 @@ namespace zelph
 
         const StatementScope outside(_statement, nullptr); // a handler is Janet code of the user's own
 
-        if (pcall_rooted(f, 1, &arg, &result) != JANET_SIGNAL_OK)
+        const JanetSignal signal = pcall_rooted(f, 1, &arg, &result);
+        if (signal != JANET_SIGNAL_OK)
         {
-            std::string err = "Janet error in handler for keyword '" + name + "'";
+            std::string message;
+            const bool  is_text = janet_checktype(result, JANET_STRING) || janet_checktype(result, JANET_BUFFER);
             if (janet_checktype(result, JANET_STRING))
-                err += ": " + std::string(reinterpret_cast<const char*>(janet_unwrap_string(result)));
+                message = reinterpret_cast<const char*>(janet_unwrap_string(result));
             else if (janet_checktype(result, JANET_BUFFER))
             {
                 JanetBuffer* b = janet_unwrap_buffer(result);
-                err += ": " + std::string(reinterpret_cast<const char*>(b->data), b->count);
+                message        = std::string(reinterpret_cast<const char*>(b->data), b->count);
+            }
+
+            // A string the handler raised is its message, while the envelope
+            // enclosing this error names the block the handler responded to.
+            // The prefix indicated solely that the message came from a
+            // handler, using terminology intended for the host's developers
+            // rather than for the keyword's end users. An error value
+            // different from a string keeps the prefix and is described;
+            // previously, it was discarded, so `(error {:msg ...})` printed
+            // the prefix alone. A handler concluding in any other way -- such
+            // as pausing for the event loop -- is considered a host failure
+            // and keeps the prefix.
+            if (signal == JANET_SIGNAL_ERROR && is_text) throw std::runtime_error(message);
+
+            std::string err = "Janet error in handler for keyword '" + name + "'";
+            if (is_text)
+                err += ": " + message;
+            else if (signal == JANET_SIGNAL_ERROR && !janet_checktype(result, JANET_NIL))
+            {
+                janet_gcroot(result);
+                const JanetString text = janet_formatc("%n", result);
+                err += ": " + std::string(reinterpret_cast<const char*>(text), janet_string_length(text));
+                janet_gcunroot(result);
             }
             throw std::runtime_error(err);
         }

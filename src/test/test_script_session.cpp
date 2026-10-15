@@ -251,6 +251,106 @@ TEST_CASE("session script: a module cannot clear the session that loads it")
         CHECK(answers == std::vector<std::string>{"m p n", "s p t"}); });
 }
 
+TEST_CASE("session script: a module's .lang ends with the module")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        // A .lang within a module remained effective following the import,
+        // meaning a module could not name its vocabulary in a fixed
+        // language unless the importer was moved into it. Consequently, the
+        // arithmetic substrates defined their names using whatever language the
+        // importer was operating in, and one imported under .lang en computed
+        // on en digits that no literal could reach.
+        const fs::path inner  = write_script("lang_inner.zph", ".lang fr\ninner p thing\n");
+        const fs::path outer  = write_script("lang_outer.zph",
+                                             ".lang de\n.import " + inner.string() + "\nouter p thing\n");
+        const fs::path broken = write_script("lang_broken.zph", ".lang de\n.new\n");
+        const fs::path run    = write_script("lang_run.zph",
+                                             ".lang de\n(X p Y) => (Y q X)\n.name a en alpha\na p b\n");
+        interactive.process(".lang en");
+
+        SUBCASE("the importer's language is back after .import")
+        {
+            interactive.process(".import " + inner.string());
+            collector.clear();
+            interactive.process(".lang");
+            CHECK(any_output_contains(collector, "The current language is 'en'"));
+        }
+        SUBCASE("the importer's language is back after zelph/import")
+        {
+            interactive.process("%(zelph/import \"" + inner.generic_string() + "\")");
+            collector.clear();
+            interactive.process(".lang");
+            CHECK(any_output_contains(collector, "The current language is 'en'"));
+        }
+        SUBCASE("a nested module's .lang ends with it, and the module around it goes on in its own")
+        {
+            interactive.process(".import " + outer.string());
+            collector.clear();
+            interactive.process(".lang");
+            CHECK(any_output_contains(collector, "The current language is 'en'"));
+
+            // The line following the nested import was read in de, the
+            // outer module's language, not in fr and not in the
+            // session's en.
+            interactive.process(".lang de");
+            collector.clear();
+            interactive.process("outer p X");
+            CHECK(collect_answers(collector) == std::vector<std::string>{"outer p thing"});
+            interactive.process(".lang fr");
+            collector.clear();
+            interactive.process("inner p X");
+            CHECK(collect_answers(collector) == std::vector<std::string>{"inner p thing"});
+        }
+        SUBCASE("a module that stops at an error gives the language back")
+        {
+            // The use of `.new` is denied within a module (as shown in
+            // the test case above), resulting in a stop that prints no
+            // stack trace to the test log.
+            CHECK_THROWS_WITH_AS(interactive.process(".import " + broken.string()),
+                                 doctest::Contains("cannot run inside a module"),
+                                 std::runtime_error);
+            collector.clear();
+            interactive.process(".lang");
+            CHECK(any_output_contains(collector, "The current language is 'en'"));
+        }
+
+        SUBCASE("the run the module owes the session prints in the importer's language")
+        {
+            // The module postpones the session's inference run until the
+            // module ends, and that run is associated with the session.
+            // Node a has a name in each of the two languages, hence the
+            // output indicates the language in which the run printed it.
+            interactive.process(".deductions all");
+            collector.clear();
+            interactive.process(".import " + run.string());
+            CHECK(any_output_contains(collector, "b q alpha"));
+        }
+
+        fs::remove(inner);
+        fs::remove(outer);
+        fs::remove(broken);
+        fs::remove(run); });
+}
+
+TEST_CASE("session script: its .lang stays in force after the file, as typed lines leave it")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        // A session consists of the file's lines as though they were entered
+        // directly (refer to the top of this file), and a typed .lang stays
+        // in force. Only a module's .lang is confined to that module (as
+        // illustrated in the case above), and the two share import_file.
+        const fs::path script = write_script("lang_session.zph", ".lang de\n");
+        interactive.process(".lang en");
+        interactive.process_file(script.string());
+        fs::remove(script);
+
+        collector.clear();
+        interactive.process(".lang");
+        CHECK(any_output_contains(collector, "The current language is 'de'")); });
+}
+
 TEST_CASE("session script: an unknown extension is run, an imported one is refused")
 {
     run_both_modes([](auto& collector, auto& interactive)
@@ -869,6 +969,199 @@ TEST_CASE("Janet over several lines: what was collected is let go before its cod
             interactive.process("mm p A");
             CHECK(answers_contain(collector, "mm p vv"));
         } });
+}
+
+TEST_CASE("inline Janet: a struct, table, tuple or array is echoed as pp prints it, on one line that is cut")
+{
+    // A `%` line yielding a struct, a table, a tuple, or an array echoed
+    // Janet's description of it, `<struct 0x…>`, which names the type and an
+    // address but reveals no details about the actual value: at the prompt
+    // `%(zelph/annotations f)` was unreadable, and the documentation
+    // printed such values via `(zelph/out (string/format "%q" …))` instead.
+    // The echo outputs the same content as `(pp value)`, on a single line,
+    // and cuts it after 1000 bytes: `(use spork/json)` results in the
+    // session's environment table, where each entry holds a docstring, and
+    // Janet's own limit of 30 entries still leaves approximately five thousand
+    // bytes of it.
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+    const auto                  echo = [&](const std::string& line)
+    {
+        collector.clear();
+        interactive.process(line);
+        return last_out_text(collector);
+    };
+
+    SUBCASE("each of the four, as pp prints it")
+    {
+        CHECK(echo(R"(%{:b "x" :a 1})") == R"({:a 1 :b "x"})");
+        CHECK(echo("%@{:k 1}") == "@{:k 1}");
+        CHECK(echo("%(tuple 1 :two)") == "(1 :two)");
+        CHECK(echo(R"(%@[1 "a" [2]])") == R"(@[1 "a" (2)])");
+    }
+    SUBCASE("a node inside one prints as a node does")
+    {
+        interactive.process("a p b");
+        interactive.process(R"(%(zelph/annotate "a" "k" "v"))");
+        CHECK(echo(R"(%(zelph/annotations "a"))") == R"({"k" ("v")})");
+        CHECK(echo(R"(%[(zelph/lookup "a")])") == "(<zelph/node a>)");
+    }
+    SUBCASE("any other value prints as it did")
+    {
+        CHECK(echo("%(+ 1 2)") == "3");
+        CHECK(echo(R"(%(string "a" "b"))") == R"("ab")");
+        CHECK(echo(R"(%(string/repeat "a" 2000))").size() == 2002);
+        CHECK(echo(R"(%(zelph/lookup "never-named"))").empty());
+    }
+    SUBCASE("the session's environment table, which (use module) returns, is one line that is cut")
+    {
+        const std::string table = echo("%(curenv)");
+        CHECK(table.rfind("@{", 0) == 0);
+        CHECK(table.find('\n') == std::string::npos);
+        CHECK(table.size() < 1100);
+        CHECK(table.ends_with(" bytes, cut)"));
+        CHECK(any_output_contains(collector, " ... ("));
+    }
+    SUBCASE("the cut never splits a character")
+    {
+        // Janet escapes the bytes of a string that extend past ASCII, yet a
+        // symbol and the name of a node display unchanged. `(` consumes a
+        // single byte, thus a run of two-byte characters puts the first byte
+        // of a character at the thousandth position.
+        const std::string cut = echo(R"(%[(symbol (string/repeat "ä" 1000))])");
+        REQUIRE(cut.ends_with(" bytes, cut)"));
+        const std::string kept = cut.substr(0, cut.find(" ... ("));
+        CHECK(kept.size() == 999);
+        CHECK(kept.ends_with("ä"));
+    }
+    SUBCASE("a block keyword's result that is not a string prints the same way")
+    {
+        interactive.process(R"(%(zelph/register-keyword "kvs" (fn [text] {:got (string/trim text)})))");
+        collector.clear();
+        interactive.process("kvs hello");
+        interactive.process("");
+        CHECK(any_output_contains(collector, R"({:got "hello"})"));
+    }
+    SUBCASE("a % block's result prints the same way")
+    {
+        // The path through which the defect was reported: a bare `%` opens a
+        // block, and its last value is echoed when a second `%` closes it. A
+        // struct spanning two lines is echoed on a single line.
+        collector.clear();
+        interactive.process("%");
+        interactive.process("(def v {:a 1");
+        interactive.process("        :b [1 2]})");
+        interactive.process("v");
+        interactive.process("%");
+        CHECK(last_out_text(collector) == "{:a 1 :b (1 2)}");
+    }
+    SUBCASE("Janet's own cuts stay: a long array shows its ends, a dictionary its first 30 entries")
+    {
+        // What janet.md says the echo retains regarding Janet's own
+        // truncation: an array exceeding 160 elements displays its initial
+        // and final three, a dictionary shows its first 30 entries.
+        // Printing a value without such cuts is what `(printf "%m" value)`
+        // accomplishes.
+        CHECK(echo("%(range 200)") == "@[0 1 2 ... 197 198 199]");
+        const std::string dictionary = echo("%(table ;(mapcat (fn [i] [i i]) (range 40)))");
+        CHECK(dictionary.rfind("@{0 0 1 1 2 2 ", 0) == 0);
+        CHECK(dictionary.ends_with(" 29 29 ...}"));
+    }
+    SUBCASE("a table that holds itself prints the cycle and ends")
+    {
+        // A table that holds itself is a standard Janet value. Janet's
+        // printer indicates repetition rather than traversing it, and the
+        // echo ends.
+        CHECK(echo("%(do (def t @{:k 1}) (put t :self t))") == "@{:k 1 :self <cycle 0>}");
+    }
+    SUBCASE("a value that shares its parts many times over prints at once, and is cut")
+    {
+        // Janet's printer writes a part once for each location that holds it,
+        // meaning a tuple containing the same tuple twice, forty levels deep,
+        // constitutes a value of 41 tuples and a text spanning 2^40 leaves.
+        // The echo rendered everything before cutting it, and the REPL did
+        // not resume, unlike before, when it had immediately printed
+        // `<tuple 0x…>`. The text is rendered one level deeper at a time, and
+        // no deeper once it exceeds 64 KiB, and the marker says that the
+        // whole text surpasses this limit.
+        const std::string shared = echo("%(do (var x [1]) (for i 0 40 (set x [x x])) x)");
+        CHECK(shared.rfind("((((", 0) == 0);
+        CHECK(shared.find('\n') == std::string::npos);
+        CHECK(shared.size() < 1100);
+        CHECK(shared.ends_with(" ... (more than 65536 bytes, cut)"));
+    }
+    SUBCASE("a failed Janet script's error value prints the same way")
+    {
+        // When a `.janet` script fails, its error value reaches the message
+        // through the identical function; thus, a struct raised by the script
+        // is named by its data rather than by the label `<struct 0x…>`.
+        const auto script = std::filesystem::temp_directory_path() / "zelph-echo-failed-script.janet";
+        {
+            std::ofstream out(script);
+            out << R"((error {:code 1 :why "bad"}))" << '\n';
+        }
+        CHECK_THROWS_WITH_AS(interactive.process(".import " + script.generic_string()),
+                             doctest::Contains(R"(failed: {:code 1 :why "bad"})"),
+                             std::runtime_error);
+        std::filesystem::remove(script);
+    }
+    SUBCASE("a % line's error value prints the same way, raised there or in a script it runs")
+    {
+        // A `%` line whose error value was not a string reported a bare
+        // "Janet error", whereas the import above named the value: neither
+        // `%(error {:a 1})` nor a `zelph/run-script` of the failing script
+        // said what was raised.
+        const auto message = [&](const std::string& line)
+        {
+            try
+            {
+                interactive.process(line);
+            }
+            catch (const std::runtime_error& error)
+            {
+                return std::string(error.what());
+            }
+            return std::string();
+        };
+        CHECK(message("%(error {:a 1})") == R"js(Error in line "%(error {:a 1})": {:a 1})js");
+        CHECK(message("%(error :oops)") == R"js(Error in line "%(error :oops)": :oops)js");
+
+        const auto script = std::filesystem::temp_directory_path() / "zelph-echo-failed-run-script.janet";
+        {
+            std::ofstream out(script);
+            out << R"((error {:code 1 :why "bad"}))" << '\n';
+        }
+        CHECK(message(R"js(%(zelph/run-script ")js" + script.generic_string() + R"js("))js").ends_with(R"js(: {:code 1 :why "bad"})js"));
+        std::filesystem::remove(script);
+
+        CHECK(message(R"js(%(error "plain"))js") == R"js(Error in line "%(error "plain")": plain)js");
+    }
+    SUBCASE("a % line's signal other than an error is named with its value")
+    {
+        // A yield or a user signal stops a line's code just as an error
+        // does, because nothing resumes it, and its value was reported as if
+        // it were the error's message: `Error in line "%(yield 1)": 1`.
+        const auto message = [&](const std::string& line)
+        {
+            try
+            {
+                interactive.process(line);
+            }
+            catch (const std::runtime_error& error)
+            {
+                return std::string(error.what());
+            }
+            return std::string();
+        };
+        CHECK(message("%(yield 1)").starts_with(R"js(Error in line "%(yield 1)": signal :yield with the value 1, not an error)js"));
+        CHECK(message("%(signal :user0 {:a 1})").starts_with(R"js(Error in line "%(signal :user0 {:a 1})": signal :user0 with the value {:a 1}, not an error)js"));
+        CHECK(message(R"js(%(signal :user5 "s"))js").starts_with(R"js(Error in line "%(signal :user5 "s")": signal :user5 with the value "s", not an error)js"));
+        CHECK(message("%(error {:a 1})") == R"js(Error in line "%(error {:a 1})": {:a 1})js");
+        // An error remains an error if its message starts with the name of
+        // a status: the head of its trace is labelled "error", and the
+        // message comes after.
+        CHECK(message(R"js(%(error "pending: 3"))js") == R"js(Error in line "%(error "pending: 3")": pending: 3)js");
+    }
 }
 
 TEST_CASE("comments: the command tokenizer stops at a comment")

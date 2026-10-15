@@ -1,0 +1,3269 @@
+[
+ {
+  "id": ":name/proper",
+  "level": "drs",
+  "family": "basic",
+  "milestone": "M1",
+  "import": null,
+  "example": "John is a man.",
+  "corpus": [],
+  "needs": [],
+  "refused_reason": null,
+  "lifted_by": null,
+  "source": "constructs.md#the-classifier"
+ },
+ {
+  "id": ":object/count",
+  "level": "drs",
+  "family": "basic",
+  "milestone": "M1",
+  "import": null,
+  "example": "John is a man.",
+  "corpus": [],
+  "needs": [],
+  "refused_reason": null,
+  "lifted_by": null,
+  "source": "constructs.md#the-classifier"
+ },
+ {
+  "id": ":copula/noun",
+  "level": "drs",
+  "family": "basic",
+  "milestone": "M1",
+  "import": null,
+  "example": "John is a man.",
+  "corpus": [],
+  "needs": [],
+  "refused_reason": null,
+  "lifted_by": null,
+  "source": "constructs.md#the-classifier"
+ },
+ {
+  "id": ":question/yes-no",
+  "level": "drs",
+  "family": "Q",
+  "milestone": "M1",
+  "import": null,
+  "example": "Is John a man?",
+  "corpus": [],
+  "needs": [
+   "DEC-QTIME",
+   "DEC-RUN"
+  ],
+  "refused_reason": null,
+  "lifted_by": null,
+  "source": "constructs.md#the-classifier"
+ },
+ {
+  "id": ":individual/top-level",
+  "level": "drs",
+  "family": "basic",
+  "milestone": "M3",
+  "import": null,
+  "example": "There is a man.",
+  "corpus": [],
+  "needs": [
+   "DEC-INDIVIDUALS"
+  ],
+  "refused_reason": null,
+  "lifted_by": null,
+  "source": "constructs.md#the-classifier"
+ },
+ {
+  "id": ":object/something",
+  "level": "drs",
+  "family": "basic",
+  "milestone": "M3",
+  "import": null,
+  "example": "There is something. It waits.",
+  "corpus": [
+   266
+  ],
+  "needs": [],
+  "refused_reason": null,
+  "lifted_by": null,
+  "source": "constructs.md#the-classifier"
+ },
+ {
+  "id": ":verb/intransitive",
+  "level": "drs",
+  "family": "basic",
+  "milestone": "M3",
+  "import": null,
+  "example": "John waits.",
+  "corpus": [
+   22
+  ],
+  "needs": [
+   "DEC-SHAPES"
+  ],
+  "refused_reason": null,
+  "lifted_by": null,
+  "source": "constructs.md#the-classifier"
+ },
+ {
+  "id": ":verb/transitive",
+  "level": "drs",
+  "family": "basic",
+  "milestone": "M3",
+  "import": null,
+  "example": "John likes Mary.",
+  "corpus": [],
+  "needs": [],
+  "refused_reason": null,
+  "lifted_by": null,
+  "source": "constructs.md#the-classifier"
+ },
+ {
+  "id": ":verb/ditransitive",
+  "level": "drs",
+  "family": "basic",
+  "milestone": "M3",
+  "import": null,
+  "example": "John gives Mary a book.",
+  "corpus": [],
+  "needs": [],
+  "refused_reason": null,
+  "lifted_by": null,
+  "source": "constructs.md#the-classifier"
+ },
+ {
+  "id": ":adj/positive",
+  "level": "drs",
+  "family": "basic",
+  "milestone": "M3",
+  "import": null,
+  "example": "John is rich.",
+  "corpus": [],
+  "needs": [
+   "DEC-SHAPES"
+  ],
+  "refused_reason": null,
+  "lifted_by": null,
+  "source": "constructs.md#the-classifier"
+ },
+ {
+  "id": ":adj/transitive",
+  "level": "drs",
+  "family": "basic",
+  "milestone": "M3",
+  "import": null,
+  "example": "A woman is fond-of a cat.",
+  "corpus": [
+   173
+  ],
+  "needs": [],
+  "refused_reason": null,
+  "lifted_by": null,
+  "source": "constructs.md#the-classifier"
+ },
+ {
+  "id": ":adj/comparison",
+  "level": "drs",
+  "family": "basic",
+  "milestone": "M3",
+  "import": null,
+  "example": "John is taller than Mary.",
+  "corpus": [
+   1141
+  ],
+  "needs": [],
+  "refused_reason": null,
+  "lifted_by": null,
+  "source": "constructs.md#the-classifier"
+ },
+ {
+  "id": ":adj/comparative",
+  "level": "drs",
+  "family": "basic",
+  "milestone": null,
+  "import": null,
+  "example": "John is more important.",
+  "corpus": [
+   2172
+  ],
+  "needs": [],
+  "refused_reason": "A comparative without a target names no second term, so there is nothing to relate the subject to.",
+  "lifted_by": null,
+  "source": "constructs.md#the-classifier"
+ },
+ {
+  "id": ":adj/superlative",
+  "level": "drs",
+  "family": "basic",
+  "milestone": null,
+  "import": null,
+  "example": "John is most important.",
+  "corpus": [
+   2174
+  ],
+  "needs": [],
+  "refused_reason": "A superlative ranks the subject within a class the sentence does not name; zelph has no order over adjectives to read it from.",
+  "lifted_by": null,
+  "source": "constructs.md#the-classifier"
+ },
+ {
+  "id": ":of/relation",
+  "level": "drs",
+  "family": "basic",
+  "milestone": "M3",
+  "import": null,
+  "example": "Bill is a father of John.",
+  "corpus": [],
+  "needs": [
+   "DEC-OF"
+  ],
+  "refused_reason": null,
+  "lifted_by": null,
+  "source": "constructs.md#the-classifier"
+ },
+ {
+  "id": ":copula/located",
+  "level": "drs",
+  "family": "V",
+  "milestone": "M3",
+  "import": null,
+  "example": "John is in a park.",
+  "corpus": [],
+  "needs": [
+   "DEC-NAMES"
+  ],
+  "refused_reason": null,
+  "lifted_by": null,
+  "source": "constructs.md#the-classifier"
+ },
+ {
+  "id": ":copula/located-many",
+  "level": "drs",
+  "family": "V",
+  "milestone": null,
+  "import": null,
+  "example": "Mary is in a garden in an evening.",
+  "corpus": [
+   3464
+  ],
+  "needs": [],
+  "refused_reason": "Several prepositional phrases on one `is` would need an occurrence of the copula itself, which has no fact of its own; the located copula maps one phrase to one phrase predicate.",
+  "lifted_by": null,
+  "source": "constructs.md#the-classifier"
+ },
+ {
+  "id": ":copula/identity",
+  "level": "drs",
+  "family": "basic",
+  "milestone": "M5",
+  "import": null,
+  "example": "Sun is the Sun.",
+  "corpus": [
+   3751
+  ],
+  "needs": [
+   "DEC-NEQ"
+  ],
+  "refused_reason": null,
+  "lifted_by": null,
+  "source": "constructs.md#the-classifier"
+ },
+ {
+  "id": ":question/wh",
+  "level": "drs",
+  "family": "Q",
+  "milestone": "M3",
+  "import": null,
+  "example": "Who waits?",
+  "corpus": [
+   249
+  ],
+  "needs": [],
+  "refused_reason": null,
+  "lifted_by": null,
+  "source": "constructs.md#the-classifier"
+ },
+ {
+  "id": ":question/unrestricted",
+  "level": "context",
+  "family": "Q",
+  "milestone": null,
+  "import": null,
+  "example": "Who is there?",
+  "corpus": [
+   1679
+  ],
+  "needs": [],
+  "refused_reason": "zelph answers a question by matching patterns, and this wh-word is constrained by no condition, so every node would be an answer.",
+  "lifted_by": null,
+  "source": "constructs.md#context-checks"
+ },
+ {
+  "id": ":data/string",
+  "level": "drs",
+  "family": "basic",
+  "milestone": "M3",
+  "import": null,
+  "example": "A text is \"abcdef\".",
+  "corpus": [
+   1593
+  ],
+  "needs": [
+   "DEC-DATA"
+  ],
+  "refused_reason": null,
+  "lifted_by": null,
+  "source": "constructs.md#the-classifier"
+ },
+ {
+  "id": ":data/integer",
+  "level": "drs",
+  "family": "basic",
+  "milestone": "M5",
+  "import": "ace-math",
+  "example": "John's age is 30.",
+  "corpus": [
+   1591
+  ],
+  "needs": [
+   "DEC-DATA",
+   "DEC-MATH-IMPORT"
+  ],
+  "refused_reason": null,
+  "lifted_by": null,
+  "source": "constructs.md#the-classifier"
+ },
+ {
+  "id": ":data/real",
+  "level": "drs",
+  "family": "basic",
+  "milestone": null,
+  "import": null,
+  "example": "3.14 is a real.",
+  "corpus": [
+   2117
+  ],
+  "needs": [],
+  "refused_reason": "zelph has integers only.",
+  "lifted_by": null,
+  "source": "constructs.md#the-classifier"
+ },
+ {
+  "id": ":data/measured",
+  "level": "drs",
+  "family": "basic",
+  "milestone": null,
+  "import": null,
+  "example": "John's height is 180cm.",
+  "corpus": [
+   2622
+  ],
+  "needs": [
+   "DEC-PLURALS"
+  ],
+  "refused_reason": "zelph has no units, and integers only.",
+  "lifted_by": null,
+  "source": "constructs.md#the-classifier"
+ },
+ {
+  "id": ":rule/horn",
+  "level": "drs",
+  "family": "R",
+  "milestone": "M4",
+  "import": null,
+  "example": "All dogs bark.",
+  "corpus": [
+   2052
+  ],
+  "needs": [],
+  "refused_reason": null,
+  "lifted_by": null,
+  "source": "constructs.md#the-classifier"
+ },
+ {
+  "id": ":rule/generative-head",
+  "level": "drs",
+  "family": "R",
+  "milestone": "M4",
+  "import": null,
+  "example": "Every man owns a dog.",
+  "corpus": [],
+  "needs": [
+   "DEC-GENERATIVE"
+  ],
+  "refused_reason": null,
+  "lifted_by": null,
+  "source": "constructs.md#the-classifier"
+ },
+ {
+  "id": ":rule/nested",
+  "level": "drs",
+  "family": "R",
+  "milestone": "M4",
+  "import": null,
+  "example": "Every man sees every dog.",
+  "corpus": [
+   84
+  ],
+  "needs": [
+   "DEC-NESTED-IMP"
+  ],
+  "refused_reason": null,
+  "lifted_by": null,
+  "source": "constructs.md#the-classifier"
+ },
+ {
+  "id": ":rule/negated",
+  "level": "drs",
+  "family": "R",
+  "milestone": "M4",
+  "import": null,
+  "example": "Not every man waits.",
+  "corpus": [],
+  "needs": [],
+  "refused_reason": null,
+  "lifted_by": null,
+  "source": "constructs.md#the-classifier"
+ },
+ {
+  "id": ":rule/in-body",
+  "level": "drs",
+  "family": "R",
+  "milestone": null,
+  "import": null,
+  "example": "If every dog sleeps then a cat runs.",
+  "corpus": [
+   782
+  ],
+  "needs": [
+   "DEC-STRATA"
+  ],
+  "refused_reason": "A universal inside a condition needs a helper rule that holds \"not provably\". zelph orders such a helper only on a graph without Wikidata's class properties and only where no conclusion feeds back, so the answer could depend on the order of the rules.",
+  "lifted_by": "the planned narrowing of DEC-STRATA, for the core profile only; not v1",
+  "source": "constructs.md#the-classifier"
+ },
+ {
+  "id": ":rule/in-question",
+  "level": "drs",
+  "family": "R",
+  "milestone": "M4",
+  "import": null,
+  "example": "Is it true that every dog is an animal?",
+  "corpus": [
+   1974
+  ],
+  "needs": [
+   "DEC-QUNIV",
+   "P-rule-list"
+  ],
+  "refused_reason": null,
+  "lifted_by": null,
+  "source": "constructs.md#the-classifier"
+ },
+ {
+  "id": ":rule/in-wh-question",
+  "level": "drs",
+  "family": "R",
+  "milestone": null,
+  "import": null,
+  "example": "How does every man wait?",
+  "corpus": [
+   2087
+  ],
+  "needs": [],
+  "refused_reason": "The hypothetical check answers yes or no; it cannot say which individuals answer a wh-question.",
+  "lifted_by": null,
+  "source": "constructs.md#the-classifier"
+ },
+ {
+  "id": ":rule/unsafe-hypothesis",
+  "level": "context",
+  "family": "R",
+  "milestone": null,
+  "import": null,
+  "example": "If a man is not provably married then the man is a bachelor. Is it true that every man is a bachelor?",
+  "corpus": [],
+  "needs": [
+   "DEC-QUNIV"
+  ],
+  "refused_reason": "A fresh hypothetical witness is \"not provably\" everything, so a rule with \"not provably\" or `\\=` that the hypothesis can reach would make the answer wrong.",
+  "lifted_by": null,
+  "source": "constructs.md#context-checks"
+ },
+ {
+  "id": ":rule/unsafe",
+  "level": "context",
+  "family": "R",
+  "milestone": null,
+  "import": null,
+  "example": "Everybody waits.",
+  "corpus": [],
+  "needs": [],
+  "refused_reason": "No positive condition binds a variable of the conclusion, so the rule would have to range over every node.",
+  "lifted_by": null,
+  "source": "constructs.md#context-checks"
+ },
+ {
+  "id": ":rule/disconnected-head",
+  "level": "context",
+  "family": "R",
+  "milestone": "M4",
+  "import": null,
+  "example": "If a man waits then a dog barks.",
+  "corpus": [],
+  "needs": [
+   "DEC-DISCONNECTED"
+  ],
+  "refused_reason": null,
+  "lifted_by": null,
+  "source": "constructs.md#context-checks"
+ },
+ {
+  "id": ":rule/endless-generation",
+  "level": "context",
+  "family": "R",
+  "milestone": null,
+  "import": null,
+  "example": "Every person has a mother who is a person.",
+  "corpus": [],
+  "needs": [],
+  "refused_reason": "Each new individual the rule makes satisfies its condition again, so the run would not end.",
+  "lifted_by": null,
+  "source": "constructs.md#context-checks"
+ },
+ {
+  "id": ":neg/fact",
+  "level": "drs",
+  "family": "N",
+  "milestone": "M4",
+  "import": null,
+  "example": "John does not wait.",
+  "corpus": [],
+  "needs": [
+   "P-refute",
+   "DEC-REFUTE-ROUTES"
+  ],
+  "refused_reason": null,
+  "lifted_by": null,
+  "source": "constructs.md#the-classifier"
+ },
+ {
+  "id": ":neg/statement",
+  "level": "drs",
+  "family": "N",
+  "milestone": "M4",
+  "import": null,
+  "example": "There is no man.",
+  "corpus": [
+   707
+  ],
+  "needs": [],
+  "refused_reason": null,
+  "lifted_by": null,
+  "source": "constructs.md#the-classifier"
+ },
+ {
+  "id": ":neg/not-every",
+  "level": "drs",
+  "family": "N",
+  "milestone": "M4",
+  "import": null,
+  "example": "Not every man waits.",
+  "corpus": [],
+  "needs": [],
+  "refused_reason": null,
+  "lifted_by": null,
+  "source": "constructs.md#the-classifier"
+ },
+ {
+  "id": ":neg/in-head",
+  "level": "drs",
+  "family": "N",
+  "milestone": "M4",
+  "import": null,
+  "example": "No card is correct.",
+  "corpus": [
+   3413
+  ],
+  "needs": [
+   "DEC-REFUTED",
+   "P-refute"
+  ],
+  "refused_reason": null,
+  "lifted_by": null,
+  "source": "constructs.md#the-classifier"
+ },
+ {
+  "id": ":neg/atom-in-body",
+  "level": "drs",
+  "family": "N",
+  "milestone": "M4",
+  "import": null,
+  "example": "If John does not wait then Mary sleeps.",
+  "corpus": [],
+  "needs": [
+   "DEC-NEG",
+   "P-refute"
+  ],
+  "refused_reason": null,
+  "lifted_by": null,
+  "source": "constructs.md#the-classifier"
+ },
+ {
+  "id": ":neg/complex-in-body",
+  "level": "drs",
+  "family": "N",
+  "milestone": null,
+  "import": null,
+  "example": "If a man does not own a car then the man walks.",
+  "corpus": [],
+  "needs": [
+   "DEC-NEG"
+  ],
+  "refused_reason": "A condition can test that one fact is refuted, not that no combination of facts holds. The hint offers \"does not provably\", which is usually what is meant.",
+  "lifted_by": null,
+  "source": "constructs.md#the-classifier"
+ },
+ {
+  "id": ":neg/atom-in-question",
+  "level": "drs",
+  "family": "N",
+  "milestone": "M4",
+  "import": null,
+  "example": "Who does not wait?",
+  "corpus": [
+   1448
+  ],
+  "needs": [],
+  "refused_reason": null,
+  "lifted_by": null,
+  "source": "constructs.md#the-classifier"
+ },
+ {
+  "id": ":neg/complex-in-question",
+  "level": "drs",
+  "family": "N",
+  "milestone": null,
+  "import": null,
+  "example": "Is there no laundry?",
+  "corpus": [
+   763
+  ],
+  "needs": [],
+  "refused_reason": "A question can test that one fact is refuted, not that no combination of facts holds. The hint offers \"not provably\" (`:naf/in-question` is supported).",
+  "lifted_by": null,
+  "source": "constructs.md#the-classifier"
+ },
+ {
+  "id": ":neg/formula",
+  "level": "drs",
+  "family": "N",
+  "milestone": "M5",
+  "import": null,
+  "example": "It is false that 2 = 5 - 4.",
+  "corpus": [
+   2386
+  ],
+  "needs": [
+   "DEC-NEQ",
+   "DEC-MATH-MODULE"
+  ],
+  "refused_reason": null,
+  "lifted_by": null,
+  "source": "math.md#the-ids"
+ },
+ {
+  "id": ":naf/atom-in-body",
+  "level": "drs",
+  "family": "F",
+  "milestone": "M4",
+  "import": null,
+  "example": "If a man is not provably married then the man is a bachelor.",
+  "corpus": [],
+  "needs": [],
+  "refused_reason": null,
+  "lifted_by": null,
+  "source": "constructs.md#the-classifier"
+ },
+ {
+  "id": ":naf/complex-in-body",
+  "level": "drs",
+  "family": "F",
+  "milestone": "M4",
+  "import": null,
+  "example": "If a man does not provably own a car then the man walks.",
+  "corpus": [],
+  "needs": [
+   "DEC-NEG"
+  ],
+  "refused_reason": null,
+  "lifted_by": null,
+  "source": "constructs.md#the-classifier"
+ },
+ {
+  "id": ":naf/nested-in-body",
+  "level": "drs",
+  "family": "F",
+  "milestone": null,
+  "import": null,
+  "example": "If a man is not provably a farmer who does not provably own a dog then the man is idle.",
+  "corpus": [],
+  "needs": [
+   "DEC-STRATA"
+  ],
+  "refused_reason": "The helper rule of the outer \"not provably\" would hold another \"not provably\", with the same limits.",
+  "lifted_by": "the planned narrowing of DEC-STRATA, for the core profile only; not v1",
+  "source": "constructs.md#the-classifier"
+ },
+ {
+  "id": ":naf/unstratified",
+  "level": "context",
+  "family": "F",
+  "milestone": null,
+  "import": null,
+  "example": "If a man is not provably married then the man is a bachelor. If a man is not provably a bachelor then the man is a husband.",
+  "corpus": [],
+  "needs": [
+   "DEC-STRATA"
+  ],
+  "refused_reason": "A \"not provably\" condition tests what a rule with a \"not provably\" condition concludes, directly or through other rules; zelph cannot always put such rules in order, and then the answer depends on the order of the rules.",
+  "lifted_by": "the planned narrowing of DEC-STRATA, for the core profile only; not v1",
+  "source": "constructs.md#context-checks"
+ },
+ {
+  "id": ":naf/in-question",
+  "level": "drs",
+  "family": "F",
+  "milestone": "M4",
+  "import": null,
+  "example": "Which clerk does not provably sleep?",
+  "corpus": [
+   2772
+  ],
+  "needs": [],
+  "refused_reason": null,
+  "lifted_by": null,
+  "source": "constructs.md#the-classifier"
+ },
+ {
+  "id": ":naf/top-level",
+  "level": "drs",
+  "family": "F",
+  "milestone": null,
+  "import": null,
+  "example": "It is not provable that Mary sleeps.",
+  "corpus": [
+   1416
+  ],
+  "needs": [
+   "DEC-NEG"
+  ],
+  "refused_reason": "\"Not provable\" describes what the graph lacks; it can be asked or used as a condition, not stated as a fact or concluded.",
+  "lifted_by": null,
+  "source": "constructs.md#the-classifier"
+ },
+ {
+  "id": ":naf/formula",
+  "level": "drs",
+  "family": "F",
+  "milestone": "M5",
+  "import": null,
+  "example": "If a person's age is A and it is not provable that A > 18 then the person is a minor.",
+  "corpus": [],
+  "needs": [
+   "DEC-NEQ",
+   "DEC-MATH-MODULE"
+  ],
+  "refused_reason": null,
+  "lifted_by": null,
+  "source": "math.md#the-ids"
+ },
+ {
+  "id": ":or/in-body",
+  "level": "drs",
+  "family": "D",
+  "milestone": "M4",
+  "import": null,
+  "example": "If a man waits or sleeps then the man is tired.",
+  "corpus": [],
+  "needs": [],
+  "refused_reason": null,
+  "lifted_by": null,
+  "source": "constructs.md#the-classifier"
+ },
+ {
+  "id": ":or/in-question",
+  "level": "drs",
+  "family": "D",
+  "milestone": "M4",
+  "import": null,
+  "example": "Who eats or sleeps?",
+  "corpus": [
+   2621
+  ],
+  "needs": [],
+  "refused_reason": null,
+  "lifted_by": null,
+  "source": "constructs.md#the-classifier"
+ },
+ {
+  "id": ":or/in-head-or-statement",
+  "level": "drs",
+  "family": "D",
+  "milestone": null,
+  "import": null,
+  "example": "A woman sings or she dances.",
+  "corpus": [
+   188
+  ],
+  "needs": [],
+  "refused_reason": "zelph stores facts and rules with one set of conclusions; a disjunction stated or concluded has no representation in either.",
+  "lifted_by": null,
+  "source": "constructs.md#the-classifier"
+ },
+ {
+  "id": ":formula/compare",
+  "level": "drs",
+  "family": "A",
+  "milestone": "M5",
+  "import": "ace-math",
+  "example": "1 < 2.",
+  "corpus": [
+   2384
+  ],
+  "needs": [
+   "DEC-MATH-MODULE",
+   "DEC-MATH-LANG"
+  ],
+  "refused_reason": null,
+  "lifted_by": null,
+  "source": "math.md#the-ids"
+ },
+ {
+  "id": ":formula/identity",
+  "level": "drs",
+  "family": "A",
+  "milestone": "M5",
+  "import": null,
+  "example": "John \\= Mary.",
+  "corpus": [],
+  "needs": [
+   "DEC-NEQ"
+  ],
+  "refused_reason": null,
+  "lifted_by": null,
+  "source": "math.md#the-ids"
+ },
+ {
+  "id": ":formula/non-numeric",
+  "level": "drs",
+  "family": "A",
+  "milestone": null,
+  "import": null,
+  "example": "\"abc\" < \"abd\".",
+  "corpus": [],
+  "needs": [],
+  "refused_reason": "zelph has no order on strings, lists or sets.",
+  "lifted_by": null,
+  "source": "math.md#the-ids"
+ },
+ {
+  "id": ":expr/arith",
+  "level": "drs",
+  "family": "A",
+  "milestone": "M5",
+  "import": "ace-math",
+  "example": "John's age is 29 + 1.",
+  "corpus": [],
+  "needs": [
+   "DEC-MATH-MODULE"
+  ],
+  "refused_reason": null,
+  "lifted_by": null,
+  "source": "math.md#the-ids"
+ },
+ {
+  "id": ":expr/concat",
+  "level": "drs",
+  "family": "A",
+  "milestone": null,
+  "import": null,
+  "example": "\"abc\" is \"ab\" & \"c\".",
+  "corpus": [
+   2873
+  ],
+  "needs": [],
+  "refused_reason": "zelph cannot join strings yet; a rule set that joins character lists would open it.",
+  "lifted_by": "a rule set that joins character lists",
+  "source": "math.md#the-ids"
+ },
+ {
+  "id": ":expr/as-data",
+  "level": "context",
+  "family": "A",
+  "milestone": null,
+  "import": null,
+  "example": "John likes Mary + 1.",
+  "corpus": [
+   3527
+  ],
+  "needs": [
+   "DEC-DATA"
+  ],
+  "refused_reason": "zelph stores a term by its value, and this term has no whole-number value; stored as a term it would be a request. Storing such terms as terms is left to a later round.",
+  "lifted_by": "storing such a term as a term, a later round",
+  "source": "math.md#the-ids"
+ },
+ {
+  "id": ":mod/pp",
+  "level": "drs",
+  "family": "V",
+  "milestone": "M6",
+  "import": null,
+  "example": "A woman sleeps in a garden.",
+  "corpus": [
+   4
+  ],
+  "needs": [
+   "DEC-EVENTS"
+  ],
+  "refused_reason": null,
+  "lifted_by": null,
+  "source": "constructs.md#the-classifier"
+ },
+ {
+  "id": ":mod/adverb",
+  "level": "drs",
+  "family": "V",
+  "milestone": "M6",
+  "import": null,
+  "example": "A man runs fast.",
+  "corpus": [
+   1524
+  ],
+  "needs": [
+   "DEC-EVENTS"
+  ],
+  "refused_reason": null,
+  "lifted_by": null,
+  "source": "constructs.md#the-classifier"
+ },
+ {
+  "id": ":mod/adverb-degree",
+  "level": "drs",
+  "family": "V",
+  "milestone": null,
+  "import": null,
+  "example": "A car runs more speedily.",
+  "corpus": [
+   1566
+  ],
+  "needs": [],
+  "refused_reason": "A comparative or superlative adverb compares manners without naming what with; the manner of an occurrence carries no degree.",
+  "lifted_by": null,
+  "source": "constructs.md#the-classifier"
+ },
+ {
+  "id": ":question/where-when-how",
+  "level": "drs",
+  "family": "Q",
+  "milestone": "M6",
+  "import": null,
+  "example": "How is John?",
+  "corpus": [
+   2200
+  ],
+  "needs": [
+   "DEC-EVENTS"
+  ],
+  "refused_reason": null,
+  "lifted_by": null,
+  "source": "constructs.md#the-classifier"
+ },
+ {
+  "id": ":object/plural-count",
+  "level": "drs",
+  "family": "P",
+  "milestone": "M7",
+  "import": null,
+  "example": "2 men wait.",
+  "corpus": [
+   1213
+  ],
+  "needs": [
+   "DEC-PLURALS"
+  ],
+  "refused_reason": null,
+  "lifted_by": null,
+  "source": "constructs.md#the-classifier"
+ },
+ {
+  "id": ":object/at-most",
+  "level": "drs",
+  "family": "P",
+  "milestone": "M7",
+  "import": null,
+  "example": "At most 1 man waits.",
+  "corpus": [
+   1190
+  ],
+  "needs": [
+   "DEC-PLURALS",
+   "DEC-NEQ"
+  ],
+  "refused_reason": null,
+  "lifted_by": null,
+  "source": "constructs.md#the-classifier"
+ },
+ {
+  "id": ":object/at-least",
+  "level": "drs",
+  "family": "P",
+  "milestone": "M7",
+  "import": null,
+  "example": "At least 3 men wait.",
+  "corpus": [
+   422
+  ],
+  "needs": [
+   "DEC-PLURALS"
+  ],
+  "refused_reason": null,
+  "lifted_by": null,
+  "source": "constructs.md#the-classifier"
+ },
+ {
+  "id": ":object/group",
+  "level": "drs",
+  "family": "P",
+  "milestone": "M7",
+  "import": null,
+  "example": "John and Mary lift a table.",
+  "corpus": [],
+  "needs": [
+   "DEC-PLURALS"
+  ],
+  "refused_reason": null,
+  "lifted_by": null,
+  "source": "constructs.md#the-classifier"
+ },
+ {
+  "id": ":group/condition-list",
+  "level": "drs",
+  "family": "P",
+  "milestone": "M7",
+  "import": null,
+  "example": "John sees exactly 2 men.",
+  "corpus": [
+   1294
+  ],
+  "needs": [
+   "DEC-PLURALS"
+  ],
+  "refused_reason": null,
+  "lifted_by": null,
+  "source": "constructs.md#the-classifier"
+ },
+ {
+  "id": ":object/mass",
+  "level": "drs",
+  "family": "U",
+  "milestone": "M7",
+  "import": null,
+  "example": "John drinks some water.",
+  "corpus": [],
+  "needs": [
+   "DEC-PLURALS"
+  ],
+  "refused_reason": null,
+  "lifted_by": null,
+  "source": "constructs.md#the-classifier"
+ },
+ {
+  "id": ":object/measure",
+  "level": "drs",
+  "family": "U",
+  "milestone": null,
+  "import": null,
+  "example": "A cook has 3 kg of pears.",
+  "corpus": [
+   167
+  ],
+  "needs": [
+   "DEC-PLURALS"
+  ],
+  "refused_reason": "Measured quantities need units, which zelph does not have.",
+  "lifted_by": null,
+  "source": "constructs.md#the-classifier"
+ },
+ {
+  "id": ":data/list",
+  "level": "drs",
+  "family": "L",
+  "milestone": "M7",
+  "import": null,
+  "example": "[1, 2] is contained by [3, 4].",
+  "corpus": [
+   2390
+  ],
+  "needs": [
+   "DEC-PLURALS"
+  ],
+  "refused_reason": null,
+  "lifted_by": null,
+  "source": "constructs.md#the-classifier"
+ },
+ {
+  "id": ":data/set",
+  "level": "drs",
+  "family": "L",
+  "milestone": "M7",
+  "import": null,
+  "example": "{ John } waits.",
+  "corpus": [
+   2395
+  ],
+  "needs": [
+   "DEC-PLURALS"
+  ],
+  "refused_reason": null,
+  "lifted_by": null,
+  "source": "constructs.md#the-classifier"
+ },
+ {
+  "id": ":question/how-many",
+  "level": "drs",
+  "family": "Q",
+  "milestone": "M7",
+  "import": null,
+  "example": "How many men wait?",
+  "corpus": [
+   3746
+  ],
+  "needs": [],
+  "refused_reason": null,
+  "lifted_by": null,
+  "source": "constructs.md#the-classifier"
+ },
+ {
+  "id": ":modal/can",
+  "level": "drs",
+  "family": "M",
+  "milestone": "M8",
+  "import": null,
+  "example": "John can fly.",
+  "corpus": [
+   1454
+  ],
+  "needs": [
+   "DEC-MODAL",
+   "P-opaque",
+   "P-set-match"
+  ],
+  "refused_reason": null,
+  "lifted_by": null,
+  "source": "constructs.md#the-classifier"
+ },
+ {
+  "id": ":modal/must",
+  "level": "drs",
+  "family": "M",
+  "milestone": "M8",
+  "import": null,
+  "example": "A man must wait.",
+  "corpus": [
+   1280
+  ],
+  "needs": [
+   "DEC-MODAL",
+   "P-opaque",
+   "P-set-match"
+  ],
+  "refused_reason": null,
+  "lifted_by": null,
+  "source": "constructs.md#the-classifier"
+ },
+ {
+  "id": ":modal/should",
+  "level": "drs",
+  "family": "M",
+  "milestone": "M8",
+  "import": null,
+  "example": "John should wait.",
+  "corpus": [
+   3010
+  ],
+  "needs": [
+   "DEC-MODAL",
+   "P-opaque",
+   "P-set-match"
+  ],
+  "refused_reason": null,
+  "lifted_by": null,
+  "source": "constructs.md#the-classifier"
+ },
+ {
+  "id": ":modal/may",
+  "level": "drs",
+  "family": "M",
+  "milestone": "M8",
+  "import": null,
+  "example": "John may wait.",
+  "corpus": [
+   3355
+  ],
+  "needs": [
+   "DEC-MODAL",
+   "P-opaque",
+   "P-set-match"
+  ],
+  "refused_reason": null,
+  "lifted_by": null,
+  "source": "constructs.md#the-classifier"
+ },
+ {
+  "id": ":sub/that-clause",
+  "level": "drs",
+  "family": "S",
+  "milestone": "M8",
+  "import": null,
+  "example": "John knows that Mary waits.",
+  "corpus": [
+   1360
+  ],
+  "needs": [
+   "DEC-MODAL",
+   "P-opaque",
+   "P-set-match"
+  ],
+  "refused_reason": null,
+  "lifted_by": null,
+  "source": "constructs.md#the-classifier"
+ },
+ {
+  "id": ":sub/ground-conditional",
+  "level": "drs",
+  "family": "R",
+  "milestone": null,
+  "import": null,
+  "example": "John believes that if Mary waits then Bill sleeps.",
+  "corpus": [],
+  "needs": [
+   "DEC-MODAL",
+   "DEC-CAT4"
+  ],
+  "refused_reason": "A ground rule typed natively and the same rule mentioned are one node, and the mention takes the typed rule out of force.",
+  "lifted_by": "the asserted-rule record (K1-P1)",
+  "source": "constructs.md#the-classifier"
+ },
+ {
+  "id": ":sub/conditional-with-referents-in-body",
+  "level": "drs",
+  "family": "R",
+  "milestone": null,
+  "import": null,
+  "example": "If John believes that every man waits then John is happy.",
+  "corpus": [],
+  "needs": [
+   "DEC-MODAL"
+  ],
+  "refused_reason": "A condition that holds a rule with variables matches only stored rules without variables, so it would fire on the wrong beliefs and never on this one.",
+  "lifted_by": "quoting of rules (matching a mentioned rule up to a renaming of its variables), planned in zelph",
+  "source": "constructs.md#the-classifier"
+ },
+ {
+  "id": ":sub/conditional-with-referents-in-head",
+  "level": "drs",
+  "family": "R",
+  "milestone": null,
+  "import": null,
+  "example": "Every woman believes that every man waits.",
+  "corpus": [],
+  "needs": [
+   "DEC-MODAL"
+  ],
+  "refused_reason": "When the rule fires, a conclusion that mentions a rule with variables writes nothing, so the sentence would be accepted and silently lost.",
+  "lifted_by": "a firing that writes a mention with variables of its own, planned in zelph with quoting",
+  "source": "constructs.md#the-classifier"
+ },
+ {
+  "id": ":command/imperative",
+  "level": "drs",
+  "family": "C",
+  "milestone": null,
+  "import": null,
+  "example": "John, wait!",
+  "corpus": [
+   2016
+  ],
+  "needs": [],
+  "refused_reason": "An imperative has no truth value to store.",
+  "lifted_by": null,
+  "source": "constructs.md#the-classifier"
+ },
+ {
+  "id": ":sent/text",
+  "level": "syntax",
+  "family": "basic",
+  "milestone": "M1",
+  "import": null,
+  "example": "A woman sleeps. She is tired.",
+  "corpus": [
+   1,
+   47
+  ],
+  "needs": [],
+  "refused_reason": null,
+  "lifted_by": null,
+  "source": "grammar.md#syntax-construct-ids-by-milestone",
+  "construct": "a text: sentences in sequence",
+  "smoke": true,
+  "usable_from": "M1",
+  "drs_ids": []
+ },
+ {
+  "id": ":sent/statement",
+  "level": "syntax",
+  "family": "basic",
+  "milestone": "M1",
+  "import": null,
+  "example": "Mary sleeps.",
+  "corpus": [
+   1
+  ],
+  "needs": [],
+  "refused_reason": null,
+  "lifted_by": null,
+  "source": "grammar.md#syntax-construct-ids-by-milestone",
+  "construct": "declarative sentence",
+  "smoke": true,
+  "usable_from": "M1",
+  "drs_ids": []
+ },
+ {
+  "id": ":sent/clause",
+  "level": "syntax",
+  "family": "basic",
+  "milestone": "M1",
+  "import": null,
+  "example": "Mary sleeps.",
+  "corpus": [
+   22
+  ],
+  "needs": [],
+  "refused_reason": null,
+  "lifted_by": null,
+  "source": "grammar.md#syntax-construct-ids-by-milestone",
+  "construct": "subject + VP",
+  "smoke": true,
+  "usable_from": "M1",
+  "drs_ids": []
+ },
+ {
+  "id": ":sent/yes-no",
+  "level": "syntax",
+  "family": "Q",
+  "milestone": "M1",
+  "import": null,
+  "example": "Is John a man?",
+  "corpus": [
+   17,
+   11,
+   1974
+  ],
+  "needs": [],
+  "refused_reason": null,
+  "lifted_by": null,
+  "source": "grammar.md#syntax-construct-ids-by-milestone",
+  "construct": "yes/no question: Is John a man?, Does a man wait?, Is there …?, Is it true that …?",
+  "smoke": true,
+  "usable_from": "M1",
+  "drs_ids": [
+   ":question/yes-no"
+  ]
+ },
+ {
+  "id": ":np/proper",
+  "level": "syntax",
+  "family": "basic",
+  "milestone": "M1",
+  "import": null,
+  "example": "Mary sleeps.",
+  "corpus": [
+   22,
+   3625,
+   3739
+  ],
+  "needs": [],
+  "refused_reason": null,
+  "lifted_by": null,
+  "source": "grammar.md#syntax-construct-ids-by-milestone",
+  "construct": "proper name: declared, undeclared capitalised word, quoted word, p:/h:/m:/f: word, individual name, merged run",
+  "smoke": true,
+  "usable_from": "M1",
+  "drs_ids": [
+   ":name/proper"
+  ]
+ },
+ {
+  "id": ":np/proper-the",
+  "level": "syntax",
+  "family": "basic",
+  "milestone": "M1",
+  "import": null,
+  "example": "John sees the Moon.",
+  "corpus": [
+   2926,
+   2930,
+   2923,
+   3751
+  ],
+  "needs": [],
+  "refused_reason": null,
+  "lifted_by": null,
+  "source": "grammar.md#syntax-construct-ids-by-milestone",
+  "construct": "the + a pnt reading: a declared pndef name, an undeclared capitalised word, a merged run; the article is dropped from the DRS",
+  "smoke": true,
+  "usable_from": "M1",
+  "drs_ids": [
+   ":name/proper"
+  ]
+ },
+ {
+  "id": ":np/indefinite",
+  "level": "syntax",
+  "family": "basic",
+  "milestone": "M1",
+  "import": null,
+  "example": "A man waits.",
+  "corpus": [
+   2
+  ],
+  "needs": [],
+  "refused_reason": null,
+  "lifted_by": null,
+  "source": "grammar.md#syntax-construct-ids-by-milestone",
+  "construct": "a/an N′",
+  "smoke": true,
+  "usable_from": "M1",
+  "drs_ids": [
+   ":object/count",
+   ":individual/top-level"
+  ]
+ },
+ {
+  "id": ":nbar/noun",
+  "level": "syntax",
+  "family": "basic",
+  "milestone": "M1",
+  "import": null,
+  "example": "A man waits.",
+  "corpus": [
+   2
+  ],
+  "needs": [],
+  "refused_reason": null,
+  "lifted_by": null,
+  "source": "grammar.md#syntax-construct-ids-by-milestone",
+  "construct": "N′ with its head noun",
+  "smoke": true,
+  "usable_from": "M1",
+  "drs_ids": []
+ },
+ {
+  "id": ":vp/simple",
+  "level": "syntax",
+  "family": "basic",
+  "milestone": "M1",
+  "import": null,
+  "example": "Mary sleeps.",
+  "corpus": [
+   22
+  ],
+  "needs": [],
+  "refused_reason": null,
+  "lifted_by": null,
+  "source": "grammar.md#syntax-construct-ids-by-milestone",
+  "construct": "VP without auxiliary",
+  "smoke": true,
+  "usable_from": "M1",
+  "drs_ids": []
+ },
+ {
+  "id": ":vp/copula-np",
+  "level": "syntax",
+  "family": "basic",
+  "milestone": "M1",
+  "import": null,
+  "example": "The brother of Mary is a teacher.",
+  "corpus": [
+   23,
+   3751
+  ],
+  "needs": [],
+  "refused_reason": null,
+  "lifted_by": null,
+  "source": "grammar.md#syntax-construct-ids-by-milestone",
+  "construct": "is a man, is Mary",
+  "smoke": true,
+  "usable_from": "M1",
+  "drs_ids": [
+   ":copula/noun",
+   ":copula/identity",
+   ":formula/compare"
+  ]
+ },
+ {
+  "id": ":lex/noun",
+  "level": "syntax",
+  "family": "basic",
+  "milestone": "M1",
+  "import": null,
+  "example": null,
+  "corpus": [],
+  "needs": [],
+  "refused_reason": null,
+  "lifted_by": null,
+  "source": "grammar.md#syntax-construct-ids-by-milestone",
+  "construct": "leaves",
+  "smoke": true,
+  "usable_from": "M1",
+  "drs_ids": []
+ },
+ {
+  "id": ":lex/proper",
+  "level": "syntax",
+  "family": "basic",
+  "milestone": "M1",
+  "import": null,
+  "example": null,
+  "corpus": [],
+  "needs": [],
+  "refused_reason": null,
+  "lifted_by": null,
+  "source": "grammar.md#syntax-construct-ids-by-milestone",
+  "construct": "leaves",
+  "smoke": true,
+  "usable_from": "M1",
+  "drs_ids": []
+ },
+ {
+  "id": ":sent/there-is",
+  "level": "syntax",
+  "family": "basic",
+  "milestone": "M1",
+  "import": null,
+  "example": "There is a cat.",
+  "corpus": [
+   1,
+   793,
+   58
+  ],
+  "needs": [],
+  "refused_reason": null,
+  "lifted_by": null,
+  "source": "grammar.md#syntax-construct-ids-by-milestone",
+  "construct": "there is/are NP",
+  "smoke": true,
+  "usable_from": "M1",
+  "drs_ids": [
+   ":object/count",
+   ":individual/top-level"
+  ]
+ },
+ {
+  "id": ":np/universal",
+  "level": "syntax",
+  "family": "R",
+  "milestone": "M1",
+  "import": null,
+  "example": "Every woman is busy.",
+  "corpus": [
+   70,
+   2053
+  ],
+  "needs": [],
+  "refused_reason": null,
+  "lifted_by": null,
+  "source": "grammar.md#syntax-construct-ids-by-milestone",
+  "construct": "every/each N′, all N′-pl/mass",
+  "smoke": true,
+  "usable_from": "M1",
+  "drs_ids": [
+   ":rule/horn",
+   ":rule/generative-head",
+   ":rule/nested"
+  ]
+ },
+ {
+  "id": ":vp/intransitive",
+  "level": "syntax",
+  "family": "basic",
+  "milestone": "M2",
+  "import": null,
+  "example": "Mary sleeps.",
+  "corpus": [
+   22
+  ],
+  "needs": [],
+  "refused_reason": null,
+  "lifted_by": null,
+  "source": "grammar.md#syntax-construct-ids-by-milestone",
+  "construct": "waits",
+  "smoke": false,
+  "usable_from": "M3",
+  "drs_ids": [
+   ":verb/intransitive"
+  ]
+ },
+ {
+  "id": ":vp/transitive",
+  "level": "syntax",
+  "family": "basic",
+  "milestone": "M2",
+  "import": null,
+  "example": "The door of the house has a red frame.",
+  "corpus": [
+   26
+  ],
+  "needs": [],
+  "refused_reason": null,
+  "lifted_by": null,
+  "source": "grammar.md#syntax-construct-ids-by-milestone",
+  "construct": "has a green color",
+  "smoke": false,
+  "usable_from": "M3",
+  "drs_ids": [
+   ":verb/transitive"
+  ]
+ },
+ {
+  "id": ":vp/ditransitive",
+  "level": "syntax",
+  "family": "basic",
+  "milestone": "M2",
+  "import": null,
+  "example": "Everybody sends somebody something.",
+  "corpus": [
+   175,
+   688
+  ],
+  "needs": [],
+  "refused_reason": null,
+  "lifted_by": null,
+  "source": "grammar.md#syntax-construct-ids-by-milestone",
+  "construct": "V NP NP",
+  "smoke": false,
+  "usable_from": "M3",
+  "drs_ids": [
+   ":verb/ditransitive"
+  ]
+ },
+ {
+  "id": ":vp/ditransitive-prep",
+  "level": "syntax",
+  "family": "basic",
+  "milestone": "M2",
+  "import": null,
+  "example": "A woman gives a book to a child.",
+  "corpus": [
+   35
+  ],
+  "needs": [],
+  "refused_reason": null,
+  "lifted_by": null,
+  "source": "grammar.md#syntax-construct-ids-by-milestone",
+  "construct": "V NP to NP",
+  "smoke": false,
+  "usable_from": "M3",
+  "drs_ids": [
+   ":verb/ditransitive"
+  ]
+ },
+ {
+  "id": ":vp/do",
+  "level": "syntax",
+  "family": "basic",
+  "milestone": "M2",
+  "import": null,
+  "example": null,
+  "corpus": [],
+  "needs": [],
+  "refused_reason": null,
+  "lifted_by": null,
+  "source": "grammar.md#syntax-construct-ids-by-milestone",
+  "construct": "emphatic does V",
+  "smoke": false,
+  "usable_from": "M3",
+  "drs_ids": []
+ },
+ {
+  "id": ":vp/copula-adj",
+  "level": "syntax",
+  "family": "basic",
+  "milestone": "M2",
+  "import": null,
+  "example": "A cat is quiet.",
+  "corpus": [
+   3
+  ],
+  "needs": [],
+  "refused_reason": null,
+  "lifted_by": null,
+  "source": "grammar.md#syntax-construct-ids-by-milestone",
+  "construct": "is good",
+  "smoke": false,
+  "usable_from": "M3",
+  "drs_ids": [
+   ":adj/positive"
+  ]
+ },
+ {
+  "id": ":vp/copula-pp",
+  "level": "syntax",
+  "family": "V",
+  "milestone": "M2",
+  "import": null,
+  "example": "A mistake is in the letter.",
+  "corpus": [
+   259
+  ],
+  "needs": [],
+  "refused_reason": null,
+  "lifted_by": null,
+  "source": "grammar.md#syntax-construct-ids-by-milestone",
+  "construct": "is in the sentence",
+  "smoke": false,
+  "usable_from": "M3",
+  "drs_ids": [
+   ":copula/located",
+   ":copula/located-many"
+  ]
+ },
+ {
+  "id": ":vp/passive",
+  "level": "syntax",
+  "family": "basic",
+  "milestone": "M2",
+  "import": null,
+  "example": "A letter is written by a woman.",
+  "corpus": [
+   1423
+  ],
+  "needs": [],
+  "refused_reason": null,
+  "lifted_by": null,
+  "source": "grammar.md#syntax-construct-ids-by-milestone",
+  "construct": "is written by a man",
+  "smoke": false,
+  "usable_from": "M3",
+  "drs_ids": []
+ },
+ {
+  "id": ":vp/passive-ditransitive",
+  "level": "syntax",
+  "family": "basic",
+  "milestone": "M2",
+  "import": null,
+  "example": "Bill is v:given a pear by Mary.",
+  "corpus": [
+   1822,
+   1823
+  ],
+  "needs": [],
+  "refused_reason": null,
+  "lifted_by": null,
+  "source": "grammar.md#syntax-construct-ids-by-milestone",
+  "construct": "is given an apple by John, is given to John by Mary",
+  "smoke": false,
+  "usable_from": "M3",
+  "drs_ids": [
+   ":verb/ditransitive"
+  ]
+ },
+ {
+  "id": ":ap/positive",
+  "level": "syntax",
+  "family": "basic",
+  "milestone": "M2",
+  "import": null,
+  "example": "A young and clever student reads a book.",
+  "corpus": [
+   2,
+   97
+  ],
+  "needs": [],
+  "refused_reason": null,
+  "lifted_by": null,
+  "source": "grammar.md#syntax-construct-ids-by-milestone",
+  "construct": "attributive and predicative adjectives, attributive ones joined by and",
+  "smoke": false,
+  "usable_from": "M3",
+  "drs_ids": [
+   ":adj/positive"
+  ]
+ },
+ {
+  "id": ":ap/transitive",
+  "level": "syntax",
+  "family": "basic",
+  "milestone": "M2",
+  "import": null,
+  "example": "A woman is fond-of a cat.",
+  "corpus": [
+   173
+  ],
+  "needs": [],
+  "refused_reason": null,
+  "lifted_by": null,
+  "source": "grammar.md#syntax-construct-ids-by-milestone",
+  "construct": "fond-of a dog",
+  "smoke": false,
+  "usable_from": "M3",
+  "drs_ids": [
+   ":adj/transitive"
+  ]
+ },
+ {
+  "id": ":ap/comparison",
+  "level": "syntax",
+  "family": "basic",
+  "milestone": "M2",
+  "import": null,
+  "example": "Mary is as busy as John.",
+  "corpus": [
+   36,
+   2169,
+   1563
+  ],
+  "needs": [],
+  "refused_reason": null,
+  "lifted_by": null,
+  "source": "grammar.md#syntax-construct-ids-by-milestone",
+  "construct": "taller than, as rich as, more interested-in a cat than a dog",
+  "smoke": false,
+  "usable_from": "M3",
+  "drs_ids": [
+   ":adj/comparison",
+   ":formula/compare"
+  ]
+ },
+ {
+  "id": ":ap/comparative",
+  "level": "syntax",
+  "family": "basic",
+  "milestone": "M2",
+  "import": null,
+  "example": "Mary is more careful.",
+  "corpus": [
+   2172
+  ],
+  "needs": [],
+  "refused_reason": null,
+  "lifted_by": null,
+  "source": "grammar.md#syntax-construct-ids-by-milestone",
+  "construct": "more important without target",
+  "smoke": false,
+  "usable_from": "M3",
+  "drs_ids": [
+   ":adj/comparative"
+  ]
+ },
+ {
+  "id": ":ap/superlative",
+  "level": "syntax",
+  "family": "basic",
+  "milestone": "M2",
+  "import": null,
+  "example": "Mary is most careful.",
+  "corpus": [],
+  "needs": [],
+  "refused_reason": null,
+  "lifted_by": null,
+  "source": "grammar.md#syntax-construct-ids-by-milestone",
+  "construct": "most important",
+  "smoke": false,
+  "usable_from": "M3",
+  "drs_ids": [
+   ":adj/superlative"
+  ]
+ },
+ {
+  "id": ":nbar/of",
+  "level": "syntax",
+  "family": "basic",
+  "milestone": "M2",
+  "import": null,
+  "example": "The brother of Mary is a teacher.",
+  "corpus": [
+   23
+  ],
+  "needs": [],
+  "refused_reason": null,
+  "lifted_by": null,
+  "source": "grammar.md#syntax-construct-ids-by-milestone",
+  "construct": "of-PP",
+  "smoke": false,
+  "usable_from": "M3",
+  "drs_ids": [
+   ":of/relation"
+  ]
+ },
+ {
+  "id": ":np/genitive",
+  "level": "syntax",
+  "family": "basic",
+  "milestone": "M2",
+  "import": null,
+  "example": "Mary's bike is red.",
+  "corpus": [
+   28,
+   41,
+   2226
+  ],
+  "needs": [],
+  "refused_reason": null,
+  "lifted_by": null,
+  "source": "grammar.md#syntax-construct-ids-by-milestone",
+  "construct": "Saxon genitive",
+  "smoke": false,
+  "usable_from": "M3",
+  "drs_ids": [
+   ":of/relation"
+  ]
+ },
+ {
+  "id": ":pro/possessive",
+  "level": "syntax",
+  "family": "basic",
+  "milestone": "M2",
+  "import": null,
+  "example": "There is a woman. There is a cat. Mary feeds her cat.",
+  "corpus": [
+   475,
+   179
+  ],
+  "needs": [],
+  "refused_reason": null,
+  "lifted_by": null,
+  "source": "grammar.md#syntax-construct-ids-by-milestone",
+  "construct": "his, its own",
+  "smoke": false,
+  "usable_from": "M3",
+  "drs_ids": [
+   ":of/relation"
+  ]
+ },
+ {
+  "id": ":nbar/apposition",
+  "level": "syntax",
+  "family": "basic",
+  "milestone": "M2",
+  "import": null,
+  "example": "A woman X sleeps.",
+  "corpus": [
+   31
+  ],
+  "needs": [],
+  "refused_reason": null,
+  "lifted_by": null,
+  "source": "grammar.md#syntax-construct-ids-by-milestone",
+  "construct": "variable apposition",
+  "smoke": false,
+  "usable_from": "M3",
+  "drs_ids": []
+ },
+ {
+  "id": ":np/variable",
+  "level": "syntax",
+  "family": "basic",
+  "milestone": "M2",
+  "import": null,
+  "example": "There is Y.",
+  "corpus": [
+   1689
+  ],
+  "needs": [],
+  "refused_reason": null,
+  "lifted_by": null,
+  "source": "grammar.md#syntax-construct-ids-by-milestone",
+  "construct": "bare variable NP",
+  "smoke": false,
+  "usable_from": "M3",
+  "drs_ids": []
+ },
+ {
+  "id": ":np/term",
+  "level": "syntax",
+  "family": "basic",
+  "milestone": "M2",
+  "import": null,
+  "example": "Mary's age is 40.",
+  "corpus": [
+   1591,
+   2117,
+   1593
+  ],
+  "needs": [],
+  "refused_reason": null,
+  "lifted_by": null,
+  "source": "grammar.md#syntax-construct-ids-by-milestone",
+  "construct": "a term as NP: 30, 3.14, \"abc\", a list",
+  "smoke": false,
+  "usable_from": "M3",
+  "drs_ids": [
+   ":data/*"
+  ]
+ },
+ {
+  "id": ":np/definite",
+  "level": "syntax",
+  "family": "basic",
+  "milestone": "M2",
+  "import": null,
+  "example": "The brother of Mary is a teacher.",
+  "corpus": [
+   23,
+   3507
+  ],
+  "needs": [],
+  "refused_reason": null,
+  "lifted_by": null,
+  "source": "grammar.md#syntax-construct-ids-by-milestone",
+  "construct": "the N′",
+  "smoke": false,
+  "usable_from": "M3",
+  "drs_ids": []
+ },
+ {
+  "id": ":np/indefinite-pronoun",
+  "level": "syntax",
+  "family": "basic",
+  "milestone": "M2",
+  "import": null,
+  "example": "Everybody sends something to somebody.",
+  "corpus": [
+   174,
+   175,
+   415
+  ],
+  "needs": [],
+  "refused_reason": null,
+  "lifted_by": null,
+  "source": "grammar.md#syntax-construct-ids-by-milestone",
+  "construct": "something, somebody, everything, no one, …",
+  "smoke": false,
+  "usable_from": "M3",
+  "drs_ids": [
+   ":object/something"
+  ]
+ },
+ {
+  "id": ":pro/personal",
+  "level": "syntax",
+  "family": "basic",
+  "milestone": "M2",
+  "import": null,
+  "example": "A woman sleeps. She is tired.",
+  "corpus": [
+   47
+  ],
+  "needs": [],
+  "refused_reason": null,
+  "lifted_by": null,
+  "source": "grammar.md#syntax-construct-ids-by-milestone",
+  "construct": "he, him, they, he/she",
+  "smoke": false,
+  "usable_from": "M3",
+  "drs_ids": []
+ },
+ {
+  "id": ":pro/reflexive",
+  "level": "syntax",
+  "family": "basic",
+  "milestone": "M2",
+  "import": null,
+  "example": "There is a woman B. B admires herself.",
+  "corpus": [
+   260
+  ],
+  "needs": [],
+  "refused_reason": null,
+  "lifted_by": null,
+  "source": "grammar.md#syntax-construct-ids-by-milestone",
+  "construct": "himself",
+  "smoke": false,
+  "usable_from": "M3",
+  "drs_ids": []
+ },
+ {
+  "id": ":rel/subject",
+  "level": "syntax",
+  "family": "basic",
+  "milestone": "M2",
+  "import": null,
+  "example": "A woman feeds a cat that sleeps in a garden.",
+  "corpus": [
+   34,
+   91
+  ],
+  "needs": [],
+  "refused_reason": null,
+  "lifted_by": null,
+  "source": "grammar.md#syntax-construct-ids-by-milestone",
+  "construct": "subject relative clause",
+  "smoke": false,
+  "usable_from": "M3",
+  "drs_ids": []
+ },
+ {
+  "id": ":rel/object",
+  "level": "syntax",
+  "family": "basic",
+  "milestone": "M2",
+  "import": null,
+  "example": "A letter that a woman writes is long.",
+  "corpus": [
+   197,
+   975
+  ],
+  "needs": [],
+  "refused_reason": null,
+  "lifted_by": null,
+  "source": "grammar.md#syntax-construct-ids-by-milestone",
+  "construct": "object relative clause",
+  "smoke": false,
+  "usable_from": "M3",
+  "drs_ids": []
+ },
+ {
+  "id": ":rel/whose",
+  "level": "syntax",
+  "family": "basic",
+  "milestone": "M2",
+  "import": null,
+  "example": "There is a woman whose cat is quiet.",
+  "corpus": [
+   255
+  ],
+  "needs": [],
+  "refused_reason": null,
+  "lifted_by": null,
+  "source": "grammar.md#syntax-construct-ids-by-milestone",
+  "construct": "whose N (relative)",
+  "smoke": false,
+  "usable_from": "M3",
+  "drs_ids": []
+ },
+ {
+  "id": ":coord/and",
+  "level": "syntax",
+  "family": "basic",
+  "milestone": "M2",
+  "import": null,
+  "example": "A woman sings and dances or sleeps.",
+  "corpus": [
+   25,
+   9,
+   1098,
+   2840
+  ],
+  "needs": [],
+  "refused_reason": null,
+  "lifted_by": null,
+  "source": "grammar.md#syntax-construct-ids-by-milestone",
+  "construct": "sentence, VP and relative-clause and; relative clauses after proper names",
+  "smoke": false,
+  "usable_from": "M3",
+  "drs_ids": []
+ },
+ {
+  "id": ":sent/wh",
+  "level": "syntax",
+  "family": "Q",
+  "milestone": "M2",
+  "import": null,
+  "example": "Who writes a letter?",
+  "corpus": [
+   110,
+   79,
+   112
+  ],
+  "needs": [],
+  "refused_reason": null,
+  "lifted_by": null,
+  "source": "grammar.md#syntax-construct-ids-by-milestone",
+  "construct": "wh-question",
+  "smoke": false,
+  "usable_from": "M3",
+  "drs_ids": [
+   ":question/wh",
+   ":question/unrestricted"
+  ]
+ },
+ {
+  "id": ":np/wh",
+  "level": "syntax",
+  "family": "Q",
+  "milestone": "M2",
+  "import": null,
+  "example": "Who writes a letter?",
+  "corpus": [
+   110,
+   252
+  ],
+  "needs": [],
+  "refused_reason": null,
+  "lifted_by": null,
+  "source": "grammar.md#syntax-construct-ids-by-milestone",
+  "construct": "who, what, also in situ",
+  "smoke": false,
+  "usable_from": "M3",
+  "drs_ids": [
+   ":question/wh"
+  ]
+ },
+ {
+  "id": ":np/which",
+  "level": "syntax",
+  "family": "Q",
+  "milestone": "M2",
+  "import": null,
+  "example": "Which clerk writes a letter?",
+  "corpus": [
+   111,
+   314
+  ],
+  "needs": [],
+  "refused_reason": null,
+  "lifted_by": null,
+  "source": "grammar.md#syntax-construct-ids-by-milestone",
+  "construct": "which N′",
+  "smoke": false,
+  "usable_from": "M3",
+  "drs_ids": [
+   ":question/wh"
+  ]
+ },
+ {
+  "id": ":np/whose",
+  "level": "syntax",
+  "family": "Q",
+  "milestone": "M2",
+  "import": null,
+  "example": "Which woman whose cat sees a bird sleeps?",
+  "corpus": [
+   314
+  ],
+  "needs": [],
+  "refused_reason": null,
+  "lifted_by": null,
+  "source": "grammar.md#syntax-construct-ids-by-milestone",
+  "construct": "whose N′ (question)",
+  "smoke": false,
+  "usable_from": "M3",
+  "drs_ids": [
+   ":question/wh"
+  ]
+ },
+ {
+  "id": ":term/string",
+  "level": "syntax",
+  "family": "basic",
+  "milestone": "M2",
+  "import": null,
+  "example": "A code is \"xyz\".",
+  "corpus": [
+   1593
+  ],
+  "needs": [],
+  "refused_reason": null,
+  "lifted_by": null,
+  "source": "grammar.md#syntax-construct-ids-by-milestone",
+  "construct": "\"abc\"",
+  "smoke": false,
+  "usable_from": "M3",
+  "drs_ids": [
+   ":data/string"
+  ]
+ },
+ {
+  "id": ":lex/measure",
+  "level": "syntax",
+  "family": "basic",
+  "milestone": "M2",
+  "import": null,
+  "example": null,
+  "corpus": [],
+  "needs": [],
+  "refused_reason": null,
+  "lifted_by": null,
+  "source": "grammar.md#syntax-construct-ids-by-milestone",
+  "construct": "leaves",
+  "smoke": false,
+  "usable_from": "M3",
+  "drs_ids": []
+ },
+ {
+  "id": ":lex/verb",
+  "level": "syntax",
+  "family": "basic",
+  "milestone": "M2",
+  "import": null,
+  "example": null,
+  "corpus": [],
+  "needs": [],
+  "refused_reason": null,
+  "lifted_by": null,
+  "source": "grammar.md#syntax-construct-ids-by-milestone",
+  "construct": "leaves",
+  "smoke": false,
+  "usable_from": "M3",
+  "drs_ids": []
+ },
+ {
+  "id": ":lex/adj",
+  "level": "syntax",
+  "family": "basic",
+  "milestone": "M2",
+  "import": null,
+  "example": null,
+  "corpus": [],
+  "needs": [],
+  "refused_reason": null,
+  "lifted_by": null,
+  "source": "grammar.md#syntax-construct-ids-by-milestone",
+  "construct": "leaves",
+  "smoke": false,
+  "usable_from": "M3",
+  "drs_ids": []
+ },
+ {
+  "id": ":lex/adv",
+  "level": "syntax",
+  "family": "basic",
+  "milestone": "M2",
+  "import": null,
+  "example": null,
+  "corpus": [],
+  "needs": [],
+  "refused_reason": null,
+  "lifted_by": null,
+  "source": "grammar.md#syntax-construct-ids-by-milestone",
+  "construct": "leaves",
+  "smoke": false,
+  "usable_from": "M3",
+  "drs_ids": []
+ },
+ {
+  "id": ":lex/prep",
+  "level": "syntax",
+  "family": "basic",
+  "milestone": "M2",
+  "import": null,
+  "example": null,
+  "corpus": [],
+  "needs": [],
+  "refused_reason": null,
+  "lifted_by": null,
+  "source": "grammar.md#syntax-construct-ids-by-milestone",
+  "construct": "leaves",
+  "smoke": false,
+  "usable_from": "M3",
+  "drs_ids": []
+ },
+ {
+  "id": ":lex/variable",
+  "level": "syntax",
+  "family": "basic",
+  "milestone": "M2",
+  "import": null,
+  "example": null,
+  "corpus": [],
+  "needs": [],
+  "refused_reason": null,
+  "lifted_by": null,
+  "source": "grammar.md#syntax-construct-ids-by-milestone",
+  "construct": "leaves",
+  "smoke": false,
+  "usable_from": "M3",
+  "drs_ids": []
+ },
+ {
+  "id": ":np/negative",
+  "level": "syntax",
+  "family": "N",
+  "milestone": "M2",
+  "import": null,
+  "example": "No woman is tired.",
+  "corpus": [
+   72,
+   56
+  ],
+  "needs": [],
+  "refused_reason": null,
+  "lifted_by": null,
+  "source": "grammar.md#syntax-construct-ids-by-milestone",
+  "construct": "no N′, there is no N′",
+  "smoke": false,
+  "usable_from": "M4",
+  "drs_ids": [
+   ":neg/statement"
+  ]
+ },
+ {
+  "id": ":np/not-every",
+  "level": "syntax",
+  "family": "N",
+  "milestone": "M2",
+  "import": null,
+  "example": "A cat sleeps. Not every woman sings.",
+  "corpus": [
+   581
+  ],
+  "needs": [],
+  "refused_reason": null,
+  "lifted_by": null,
+  "source": "grammar.md#syntax-construct-ids-by-milestone",
+  "construct": "not every/each/all",
+  "smoke": false,
+  "usable_from": "M4",
+  "drs_ids": [
+   ":neg/not-every",
+   ":rule/negated"
+  ]
+ },
+ {
+  "id": ":sent/if-then",
+  "level": "syntax",
+  "family": "R",
+  "milestone": "M2",
+  "import": null,
+  "example": "If there is a woman then there is 1 child.",
+  "corpus": [
+   51
+  ],
+  "needs": [],
+  "refused_reason": null,
+  "lifted_by": null,
+  "source": "grammar.md#syntax-construct-ids-by-milestone",
+  "construct": "if S then S",
+  "smoke": false,
+  "usable_from": "M4",
+  "drs_ids": [
+   ":rule/*",
+   ":rule/in-question",
+   ":rule/in-wh-question",
+   ":rule/in-body"
+  ]
+ },
+ {
+  "id": ":sent/for-every",
+  "level": "syntax",
+  "family": "R",
+  "milestone": "M2",
+  "import": null,
+  "example": "For every woman a cat sleeps.",
+  "corpus": [
+   76,
+   2053
+  ],
+  "needs": [],
+  "refused_reason": null,
+  "lifted_by": null,
+  "source": "grammar.md#syntax-construct-ids-by-milestone",
+  "construct": "for every/each/all N′",
+  "smoke": false,
+  "usable_from": "M4",
+  "drs_ids": [
+   ":rule/horn"
+  ]
+ },
+ {
+  "id": ":sent/not-for-every",
+  "level": "syntax",
+  "family": "N",
+  "milestone": "M2",
+  "import": null,
+  "example": "Not for every letter the letter has a stamp and the letter has an address.",
+  "corpus": [
+   1002
+  ],
+  "needs": [],
+  "refused_reason": null,
+  "lifted_by": null,
+  "source": "grammar.md#syntax-construct-ids-by-milestone",
+  "construct": "not for every N′",
+  "smoke": false,
+  "usable_from": "M4",
+  "drs_ids": [
+   ":neg/not-every"
+  ]
+ },
+ {
+  "id": ":vp/negated",
+  "level": "syntax",
+  "family": "N",
+  "milestone": "M2",
+  "import": null,
+  "example": "A door is not open.",
+  "corpus": [
+   19,
+   103
+  ],
+  "needs": [],
+  "refused_reason": null,
+  "lifted_by": null,
+  "source": "grammar.md#syntax-construct-ids-by-milestone",
+  "construct": "does not, is not",
+  "smoke": false,
+  "usable_from": "M4",
+  "drs_ids": [
+   ":neg/*",
+   ":neg/atom-in-question",
+   ":neg/complex-in-question"
+  ]
+ },
+ {
+  "id": ":vp/naf",
+  "level": "syntax",
+  "family": "F",
+  "milestone": "M2",
+  "import": null,
+  "example": "There is a woman who does not provably sing. The woman who does not provably sing dances.",
+  "corpus": [
+   2251
+  ],
+  "needs": [],
+  "refused_reason": null,
+  "lifted_by": null,
+  "source": "grammar.md#syntax-construct-ids-by-milestone",
+  "construct": "does not provably",
+  "smoke": false,
+  "usable_from": "M4",
+  "drs_ids": [
+   ":naf/*"
+  ]
+ },
+ {
+  "id": ":sent/not-provable",
+  "level": "syntax",
+  "family": "F",
+  "milestone": "M2",
+  "import": null,
+  "example": "It is not provable that Mary sleeps.",
+  "corpus": [
+   1416
+  ],
+  "needs": [],
+  "refused_reason": null,
+  "lifted_by": null,
+  "source": "grammar.md#syntax-construct-ids-by-milestone",
+  "construct": "it is not provable that",
+  "smoke": false,
+  "usable_from": "M4",
+  "drs_ids": [
+   ":naf/*"
+  ]
+ },
+ {
+  "id": ":sent/it-is-false",
+  "level": "syntax",
+  "family": "N",
+  "milestone": "M2",
+  "import": null,
+  "example": "It is false that a woman sings.",
+  "corpus": [
+   1539
+  ],
+  "needs": [],
+  "refused_reason": null,
+  "lifted_by": null,
+  "source": "grammar.md#syntax-construct-ids-by-milestone",
+  "construct": "it is false / not true that",
+  "smoke": false,
+  "usable_from": "M4",
+  "drs_ids": [
+   ":neg/*"
+  ]
+ },
+ {
+  "id": ":sent/it-is-true",
+  "level": "syntax",
+  "family": "basic",
+  "milestone": "M2",
+  "import": null,
+  "example": "Is it true that every dog is an animal?",
+  "corpus": [
+   1974
+  ],
+  "needs": [],
+  "refused_reason": null,
+  "lifted_by": null,
+  "source": "grammar.md#syntax-construct-ids-by-milestone",
+  "construct": "it is true / not false that",
+  "smoke": false,
+  "usable_from": "M4",
+  "drs_ids": []
+ },
+ {
+  "id": ":coord/that",
+  "level": "syntax",
+  "family": "basic",
+  "milestone": "M2",
+  "import": null,
+  "example": null,
+  "corpus": [],
+  "needs": [],
+  "refused_reason": null,
+  "lifted_by": null,
+  "source": "grammar.md#syntax-construct-ids-by-milestone",
+  "construct": "that S and that S inside a frame",
+  "smoke": false,
+  "usable_from": "M4",
+  "drs_ids": []
+ },
+ {
+  "id": ":coord/or",
+  "level": "syntax",
+  "family": "D",
+  "milestone": "M2",
+  "import": null,
+  "example": "A woman sings or a man hears the woman.",
+  "corpus": [
+   145,
+   9
+  ],
+  "needs": [],
+  "refused_reason": null,
+  "lifted_by": null,
+  "source": "grammar.md#syntax-construct-ids-by-milestone",
+  "construct": "or (sentence, VP, relative clause)",
+  "smoke": false,
+  "usable_from": "M4",
+  "drs_ids": [
+   ":or/*"
+  ]
+ },
+ {
+  "id": ":coord/comma-and",
+  "level": "syntax",
+  "family": "basic",
+  "milestone": "M2",
+  "import": null,
+  "example": "A woman sings, and she dances.",
+  "corpus": [
+   187
+  ],
+  "needs": [],
+  "refused_reason": null,
+  "lifted_by": null,
+  "source": "grammar.md#syntax-construct-ids-by-milestone",
+  "construct": ", and",
+  "smoke": false,
+  "usable_from": "M4",
+  "drs_ids": []
+ },
+ {
+  "id": ":coord/comma-or",
+  "level": "syntax",
+  "family": "D",
+  "milestone": "M2",
+  "import": null,
+  "example": "A cat is quiet, and is calm or is tired.",
+  "corpus": [
+   219
+  ],
+  "needs": [],
+  "refused_reason": null,
+  "lifted_by": null,
+  "source": "grammar.md#syntax-construct-ids-by-milestone",
+  "construct": ", or",
+  "smoke": false,
+  "usable_from": "M4",
+  "drs_ids": [
+   ":or/*"
+  ]
+ },
+ {
+  "id": ":rel/such-that",
+  "level": "syntax",
+  "family": "basic",
+  "milestone": "M2",
+  "import": null,
+  "example": "For each task A there is a task B such that A precedes B.",
+  "corpus": [
+   64
+  ],
+  "needs": [],
+  "refused_reason": null,
+  "lifted_by": null,
+  "source": "grammar.md#syntax-construct-ids-by-milestone",
+  "construct": "deprecated such that",
+  "smoke": false,
+  "usable_from": "M4",
+  "drs_ids": []
+ },
+ {
+  "id": ":rel/of-which",
+  "level": "syntax",
+  "family": "basic",
+  "milestone": "M2",
+  "import": null,
+  "example": "A woman the bike of who is red sleeps.",
+  "corpus": [
+   196
+  ],
+  "needs": [],
+  "refused_reason": null,
+  "lifted_by": null,
+  "source": "grammar.md#syntax-construct-ids-by-milestone",
+  "construct": "deprecated the N of which/who",
+  "smoke": false,
+  "usable_from": "M4",
+  "drs_ids": []
+ },
+ {
+  "id": ":sent/formula",
+  "level": "syntax",
+  "family": "A",
+  "milestone": "M2",
+  "import": null,
+  "example": "3 * 4 > 10.",
+  "corpus": [
+   2358,
+   3771
+  ],
+  "needs": [],
+  "refused_reason": null,
+  "lifted_by": null,
+  "source": "grammar.md#syntax-construct-ids-by-milestone",
+  "construct": "T op T",
+  "smoke": false,
+  "usable_from": "M5",
+  "drs_ids": [
+   ":formula/compare",
+   ":formula/identity",
+   ":neg/formula",
+   ":naf/formula",
+   ":formula/non-numeric"
+  ]
+ },
+ {
+  "id": ":term/number",
+  "level": "syntax",
+  "family": "basic",
+  "milestone": "M2",
+  "import": null,
+  "example": "A temperature is -12.",
+  "corpus": [
+   2117,
+   1668,
+   2630,
+   2622,
+   2623
+  ],
+  "needs": [],
+  "refused_reason": null,
+  "lifted_by": null,
+  "source": "grammar.md#syntax-construct-ids-by-milestone",
+  "construct": "integers, reals, negative literals, measured numbers",
+  "smoke": false,
+  "usable_from": "M5",
+  "drs_ids": [
+   ":data/integer",
+   ":data/real",
+   ":data/measured"
+  ]
+ },
+ {
+  "id": ":term/expression",
+  "level": "syntax",
+  "family": "A",
+  "milestone": "M2",
+  "import": null,
+  "example": "3*(4-6/13) >= 1/3.",
+  "corpus": [
+   2370,
+   2873
+  ],
+  "needs": [],
+  "refused_reason": null,
+  "lifted_by": null,
+  "source": "grammar.md#syntax-construct-ids-by-milestone",
+  "construct": "+ - * / ^ &, parentheses",
+  "smoke": false,
+  "usable_from": "M5",
+  "drs_ids": [
+   ":expr/arith",
+   ":expr/concat",
+   ":expr/as-data"
+  ]
+ },
+ {
+  "id": ":vp/pp",
+  "level": "syntax",
+  "family": "V",
+  "milestone": "M2",
+  "import": null,
+  "example": "A woman sleeps in a garden.",
+  "corpus": [
+   4,
+   256,
+   3291
+  ],
+  "needs": [],
+  "refused_reason": null,
+  "lifted_by": null,
+  "source": "grammar.md#syntax-construct-ids-by-milestone",
+  "construct": "PP modifiers before or after the verb",
+  "smoke": false,
+  "usable_from": "M6",
+  "drs_ids": [
+   ":mod/pp"
+  ]
+ },
+ {
+  "id": ":vp/adverb",
+  "level": "syntax",
+  "family": "V",
+  "milestone": "M2",
+  "import": null,
+  "example": "A clerk sorts some letters carefully.",
+  "corpus": [
+   92,
+   93,
+   1566
+  ],
+  "needs": [],
+  "refused_reason": null,
+  "lifted_by": null,
+  "source": "grammar.md#syntax-construct-ids-by-milestone",
+  "construct": "adverbs, joined by and; comparative and superlative",
+  "smoke": false,
+  "usable_from": "M6",
+  "drs_ids": [
+   ":mod/adverb",
+   ":mod/adverb-degree"
+  ]
+ },
+ {
+  "id": ":rel/pp",
+  "level": "syntax",
+  "family": "V",
+  "milestone": "M2",
+  "import": null,
+  "example": "A chair on which a cat sleeps is old.",
+  "corpus": [
+   162,
+   455
+  ],
+  "needs": [],
+  "refused_reason": null,
+  "lifted_by": null,
+  "source": "grammar.md#syntax-construct-ids-by-milestone",
+  "construct": "relative clause with fronted PP, stranded preposition",
+  "smoke": false,
+  "usable_from": "M6",
+  "drs_ids": [
+   ":mod/pp"
+  ]
+ },
+ {
+  "id": ":sent/wh-adverb",
+  "level": "syntax",
+  "family": "Q",
+  "milestone": "M2",
+  "import": null,
+  "example": "How does the clerk sort a letter?",
+  "corpus": [
+   21,
+   113,
+   456
+  ],
+  "needs": [],
+  "refused_reason": null,
+  "lifted_by": null,
+  "source": "grammar.md#syntax-construct-ids-by-milestone",
+  "construct": "where, when, how; PP questions",
+  "smoke": false,
+  "usable_from": "M6",
+  "drs_ids": [
+   ":question/where-when-how"
+  ]
+ },
+ {
+  "id": ":vp/copula-wh",
+  "level": "syntax",
+  "family": "Q",
+  "milestone": "M2",
+  "import": null,
+  "example": "When is Easter?",
+  "corpus": [
+   2444
+  ],
+  "needs": [],
+  "refused_reason": null,
+  "lifted_by": null,
+  "source": "grammar.md#syntax-construct-ids-by-milestone",
+  "construct": "is where?, When is Christmas?",
+  "smoke": false,
+  "usable_from": "M6",
+  "drs_ids": [
+   ":question/where-when-how"
+  ]
+ },
+ {
+  "id": ":np/some",
+  "level": "syntax",
+  "family": "P",
+  "milestone": "M2",
+  "import": null,
+  "example": "Are there some women?",
+  "corpus": [
+   16,
+   10
+  ],
+  "needs": [],
+  "refused_reason": null,
+  "lifted_by": null,
+  "source": "grammar.md#syntax-construct-ids-by-milestone",
+  "construct": "some N-pl, some N-mass",
+  "smoke": false,
+  "usable_from": "M7",
+  "drs_ids": [
+   ":object/plural-count",
+   ":object/mass"
+  ]
+ },
+ {
+  "id": ":np/cardinal",
+  "level": "syntax",
+  "family": "P",
+  "milestone": "M2",
+  "import": null,
+  "example": "There is 1 woman W. There is 1 garden G. W sleeps in G.",
+  "corpus": [
+   49,
+   1958
+  ],
+  "needs": [],
+  "refused_reason": null,
+  "lifted_by": null,
+  "source": "grammar.md#syntax-construct-ids-by-milestone",
+  "construct": "cardinals, number words zero…twelve, dozen",
+  "smoke": false,
+  "usable_from": "M7",
+  "drs_ids": [
+   ":object/plural-count"
+  ]
+ },
+ {
+  "id": ":np/generalised",
+  "level": "syntax",
+  "family": "P",
+  "milestone": "M2",
+  "import": null,
+  "example": "At least 2 women sing.",
+  "corpus": [
+   422,
+   52,
+   1190,
+   1146,
+   1294
+  ],
+  "needs": [],
+  "refused_reason": null,
+  "lifted_by": null,
+  "source": "grammar.md#syntax-construct-ids-by-milestone",
+  "construct": "at least, more than, at most, less than, exactly",
+  "smoke": false,
+  "usable_from": "M7",
+  "drs_ids": [
+   ":object/at-most",
+   ":object/at-least"
+  ]
+ },
+ {
+  "id": ":np/measure",
+  "level": "syntax",
+  "family": "U",
+  "milestone": "M2",
+  "import": null,
+  "example": "A cook has 3 kg of pears.",
+  "corpus": [
+   167
+  ],
+  "needs": [],
+  "refused_reason": null,
+  "lifted_by": null,
+  "source": "grammar.md#syntax-construct-ids-by-milestone",
+  "construct": "2 kg of apples",
+  "smoke": false,
+  "usable_from": "M7",
+  "drs_ids": [
+   ":object/measure"
+  ]
+ },
+ {
+  "id": ":coord/np",
+  "level": "syntax",
+  "family": "P",
+  "milestone": "M2",
+  "import": null,
+  "example": "The clerk sorts a letter and a parcel.",
+  "corpus": [
+   119,
+   97
+  ],
+  "needs": [],
+  "refused_reason": null,
+  "lifted_by": null,
+  "source": "grammar.md#syntax-construct-ids-by-milestone",
+  "construct": "NP coordination",
+  "smoke": false,
+  "usable_from": "M7",
+  "drs_ids": [
+   ":object/group"
+  ]
+ },
+ {
+  "id": ":np/each-of",
+  "level": "syntax",
+  "family": "P",
+  "milestone": "M2",
+  "import": null,
+  "example": "Each of 4 teachers' bikes is red.",
+  "corpus": [
+   42
+  ],
+  "needs": [],
+  "refused_reason": null,
+  "lifted_by": null,
+  "source": "grammar.md#syntax-construct-ids-by-milestone",
+  "construct": "each of NP",
+  "smoke": false,
+  "usable_from": "M7",
+  "drs_ids": [
+   ":object/group",
+   ":object/plural-count"
+  ]
+ },
+ {
+  "id": ":sent/for-each-of",
+  "level": "syntax",
+  "family": "P",
+  "milestone": "M2",
+  "import": null,
+  "example": "For each of the women a cat sleeps.",
+  "corpus": [
+   465
+  ],
+  "needs": [],
+  "refused_reason": null,
+  "lifted_by": null,
+  "source": "grammar.md#syntax-construct-ids-by-milestone",
+  "construct": "for each of NP",
+  "smoke": false,
+  "usable_from": "M7",
+  "drs_ids": [
+   ":object/group",
+   ":object/plural-count"
+  ]
+ },
+ {
+  "id": ":np/how-many",
+  "level": "syntax",
+  "family": "Q",
+  "milestone": "M2",
+  "import": null,
+  "example": "How many cats sleep?",
+  "corpus": [
+   3741
+  ],
+  "needs": [],
+  "refused_reason": null,
+  "lifted_by": null,
+  "source": "grammar.md#syntax-construct-ids-by-milestone",
+  "construct": "how many/much N′",
+  "smoke": false,
+  "usable_from": "M7",
+  "drs_ids": [
+   ":question/how-many"
+  ]
+ },
+ {
+  "id": ":np/nothing-but",
+  "level": "syntax",
+  "family": "R",
+  "milestone": "M2",
+  "import": null,
+  "example": "Mary eats nothing but rice.",
+  "corpus": [
+   2410
+  ],
+  "needs": [],
+  "refused_reason": null,
+  "lifted_by": null,
+  "source": "grammar.md#syntax-construct-ids-by-milestone",
+  "construct": "nothing but N′, no N but NP",
+  "smoke": false,
+  "usable_from": "M7",
+  "drs_ids": [
+   ":rule/horn",
+   ":object/mass"
+  ]
+ },
+ {
+  "id": ":term/list",
+  "level": "syntax",
+  "family": "L",
+  "milestone": "M2",
+  "import": null,
+  "example": "John likes [1, 2, 3].",
+  "corpus": [
+   2361,
+   2364
+  ],
+  "needs": [],
+  "refused_reason": null,
+  "lifted_by": null,
+  "source": "grammar.md#syntax-construct-ids-by-milestone",
+  "construct": "[ … ], { … }",
+  "smoke": false,
+  "usable_from": "M7",
+  "drs_ids": [
+   ":data/list",
+   ":data/set"
+  ]
+ },
+ {
+  "id": ":term/set",
+  "level": "syntax",
+  "family": "L",
+  "milestone": "M2",
+  "import": null,
+  "example": "{2, \"b\", Mary} is a set.",
+  "corpus": [
+   2361,
+   2364
+  ],
+  "needs": [],
+  "refused_reason": null,
+  "lifted_by": null,
+  "source": "grammar.md#syntax-construct-ids-by-milestone",
+  "construct": "[ … ], { … }",
+  "smoke": false,
+  "usable_from": "M7",
+  "drs_ids": [
+   ":data/list",
+   ":data/set"
+  ]
+ },
+ {
+  "id": ":vp/modal",
+  "level": "syntax",
+  "family": "M",
+  "milestone": "M2",
+  "import": null,
+  "example": "A woman can sing.",
+  "corpus": [
+   1279,
+   1280,
+   3010,
+   3355
+  ],
+  "needs": [],
+  "refused_reason": null,
+  "lifted_by": null,
+  "source": "grammar.md#syntax-construct-ids-by-milestone",
+  "construct": "can, must, should, may, has to, with negation",
+  "smoke": false,
+  "usable_from": "M8",
+  "drs_ids": [
+   ":modal/*"
+  ]
+ },
+ {
+  "id": ":sent/it-is-modal",
+  "level": "syntax",
+  "family": "M",
+  "milestone": "M2",
+  "import": null,
+  "example": "It is possible that a woman sings.",
+  "corpus": [
+   1246
+  ],
+  "needs": [],
+  "refused_reason": null,
+  "lifted_by": null,
+  "source": "grammar.md#syntax-construct-ids-by-milestone",
+  "construct": "it is possible / necessary / recommended / admissible that",
+  "smoke": false,
+  "usable_from": "M8",
+  "drs_ids": [
+   ":modal/*"
+  ]
+ },
+ {
+  "id": ":vp/that-clause",
+  "level": "syntax",
+  "family": "S",
+  "milestone": "M2",
+  "import": null,
+  "example": "Mary knows that John sleeps.",
+  "corpus": [
+   1360
+  ],
+  "needs": [],
+  "refused_reason": null,
+  "lifted_by": null,
+  "source": "grammar.md#syntax-construct-ids-by-milestone",
+  "construct": "V that S",
+  "smoke": false,
+  "usable_from": "M8",
+  "drs_ids": [
+   ":sub/that-clause",
+   ":sub/ground-conditional"
+  ]
+ },
+ {
+  "id": ":vp/to-infinitive",
+  "level": "syntax",
+  "family": "S",
+  "milestone": "M2",
+  "import": null,
+  "example": "Mary wants to sing.",
+  "corpus": [
+   3187
+  ],
+  "needs": [],
+  "refused_reason": null,
+  "lifted_by": null,
+  "source": "grammar.md#syntax-construct-ids-by-milestone",
+  "construct": "V to VP",
+  "smoke": false,
+  "usable_from": "M8",
+  "drs_ids": [
+   ":sub/that-clause"
+  ]
+ },
+ {
+  "id": ":sent/command",
+  "level": "syntax",
+  "family": "C",
+  "milestone": "M2",
+  "import": null,
+  "example": "Mary, sing!",
+  "corpus": [
+   2016,
+   2047
+  ],
+  "needs": [],
+  "refused_reason": null,
+  "lifted_by": null,
+  "source": "grammar.md#syntax-construct-ids-by-milestone",
+  "construct": "NP, VP!",
+  "smoke": false,
+  "usable_from": null,
+  "drs_ids": [
+   ":command/imperative"
+  ]
+ }
+]

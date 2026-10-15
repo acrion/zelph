@@ -131,7 +131,7 @@ The centerpiece: a rule condition that consults a network instead of (or in addi
 
 ### Syntax and desugaring
 
-`≈net(pattern)` desugars to **`(zelph/approx pattern "net")`**, which creates the _tag fact_ `(pattern nn net)` in the graph and returns that tag fact. The tag fact — not the inner pattern — becomes the rule condition. This distinction matters: fact creation is idempotent, so if the pattern itself were the condition, an `≈` condition and an ordinary positive condition on the _same_ pattern (as in the rule above) would collapse into one node. Returning the tag fact keeps them distinct, and the reasoning engine recognizes a neural condition purely by its predicate `nn` — structurally analogous to how `!=` guards are recognized.
+`≈net(pattern)` desugars to **`(zelph/approx pattern "net")`**, which creates the _tag fact_ `(pattern nn net)` in the graph and returns that tag fact. The tag fact — not the inner pattern — becomes the rule condition. This distinction matters: fact creation is idempotent, so if the pattern itself were the condition, an `≈` condition and an ordinary positive condition on the _same_ pattern (as in the rule above) would collapse into one node. Returning the tag fact keeps them distinct, and the reasoning engine recognizes a neural condition purely by its predicate `nn` — structurally analogous to how `!=` guards are recognized. Printed, the tag fact appears as the condition is typed, `≈net(pattern)`, in any location not within the premises of a deduction or a proof: `nn` is a name in the zelph language, and under `.lang en` the fact written out would refer to a different node. The commands accepting a fact as input – `.node`, `.mermaid`, `.explain` – take it in that exact spelling.
 
 ### What the engine does
 

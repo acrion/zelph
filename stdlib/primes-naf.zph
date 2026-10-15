@@ -23,6 +23,11 @@
 # eagerly up to sqrt(N) -- the negation needs the full scan -- and in
 # return finds ALL divisors <= sqrt(N), not just the smallest.
 
+# Each name below represents a node within the language zelph,
+# regardless of the .lang setting used by the importer; upon
+# completion of the import, the importer's language is restored.
+.lang zelph
+
 # Default arithmetic substrate; import a different provider of
 # "arithmetic" (or claim the ID via .provides) BEFORE this module to override:
 .import binary-arithmetic

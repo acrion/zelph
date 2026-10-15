@@ -307,18 +307,23 @@ TEST_CASE("fact: a derivation that lands on a colliding node is refused and repo
         CHECK(zelph::test::any_event_contains(collector, "62-bit hash")); });
 }
 
-TEST_CASE("fact: a derivation whose nested part lands on a colliding node stops the run, not merged")
+TEST_CASE("fact: a derivation whose nested part lands on a colliding node is refused and reported, not merged")
 {
     // The identical pair located one level deeper: the rule derives
     // `s q (s p B)`, with the part that collides being the nested `s p B`.
     // Deduction builds the parts of a consequence before validating the
-    // consequence itself, and only a refusal of the consequence itself
-    // results in a contradiction (previous test). A refusal occurring
-    // during the construction of a part is not caught there, thus
-    // halting the run with the identical message. Previously, the merge
-    // would print a deduction of `s q (s p A)` instead, as though the rule
-    // had derived that, and would leave the node of `s p A` containing the
-    // objects from B as well.
+    // consequence itself. Previously, the merge would print a deduction of
+    // `s q (s p A)` instead, as though the rule had derived that, and would
+    // leave the node of `s p A` containing the objects from B as well.
+    //
+    // Under the name "fact: a derivation whose nested part lands on a
+    // colliding node stops the run, not merged" this test pinned that a
+    // refusal occurring during the construction of a part was not caught
+    // and stopped the run, delivering the same message, whereas only a
+    // refusal of the consequence itself became a contradiction (previous
+    // test). With auto-run, each subsequent input line then also failed. A
+    // refused part is now reported as the refused consequence is, including
+    // its reason, and the run continues.
     //
     // Ids and the precondition specified in the
     // previous test.
@@ -336,7 +341,10 @@ TEST_CASE("fact: a derivation whose nested part lands on a colliding node stops 
         interactive.process("s p " + object_names(collision_a));
         interactive.process("(X go Y) => (X q (X p " + object_names(collision_b) + "))");
 
-        CHECK_THROWS_WITH(interactive.process("s go y"), doctest::Contains("62-bit hash"));
+        collector.clear();
+        CHECK_NOTHROW(interactive.process("s go y"));
+        CHECK(zelph::test::has_contradiction(collector));
+        CHECK(zelph::test::any_event_contains(collector, "62-bit hash"));
 
         auto* const graph = interactive.graph();
         REQUIRE(graph != nullptr);
@@ -360,6 +368,113 @@ TEST_CASE("fact: a derivation whose nested part lands on a colliding node stops 
             if (A.count(n) == 0) CHECK_FALSE(graph->has_left_edge(first.relation(), n));
         }
         CHECK_FALSE(graph->check_fact(s, q, {first.relation()}).is_known()); });
+}
+
+// A firing makes its fresh witnesses before writing a consequence. When
+// fact() refused the consequence -- here `a r a Z`, whose subject the binding
+// makes one of its objects -- the witness remained an independent node, and
+// each subsequent run, which reports the refusal again, introduced one
+// additional witness.
+TEST_CASE("fact: a derivation that fact() refuses leaves no fresh witness behind")
+{
+    zelph::test::run_both_modes([](zelph::io::OutputCollector& collector, const zelph::console::Interactive& interactive)
+                                {
+        zelph::test::process_lines(interactive, "a p a\n(X p Y) => (X r Y Z)\n");
+        const std::size_t before = zelph::test::node_count(collector, interactive);
+        collector.clear();
+        interactive.process(".run");
+        CHECK(zelph::test::any_event_contains(collector, "refused: facts with same subject and object"));
+        interactive.process(".run");
+        CHECK(zelph::test::node_count(collector, interactive) == before); });
+}
+
+// A firing whose consequence deduce skips -- the binding makes its predicate
+// one of its objects, a shape for which a typed statement is refused --
+// writes nothing, and thus leaves nothing: neither a part that the
+// consequence nests nor a fresh witness. Previously, the parts remained as
+// data that no line had derived (`a r a` answered, and `.explain` labelled it
+// an axiom), and each run made a new witness, in every evaluation mode, so
+// the node count grew with every `.run`.
+TEST_CASE("fact: a derivation that writes nothing leaves no part and no fresh witness behind")
+{
+    zelph::test::run_both_modes([](zelph::io::OutputCollector& collector, const zelph::console::Interactive& interactive)
+                                {
+        const auto answers = [&](const std::string& query)
+        {
+            collector.clear();
+            interactive.process(query);
+            return zelph::test::collect_answers(collector);
+        };
+        std::string setup;
+        bool        contradiction = false;
+        SUBCASE("its predicate among its objects") { setup = "a p a\n(X p Y) => (Z Y X)\n"; }
+        SUBCASE("a statement it nests") { setup = "a p a\n(X p Y) => ((X r Y) Y X)\n"; }
+        SUBCASE("a witness in a statement it nests") { setup = "a p a\n(X p Y) => ((Z r Y) Y X)\n"; }
+        SUBCASE("a composite predicate among its objects") { setup = "a p a\n(X p Y) => (Z (X r Y) (Y r X))\n"; }
+        // A collection of the rule's own text that the witness keys gives the
+        // check for an earlier witness no prediction, thus a witness is made,
+        // and the firing writes nothing; the witness is removed once the
+        // firing ends.
+        SUBCASE("a collection of the rule's own as its predicate and its object") { setup = "a p a\n(X p Y) => (Z @{Z} @{Z})\n"; }
+        // A contradiction among the consequences halts the firing before the
+        // remaining consequences are written, and the witness that was made
+        // for them stayed: one additional node on each run.
+        SUBCASE("beside a contradiction")
+        {
+            setup         = "a p b\n(X p Y) => (Z q X) !\n";
+            contradiction = true;
+        }
+
+        CAPTURE(setup);
+        zelph::test::process_lines(interactive, setup);
+        const std::size_t before = zelph::test::node_count(collector, interactive);
+        for (const char* mode : {".semi-naive check", ".semi-naive off", ".semi-naive on"})
+        {
+            CAPTURE(mode);
+            interactive.process(mode);
+            for (int run = 0; run < 2; ++run)
+            {
+                collector.clear();
+                interactive.process(".run");
+                if (contradiction) CHECK(zelph::test::has_contradiction(collector));
+                CHECK(zelph::test::node_count(collector, interactive) == before);
+            }
+        }
+        CHECK(answers("S r O").empty());
+        CHECK(answers("S q O").empty());
+
+        collector.clear();
+        interactive.process(".explain a r a");
+        CHECK(zelph::test::any_output_contains(collector, "not asserted")); });
+}
+
+// The witness of a consequence that deduce skips goes when the firing
+// concludes, also where a different consequence from the same firing is
+// written and keeps its own witness. The search for witnesses that stand in
+// no fact is omitted solely when all consequences have been either written
+// or found, meaning a firing that wrote one of two consequences still makes
+// that search: the first run adds the witness of Z and `?? r a`, two nodes,
+// and nothing for W, whose consequence `?? a a` has its predicate included
+// within its objects.
+TEST_CASE("fact: a derivation that writes one of two consequences keeps only the witness that stands in a fact")
+{
+    zelph::test::run_both_modes([](zelph::io::OutputCollector& collector, const zelph::console::Interactive& interactive)
+                                {
+        interactive.process(".auto-run"); // off: the rule fires when the first .run-once occurs
+        zelph::test::process_lines(interactive, "a p a\n(X p Y) => (Z r X) (W Y X)\n");
+        const std::size_t before = zelph::test::node_count(collector, interactive);
+        interactive.process(".run-once");
+        CHECK(zelph::test::node_count(collector, interactive) == before + 2);
+        for (const char* mode : {".semi-naive check", ".semi-naive off", ".semi-naive on"})
+        {
+            CAPTURE(mode);
+            interactive.process(mode);
+            interactive.process(".run");
+            CHECK(zelph::test::node_count(collector, interactive) == before + 2);
+        }
+        collector.clear();
+        interactive.process("S r O");
+        CHECK(zelph::test::collect_answers(collector) == std::vector<std::string>{"?? r a"}); });
 }
 
 TEST_CASE("fact: a stored statement whose edges a partial view did not load is refused by name")
@@ -432,6 +547,60 @@ TEST_CASE("fact: a refused statement leaves no node behind, so retrying it is re
     {
         check_refusal_leaves_nothing(false);
     }
+}
+
+// The same applies to a typed statement, one level up: the parser writes the
+// parts a statement nests before the statement itself, and when fact()
+// refused the statement, those parts stayed. `x says ((a p b) r (a p b)
+// (c d e))` left `a p b` and `c d e` answering queries as data, while a comma
+// list kept the members written before the refused one. The statement now
+// runs where its refusal takes back what it wrote, just as one that carries a
+// refutation does (test_contradiction_records.cpp, "refuted marking: a
+// statement whose refutation is refused keeps nothing it wrote"); the count
+// includes the atoms the line named first. The rule written beforehand
+// creates the predicate of the engine's pattern marks, which the engine
+// maintains regardless of what occurs to the statement that first named it.
+TEST_CASE("fact: a typed statement that fact() refuses keeps none of the parts it wrote")
+{
+    zelph::test::run_both_modes([](zelph::io::OutputCollector& collector, const zelph::console::Interactive& interactive)
+                                {
+        const auto answers = [&](const std::string& query)
+        {
+            collector.clear();
+            interactive.process(query);
+            return zelph::test::collect_answers(collector);
+        };
+        std::string statement;
+        std::string refusal;
+        SUBCASE("a subject among several objects in its outer statement")
+        {
+            statement = "x says ((a p b) r (a p b) (c d e))";
+            refusal   = "same subject and object";
+        }
+        SUBCASE("the same inside a cluster")
+        {
+            interactive.process(".cluster t");
+            statement = "x says ((a p b) r (a p b) (c d e))";
+            refusal   = "same subject and object";
+        }
+        SUBCASE("a mark of a rule's pattern written by hand")
+        {
+            statement = R"(x says ((a p b) ~ "rule pattern"))";
+            refusal   = "only the engine writes it";
+        }
+        SUBCASE("a comma list whose second member is refused")
+        {
+            statement = "k has {(a p b) z}, y says (y y y y)";
+            refusal   = "both the predicate and an object";
+        }
+        interactive.process("(u v w) => (u v x)");
+        const std::size_t before = zelph::test::node_count(collector, interactive);
+
+        CHECK_THROWS_WITH(interactive.process(statement), doctest::Contains(refusal));
+        CHECK(zelph::test::node_count(collector, interactive) == before);
+        CHECK(answers("S p O").empty());
+        CHECK(answers("S d O").empty());
+        CHECK(answers("S has O").empty()); });
 }
 
 TEST_CASE("fact_import_trusted_single_object: a duplicate is not reported as a foreign node")

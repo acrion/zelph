@@ -97,14 +97,14 @@ endif()
 FetchContent_Declare(
     janet
     GIT_REPOSITORY https://github.com/janet-lang/janet.git
-    GIT_TAG v1.41.2
+    GIT_TAG v1.42.1
     SYSTEM
     SOURCE_SUBDIR ""
 )
 
 FetchContent_MakeAvailable(janet)
 
-# Janet 1.41.2 frees the table of its top-level dynamic bindings during the
+# Janet 1.42.1 frees the table of its top-level dynamic bindings during the
 # first garbage collection cycle; the file patch_janet_gc.cmake explains the
 # reason behind the crash in zelph and indicates when the patch is to be
 # removed. The patch runs here, for every configuration, instead of being

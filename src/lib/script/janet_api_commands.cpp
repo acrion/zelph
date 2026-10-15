@@ -33,9 +33,13 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include <cstdint>
 #include <exception>
 #include <filesystem>
+#include <memory>
 #include <stdexcept>
 #include <string>
 #include <thread>
+#include <unordered_map>
+#include <unordered_set>
+#include <utility>
 #include <vector>
 
 namespace zelph
@@ -180,12 +184,20 @@ namespace zelph
         return command_impl(argc, argv, "zelph/load", ".load");
     }
 
-    // Same delegation as command_impl, for the REPL commands that take no
-    // argument. Kept separate rather than making the argument optional,
-    // because the arity check is what tells a caller which of the two it is.
-    Janet ScriptEngine::Impl::command_noarg_impl(int32_t argc, Janet* argv, const char* name, const char* command)
+    // The run commands, delegated in the way command_impl delegates the
+    // others, accept a single optional parameter, `:quiet`. Omitting it
+    // results in the invocation being treated as the command and yielding
+    // nil. Including it causes the run to print nothing and instead return
+    // what it met as data (quiet_run_result). Any other argument is
+    // rejected, just as the command itself refuses one.
+    //
+    // `:derived`, whether placed before or after `:quiet`, incorporates
+    // the facts the run derived into that data. If `:quiet` is absent,
+    // the call returns nil, meaning the facts would be collected for
+    // nobody, and the call is refused.
+    Janet ScriptEngine::Impl::run_command_impl(int32_t argc, Janet* argv, const char* name, const char* command)
     {
-        janet_fixarity(argc, 0);
+        janet_arity(argc, 0, 2);
         if (!s_instance) return janet_wrap_nil();
         if (s_instance->_log_janet_functions) s_instance->log_janet_call(name, argc, argv, true);
 
@@ -193,21 +205,133 @@ namespace zelph
 
         refuse_inside_rule_build(name);
 
+        bool quiet   = false;
+        bool derived = false;
+        for (int32_t i = 0; i < argc; ++i)
+        {
+            bool* const flag = janet_keyeq(argv[i], "quiet") ? &quiet : janet_keyeq(argv[i], "derived") ? &derived
+                                                                                                        : nullptr;
+            if (flag == nullptr || *flag) janet_panicf("%s: the arguments are :quiet and :derived", name);
+            *flag = true;
+        }
+        if (derived && !quiet) janet_panicf("%s: :derived needs :quiet", name);
+
         if (!s_instance->_command_handler)
             janet_panicf("%s: no command handler registered (script engine not fully initialized)", name);
 
         std::string err;
+        bool        failed = false;
         try
         {
-            s_instance->_command_handler({command});
-            return janet_wrap_nil();
+            if (derived)
+                s_instance->_command_handler({command, "quiet", "derived"});
+            else if (quiet)
+                s_instance->_command_handler({command, "quiet"});
+            else
+                s_instance->_command_handler({command});
         }
         catch (const std::exception& e)
         {
-            err = e.what();
+            err    = e.what();
+            failed = true;
         }
-        janet_panicf("%s: %s", name, err.c_str());
-        return janet_wrap_nil(); // unreachable
+        if (failed) janet_panicf("%s: %s", name, err.c_str());
+
+        return quiet ? quiet_run_result(derived) : janet_wrap_nil();
+    }
+
+    // What a quiet run met, retrieved directly from the engine after it:
+    // {:contradictions C :naf-final N}. C contains a struct for each
+    // contradiction (Reasoning::met_contradictions), N holds a {:fact F
+    // :rule R} for every fact the negation check identified as unsupported
+    // (defeated_negations), listed in the order the check lists them. Only
+    // Janet values are constructed at this stage, so nothing can panic
+    // while a C++ container remains alive.
+    Janet ScriptEngine::Impl::quiet_run_result(const bool derived)
+    {
+        network::Reasoning& n = *s_instance->_n;
+
+        const auto& met            = n.met_contradictions();
+        Janet*      contradictions = janet_tuple_begin(static_cast<int32_t>(met.size()));
+        for (std::size_t i = 0; i < met.size(); ++i)
+        {
+            const network::Reasoning::MetContradiction& m = met[i];
+
+            Janet* conditions = janet_tuple_begin(static_cast<int32_t>(m.conditions.size()));
+            for (std::size_t c = 0; c < m.conditions.size(); ++c)
+                conditions[c] = zelph_wrap_node(m.conditions[c]);
+
+            JanetTable* bindings = janet_table(static_cast<int32_t>(m.bindings.size()));
+            for (const auto& [variable, value] : m.bindings)
+                janet_table_put(bindings, zelph_wrap_node(variable), zelph_wrap_node(value));
+
+            const char* record = m.record == network::Reasoning::ContradictionRecord::New      ? "new"
+                               : m.record == network::Reasoning::ContradictionRecord::Existing ? "existing"
+                                                                                               : "none";
+
+            // A consequence the engine refused to build carries no
+            // :conclusion, and :refused indicates the reason, just as the
+            // loud run's "refused:" line does.
+            JanetKV* entry = janet_struct_begin(4 + (m.conclusion != 0 ? 1 : 0) + (m.refusal.empty() ? 0 : 1));
+            janet_struct_put(entry, janet_ckeywordv("rule"), zelph_wrap_node(m.rule));
+            janet_struct_put(entry, janet_ckeywordv("conditions"), janet_wrap_tuple(janet_tuple_end(conditions)));
+            janet_struct_put(entry, janet_ckeywordv("conclusion"), m.conclusion != 0 ? zelph_wrap_node(m.conclusion) : janet_wrap_nil());
+            janet_struct_put(entry, janet_ckeywordv("record"), janet_ckeywordv(record));
+            janet_struct_put(entry, janet_ckeywordv("bindings"), janet_wrap_table(bindings));
+            if (!m.refusal.empty()) janet_struct_put(entry, janet_ckeywordv("refused"), janet_cstringv(m.refusal.c_str()));
+            contradictions[i] = janet_wrap_struct(janet_struct_end(entry));
+        }
+
+        const auto& defeated  = n.defeated_negations();
+        Janet*      naf_final = janet_tuple_begin(static_cast<int32_t>(defeated.size()));
+        for (std::size_t i = 0; i < defeated.size(); ++i)
+        {
+            JanetKV* entry = janet_struct_begin(2);
+            janet_struct_put(entry, janet_ckeywordv("fact"), zelph_wrap_node(defeated[i].first));
+            janet_struct_put(entry, janet_ckeywordv("rule"), zelph_wrap_node(defeated[i].second));
+            naf_final[i] = janet_wrap_struct(janet_struct_end(entry));
+        }
+
+        // Using :derived, {:derived D} likewise: a distinct struct for
+        // every fact the run derived (Reasoning::DerivedFact), in the
+        // sequence of derivation.
+        Janet derivations = janet_wrap_nil();
+        if (derived)
+        {
+            const auto nodes = [](const std::vector<network::Node>& from)
+            {
+                Janet* to = janet_tuple_begin(static_cast<int32_t>(from.size()));
+                for (std::size_t i = 0; i < from.size(); ++i)
+                    to[i] = zelph_wrap_node(from[i]);
+                return janet_wrap_tuple(janet_tuple_end(to));
+            };
+
+            const std::vector<network::Reasoning::DerivedFact> facts = n.take_derived_facts();
+            Janet*                                             d     = janet_tuple_begin(static_cast<int32_t>(facts.size()));
+            for (std::size_t i = 0; i < facts.size(); ++i)
+            {
+                const network::Reasoning::DerivedFact& f = facts[i];
+
+                JanetTable* bindings = janet_table(static_cast<int32_t>(f.bindings.size()));
+                for (const auto& [variable, value] : f.bindings)
+                    janet_table_put(bindings, zelph_wrap_node(variable), zelph_wrap_node(value));
+
+                JanetKV* entry = janet_struct_begin(5);
+                janet_struct_put(entry, janet_ckeywordv("fact"), zelph_wrap_node(f.fact));
+                janet_struct_put(entry, janet_ckeywordv("rule"), zelph_wrap_node(f.rule));
+                janet_struct_put(entry, janet_ckeywordv("premises"), nodes(f.premises));
+                janet_struct_put(entry, janet_ckeywordv("absent"), nodes(f.absent));
+                janet_struct_put(entry, janet_ckeywordv("bindings"), janet_wrap_table(bindings));
+                d[i] = janet_wrap_struct(janet_struct_end(entry));
+            }
+            derivations = janet_wrap_tuple(janet_tuple_end(d));
+        }
+
+        JanetKV* result = janet_struct_begin(derived ? 3 : 2);
+        janet_struct_put(result, janet_ckeywordv("contradictions"), janet_wrap_tuple(janet_tuple_end(contradictions)));
+        janet_struct_put(result, janet_ckeywordv("naf-final"), janet_wrap_tuple(janet_tuple_end(naf_final)));
+        if (derived) janet_struct_put(result, janet_ckeywordv("derived"), derivations);
+        return janet_wrap_struct(janet_struct_end(result));
     }
 
     // Run the inference engine. Without this, a program that drives zelph as
@@ -217,17 +341,34 @@ namespace zelph
     // block, neither of which exists outside the REPL.
     Janet ScriptEngine::Impl::janet_cfun_zelph_run(int32_t argc, Janet* argv)
     {
-        return command_noarg_impl(argc, argv, "zelph/run", ".run");
+        return run_command_impl(argc, argv, "zelph/run", ".run");
     }
 
     Janet ScriptEngine::Impl::janet_cfun_zelph_run_once(int32_t argc, Janet* argv)
     {
-        return command_noarg_impl(argc, argv, "zelph/run-once", ".run-once");
+        return run_command_impl(argc, argv, "zelph/run-once", ".run-once");
     }
 
     Janet ScriptEngine::Impl::janet_cfun_zelph_run_delta(int32_t argc, Janet* argv)
     {
-        return command_noarg_impl(argc, argv, "zelph/run-delta", ".run-delta");
+        return run_command_impl(argc, argv, "zelph/run-delta", ".run-delta");
+    }
+
+    // Whether the host performs inference following input processing: the
+    // effective `.auto-run`, which a module import disables until the
+    // module concludes. A keyword handler that runs inference
+    // independently consults this to follow the session's setting.
+    //
+    // Main thread only: the value resides within the REPL state, which
+    // the main thread owns and changes without synchronization.
+    Janet ScriptEngine::Impl::janet_cfun_zelph_auto_run_p(int32_t argc, Janet* argv)
+    {
+        janet_fixarity(argc, 0);
+        if (!s_instance) return janet_wrap_false();
+        require_main_thread("zelph/auto-run?");
+
+        const bool on = s_instance->_auto_run_predicate && s_instance->_auto_run_predicate();
+        return janet_wrap_boolean(on ? 1 : 0);
     }
 
     // The negation levels of the active rules, as data, as .strata prints
@@ -262,9 +403,60 @@ namespace zelph
             if (strata.negates[i]) janet_table_put(entry, janet_ckeywordv("level"), janet_wrap_integer(static_cast<int32_t>(strata.level[i] + 1)));
             janet_table_put(entry, janet_ckeywordv("component"), janet_wrap_integer(static_cast<int32_t>(component)));
             janet_table_put(entry, janet_ckeywordv("stratifiable"), janet_wrap_boolean(strata.negation_inside[component] ? 0 : 1));
+            // A rule over predicates merely extends what it reads, much like
+            // transitivity applied to a predicate variable. As long as one
+            // remains in force, the levels compare predicates alone, not
+            // predicate and object (negation_levels), and any caller relying
+            // on the verdict must be aware of this.
+            if (strata.transparent[i]) janet_table_put(entry, janet_ckeywordv("transparent"), janet_wrap_true());
             janet_array_push(out, janet_wrap_table(entry));
         }
         return janet_wrap_array(out);
+    }
+
+    // The rules in force along with their parts, as Janet data: a tuple
+    // sorted by rule node, comprising structs {:rule :conditions :negated
+    // :guards :paths :neural :heads}, each part a tuple of nodes
+    // (Reasoning::rules_in_force). It is the engine's own reading of the
+    // conditions, thus a front end that reasons about the rules in force --
+    // whether its own or those it did not write -- requires no second one.
+    // A rule that a statement only mentions is not in force and does not
+    // appear in the listing, and nothing is created. Main thread only, akin
+    // to zelph/strata: the reading sets the predicates that a run reads.
+    Janet ScriptEngine::Impl::janet_cfun_zelph_rules(int32_t argc, Janet* argv)
+    {
+        janet_fixarity(argc, 0);
+        if (!s_instance) return janet_wrap_tuple(janet_tuple_n(nullptr, 0));
+        if (s_instance->_log_janet_functions) s_instance->log_janet_call("zelph/rules", argc, argv, true);
+
+        require_main_thread("zelph/rules");
+
+        const auto nodes = [](const std::vector<network::Node>& list)
+        {
+            Janet* t = janet_tuple_begin(static_cast<int32_t>(list.size()));
+            for (std::size_t i = 0; i < list.size(); ++i)
+                t[i] = zelph_wrap_node(list[i]);
+            return janet_wrap_tuple(janet_tuple_end(t));
+        };
+
+        const std::vector<network::Reasoning::ListedRule> rules = s_instance->_n->rules_in_force();
+        Janet*                                            out   = janet_tuple_begin(static_cast<int32_t>(rules.size()));
+        for (std::size_t i = 0; i < rules.size(); ++i)
+        {
+            const network::Reasoning::ListedRule& r     = rules[i];
+            JanetKV*                              entry = janet_struct_begin(7);
+            janet_struct_put(entry, janet_ckeywordv("rule"), zelph_wrap_node(r.rule));
+            janet_struct_put(entry, janet_ckeywordv("conditions"), nodes(r.conditions));
+            janet_struct_put(entry, janet_ckeywordv("negated"), nodes(r.negated));
+            janet_struct_put(entry, janet_ckeywordv("guards"), nodes(r.guards));
+            janet_struct_put(entry, janet_ckeywordv("paths"), nodes(r.paths));
+            janet_struct_put(entry, janet_ckeywordv("neural"), nodes(r.neural));
+            janet_struct_put(entry, janet_ckeywordv("heads"), nodes(r.heads));
+            out[i] = janet_wrap_struct(janet_struct_end(entry));
+        }
+        Janet res = janet_wrap_tuple(janet_tuple_end(out));
+        if (s_instance->_log_janet_functions) s_instance->log_janet_call("zelph/rules", argc, argv, false, res);
+        return res;
     }
 
     // Janet's perspective on the warning about defeated negations. A
@@ -311,6 +503,300 @@ namespace zelph
 
         Janet res = janet_wrap_boolean(s_instance->_n->record_negations() ? 1 : 0);
         if (s_instance->_log_janet_functions) s_instance->log_janet_call("zelph/negation-records", argc, argv, false, res);
+        return res;
+    }
+
+    // The fact that the inputs to zelph/explain, zelph/holders, and
+    // zelph/prune-fact name: a fact node, or the fact's subject, predicate,
+    // and objects, resolved without creating anything and taken precisely,
+    // ensuring that `a p b` never refers to `a p b c`. `fact` equals 0 when
+    // the graph holds no such fact, and `variable` says that a node given was
+    // a variable.
+    ScriptEngine::Impl::FactArgument ScriptEngine::Impl::fact_argument(const int32_t argc, Janet* const argv)
+    {
+        FactArgument out;
+        if (argc == 1)
+        {
+            out.fact     = s_instance->resolve_janet_arg_no_create(argv[0]);
+            out.variable = network::Network::is_var(out.fact);
+            return out;
+        }
+
+        network::Reasoning* const n = s_instance->_n;
+        const network::Node       s = s_instance->resolve_janet_arg_no_create(argv[0]);
+        const network::Node       p = s_instance->resolve_janet_arg_no_create(argv[1]);
+        network::adjacency_set    objects;
+        bool                      resolved = s != 0 && p != 0;
+        out.variable                       = network::Network::is_var(s) || network::Network::is_var(p);
+        for (int32_t i = 2; resolved && i < argc; ++i)
+        {
+            const network::Node o = s_instance->resolve_janet_arg_no_create(argv[i]);
+            resolved              = o != 0;
+            out.variable          = out.variable || network::Network::is_var(o);
+            objects.insert(o);
+        }
+        if (resolved)
+            if (const network::Answer answer = n->check_fact(s, p, objects); answer.is_known()) out.fact = answer.relation();
+        return out;
+    }
+
+    // The proof .explain prints, as data: a single struct for each step,
+    // containing the rule and the premises of a derived fact, intended for a
+    // front end that responds to the query why using its own language and
+    // needs the parts rather than the printed tree. The fact is resolved
+    // without creating anything, just as zelph/exists resolves it, and is
+    // accepted precisely as provided, just as .explain takes it: zelph/fact
+    // would claim a derived fact, and a fact involving additional objects
+    // constitutes a different fact. A statement whose text holds a comma
+    // list builds a new condition set every time it is written, so only its
+    // node names it.
+    //
+    // The full proof is delivered, provided the search stays within the
+    // session's .explain-budget, which also sets the limit on what gets
+    // constructed here; otherwise, the proof is the one found within the
+    // default depth of .explain, and its root carries :fallback. A subproof
+    // shared across two steps is represented as a single struct in both
+    // locations. Only on the main thread: the search retains the rules it
+    // has read for use in the next search.
+    Janet ScriptEngine::Impl::janet_cfun_zelph_explain(int32_t argc, Janet* argv)
+    {
+        janet_arity(argc, 1, -1);
+        if (!s_instance) return janet_wrap_nil();
+        if (s_instance->_log_janet_functions) s_instance->log_janet_call("zelph/explain", argc, argv, true);
+
+        require_main_thread("zelph/explain");
+        if (argc == 2) janet_panicf("zelph/explain: pass a fact node, or the fact's subject, predicate and objects");
+
+        network::Reasoning* const n   = s_instance->_n;
+        Janet                     res = janet_wrap_nil();
+        {
+            const network::Node target = fact_argument(argc, argv).fact;
+
+            if (target != 0 && n->check_fact(target).is_known())
+            {
+                const std::shared_ptr<network::ProofNode> proof    = n->explain(target, network::Reasoning::default_explain_depth);
+                const bool                                fallback = n->last_explain_counts().limited;
+
+                // Every status name is explicitly listed, with no default
+                // case present, meaning that adding a new status to
+                // ProofNode::Status earns a compiler warning until it is
+                // assigned its own dedicated keyword.
+                const auto status = [](const network::ProofNode::Status st) -> Janet
+                {
+                    switch (st)
+                    {
+                    case network::ProofNode::Status::Derived:
+                        return janet_ckeywordv("derived");
+                    case network::ProofNode::Status::Axiom:
+                        return janet_ckeywordv("axiom");
+                    case network::ProofNode::Status::Unfounded:
+                        return janet_ckeywordv("unfounded");
+                    case network::ProofNode::Status::RulePattern:
+                        return janet_ckeywordv("rule-pattern");
+                    case network::ProofNode::Status::Mentioned:
+                        return janet_ckeywordv("mentioned");
+                    case network::ProofNode::Status::RuleMentioned:
+                        return janet_ckeywordv("rule-mentioned");
+                    case network::ProofNode::Status::Truncated:
+                        return janet_ckeywordv("truncated");
+                    }
+                    return janet_wrap_nil();
+                };
+                const auto nodes = [](const std::vector<network::Node>& list)
+                {
+                    Janet* const items = janet_tuple_begin(static_cast<int32_t>(list.size()));
+                    for (std::size_t i = 0; i < list.size(); ++i)
+                        items[i] = zelph_wrap_node(list[i]);
+                    return janet_wrap_tuple(janet_tuple_end(items));
+                };
+
+                // Constructed starting from the leaves, using an
+                // independent stack: a proof may extend as deep as the
+                // sequence of facts permits, and each level would require a
+                // call frame, risking stack overflow (refer to ProofNode's
+                // destructor). A step is assembled only after all
+                // underlying steps are complete; a step revisited is the
+                // struct already built.
+                std::unordered_map<const network::ProofNode*, Janet>    built;
+                std::unordered_set<const network::ProofNode*>           open;
+                std::vector<std::pair<const network::ProofNode*, bool>> todo{{proof.get(), false}};
+                const auto                                              steps = [&](const std::vector<std::shared_ptr<network::ProofNode>>& list)
+                {
+                    Janet* const items = janet_tuple_begin(static_cast<int32_t>(list.size()));
+                    for (std::size_t i = 0; i < list.size(); ++i)
+                        items[i] = built.at(list[i].get());
+                    return janet_wrap_tuple(janet_tuple_end(items));
+                };
+                while (!todo.empty())
+                {
+                    const auto [p, expanded] = todo.back();
+                    if (built.contains(p))
+                    {
+                        todo.pop_back();
+                        continue;
+                    }
+                    if (!expanded)
+                    {
+                        todo.back().second = true;
+                        open.insert(p);
+                        const auto enter = [&](const std::shared_ptr<network::ProofNode>& q)
+                        {
+                            if (open.contains(q.get())) throw std::logic_error("zelph/explain: a proof step lies below itself");
+                            if (!built.contains(q.get())) todo.emplace_back(q.get(), false);
+                        };
+                        for (const auto& q : p->premises)
+                            enter(q);
+                        for (const auto& edges : p->walk_edges)
+                            for (const auto& q : edges)
+                                enter(q);
+                        continue;
+                    }
+
+                    JanetTable* const step = janet_table(11);
+                    janet_table_put(step, janet_ckeywordv("fact"), zelph_wrap_node(p->fact));
+                    janet_table_put(step, janet_ckeywordv("status"), status(p->status));
+                    if (p->rule != 0) janet_table_put(step, janet_ckeywordv("rule"), zelph_wrap_node(p->rule));
+                    janet_table_put(step, janet_ckeywordv("premises"), steps(p->premises));
+                    janet_table_put(step, janet_ckeywordv("absent"), nodes(p->absent));
+                    janet_table_put(step, janet_ckeywordv("walked"), nodes(p->walked));
+                    Janet* const edges = janet_tuple_begin(static_cast<int32_t>(p->walk_edges.size()));
+                    for (std::size_t i = 0; i < p->walk_edges.size(); ++i)
+                        edges[i] = steps(p->walk_edges[i]);
+                    janet_table_put(step, janet_ckeywordv("walk-edges"), janet_wrap_tuple(janet_tuple_end(edges)));
+                    janet_table_put(step, janet_ckeywordv("cycle-leaf"), janet_wrap_boolean(p->cycle_leaf ? 1 : 0));
+                    janet_table_put(step, janet_ckeywordv("more"), janet_wrap_boolean(p->more_justifications ? 1 : 0));
+                    JanetTable* const bindings = janet_table(static_cast<int32_t>(p->bindings.size()));
+                    for (const auto& [variable, value] : p->bindings)
+                        janet_table_put(bindings, zelph_wrap_node(variable), zelph_wrap_node(value));
+                    janet_table_put(step, janet_ckeywordv("bindings"), janet_wrap_struct(janet_table_to_struct(bindings)));
+                    if (fallback && p == proof.get()) janet_table_put(step, janet_ckeywordv("fallback"), janet_wrap_true());
+
+                    built.emplace(p, janet_wrap_struct(janet_table_to_struct(step)));
+                    open.erase(p);
+                    todo.pop_back();
+                }
+                res = built.at(proof.get());
+            }
+        }
+
+        if (s_instance->_log_janet_functions) s_instance->log_janet_call("zelph/explain", argc, argv, false, res);
+        return res;
+    }
+
+    // The claimed fact that zelph/prune-fact and zelph/holders act on, or 0
+    // if there is none: a pattern belongs to .prune-facts, and a node that
+    // is not a fact names nothing to withdraw.
+    network::Node ScriptEngine::Impl::claimed_fact_argument(const char* const name, const int32_t argc, Janet* const argv)
+    {
+        if (argc == 2) janet_panicf("%s: pass a fact node, or the fact's subject, predicate and objects", name);
+        refuse_inside_rule_build(name);
+
+        const FactArgument        argument = fact_argument(argc, argv);
+        network::Reasoning* const n        = s_instance->_n;
+        if (argument.variable || (argument.fact != 0 && n->check_fact(argument.fact).is_known() && n->var_in_closure(argument.fact)))
+            janet_panicf("%s: the fact holds a variable, which makes it a pattern; .prune-facts removes what a pattern matches", name);
+        if (argument.fact == 0 || !n->exists(argument.fact)) return 0;
+        if (!n->check_fact(argument.fact).is_known())
+            janet_panicf("%s: %s is no fact", name, n->format(argument.fact).c_str());
+        return argument.fact;
+    }
+
+    // One claimed fact withdrawn, as the ground form of .prune-facts
+    // withdraws it (Reasoning::prune_fact), in a scenario where a program
+    // reverses its prior assertion: `:removed` if the node went with the
+    // statements that held it, `:unclaimed` if it remains as a rule's pattern
+    // or a mention, `nil` if nothing claimed it. A removal is not equivalent
+    // to a creation, hence dropping the active cluster does not bring the
+    // fact back.
+    Janet ScriptEngine::Impl::janet_cfun_zelph_prune_fact(int32_t argc, Janet* argv)
+    {
+        janet_arity(argc, 1, -1);
+        if (!s_instance) return janet_wrap_nil();
+        if (s_instance->_log_janet_functions) s_instance->log_janet_call("zelph/prune-fact", argc, argv, true);
+
+        require_main_thread("zelph/prune-fact");
+        if (s_instance->_full_graph_guard) s_instance->_full_graph_guard("zelph/prune-fact");
+
+        Janet               res  = janet_wrap_nil();
+        const network::Node fact = claimed_fact_argument("zelph/prune-fact", argc, argv);
+        if (fact != 0)
+        {
+            switch (s_instance->_n->prune_fact(fact).outcome)
+            {
+            case network::Reasoning::FactPrune::removed:
+                res = janet_ckeywordv("removed");
+                break;
+            case network::Reasoning::FactPrune::unclaimed:
+                res = janet_ckeywordv("unclaimed");
+                break;
+            case network::Reasoning::FactPrune::none:
+                break;
+            }
+        }
+
+        if (s_instance->_log_janet_functions) s_instance->log_janet_call("zelph/prune-fact", argc, argv, false, res);
+        return res;
+    }
+
+    // The statements that claim a fact through nesting (Reasoning::holders):
+    // what zelph/prune-fact would take along with the fact or withdraw,
+    // queried before pruning by a program that must not lose any.
+    Janet ScriptEngine::Impl::janet_cfun_zelph_holders(int32_t argc, Janet* argv)
+    {
+        janet_arity(argc, 1, -1);
+        if (!s_instance) return janet_wrap_nil();
+        if (s_instance->_log_janet_functions) s_instance->log_janet_call("zelph/holders", argc, argv, true);
+
+        require_main_thread("zelph/holders");
+        // Blocked where `zelph/prune-fact` is: a partial view may lack a
+        // holder or a rule that was not loaded, with no indication of the
+        // absence, and a program that prunes on an empty response reads it
+        // as safe.
+        if (s_instance->_full_graph_guard) s_instance->_full_graph_guard("zelph/holders");
+
+        Janet               res  = janet_wrap_nil();
+        const network::Node fact = claimed_fact_argument("zelph/holders", argc, argv);
+        if (fact != 0)
+        {
+            const std::vector<network::Node> holders = s_instance->_n->holders(fact);
+            Janet* const                     items   = janet_tuple_begin(static_cast<int32_t>(holders.size()));
+            for (std::size_t i = 0; i < holders.size(); ++i)
+                items[i] = zelph_wrap_node(holders[i]);
+            res = janet_wrap_tuple(janet_tuple_end(items));
+        }
+
+        if (s_instance->_log_janet_functions) s_instance->log_janet_call("zelph/holders", argc, argv, false, res);
+        return res;
+    }
+
+    // The facts that are derived from a fact directly
+    // (Reasoning::dependents): what remains after a prune, lacking its
+    // justification. A search limited by the budget concludes with
+    // :truncated, ensuring it never answers empty even if a dependent might
+    // still be unfound.
+    Janet ScriptEngine::Impl::janet_cfun_zelph_dependents(int32_t argc, Janet* argv)
+    {
+        janet_arity(argc, 1, -1);
+        if (!s_instance) return janet_wrap_nil();
+        if (s_instance->_log_janet_functions) s_instance->log_janet_call("zelph/dependents", argc, argv, true);
+
+        require_main_thread("zelph/dependents");
+        if (s_instance->_full_graph_guard) s_instance->_full_graph_guard("zelph/dependents"); // as `zelph/holders`
+
+        Janet               res  = janet_wrap_nil();
+        const network::Node fact = claimed_fact_argument("zelph/dependents", argc, argv);
+        if (fact != 0)
+        {
+            bool                             truncated  = false;
+            const std::vector<network::Node> dependents = s_instance->_n->dependents(fact, truncated);
+            Janet* const                     items      = janet_tuple_begin(static_cast<int32_t>(dependents.size() + (truncated ? 1 : 0)));
+            for (std::size_t i = 0; i < dependents.size(); ++i)
+                items[i] = zelph_wrap_node(dependents[i]);
+            if (truncated) items[dependents.size()] = janet_ckeywordv("truncated");
+            res = janet_wrap_tuple(janet_tuple_end(items));
+        }
+
+        if (s_instance->_log_janet_functions) s_instance->log_janet_call("zelph/dependents", argc, argv, false, res);
         return res;
     }
 

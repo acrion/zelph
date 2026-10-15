@@ -257,6 +257,51 @@ TEST_CASE("number literals: & delegates to redefinable zelph/number")
                    });
 }
 
+TEST_CASE("zelph/list-chars: the characters are the same nodes under every .lang")
+{
+    // `zelph/list-chars` resolved every character within the current
+    // language, meaning the identical string became a distinct list when
+    // interpreted under a different .lang -- and each arithmetic substrate
+    // builds the digits of an &-literal using it, so &3 in the context of
+    // .lang en did not correspond to the &3 that the substrate's tables
+    // operate on. On a Wikidata graph with .lang en, characters resolved to
+    // the items that carry the labels "a" or "3". A node named `a` in `en`
+    // is what such a graph holds, so each case begins by writing one.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process(R"(%(def lc-zelph (zelph/list-chars "ab")))");
+        interactive.process(".lang en");
+        interactive.process("a p b");
+
+        SUBCASE("zelph/list-chars builds the list of the zelph characters")
+        {
+            collector.clear();
+            interactive.process(R"js(%(string "LC-SAME-" (= lc-zelph (zelph/list-chars "ab"))))js");
+            interactive.process(R"js(%(string "LC-EN-A-" (= (zelph/car (zelph/cdr (zelph/list-chars "ab"))) (zelph/resolve "a" "en"))))js");
+            CHECK(any_output_contains(collector, "LC-SAME-true"));
+            CHECK(any_output_contains(collector, "LC-EN-A-false"));
+        }
+        SUBCASE("the compact <ab> syntax inherits it")
+        {
+            interactive.process("<ab> tagged t1");
+            collector.clear();
+            interactive.process(R"js(%(string "CS-" (zelph/exists lc-zelph "tagged" "t1")))js");
+            CHECK(any_output_contains(collector, "CS-true"));
+        }
+        SUBCASE("a node list < a b > still names the nodes of the current language")
+        {
+            // A node list lists NODES, not individual characters: within
+            // .lang en, its elements are the en nodes, precisely the ones
+            // written by the setup above.
+            interactive.process("< a b > tagged t2");
+            collector.clear();
+            interactive.process(R"js(%(string "NL-EN-" (zelph/exists (zelph/list (zelph/resolve "a" "en") (zelph/resolve "b" "en")) "tagged" "t2")))js");
+            interactive.process(R"js(%(string "NL-ZELPH-" (zelph/exists (zelph/list (zelph/resolve "a" "zelph") (zelph/resolve "b" "zelph")) "tagged" "t2")))js");
+            CHECK(any_output_contains(collector, "NL-EN-true"));
+            CHECK(any_output_contains(collector, "NL-ZELPH-false"));
+        } });
+}
+
 // ---------------------------------------------------------------------------
 // Number display: registered digit alphabet
 // ---------------------------------------------------------------------------
@@ -862,4 +907,125 @@ TEST_CASE("number literals: the substrates agree on what a literal denotes (all 
             CHECK(any_output_contains(collector, "REJ-C-true"));
             CHECK(any_output_contains(collector, "REJ-D-true"));
         } });
+}
+
+TEST_CASE("number literals: a literal denotes the same node under every .lang (all arithmetic modules)" * doctest::test_suite("slow"))
+{
+    // The substrate builds a literal's digits via `zelph/list-chars`,
+    // which resolved them within the current language: `(zelph/number "3")`
+    // yielded &3 in .lang zelph and a list of en digits in .lang en, a node
+    // that no table of the substrate knows, thus a computation requested
+    // under .lang en answered nothing. `zelph/int` also introduced the atoms
+    // neg and zint into the current language. The module is brought in under
+    // .lang zelph, as every arithmetic module names its vocabulary there.
+    run_arithmetic_modules([](auto& collector, auto& interactive)
+                           {
+        SUBCASE("zelph/number")
+        {
+            interactive.process(R"(%(def n-zelph (zelph/number "3")))");
+            interactive.process(".lang en");
+            collector.clear();
+            interactive.process(R"js(%(string "NUM-" (= n-zelph (zelph/number "3"))))js");
+            CHECK(any_output_contains(collector, "NUM-true"));
+        }
+        SUBCASE("an &-literal")
+        {
+            interactive.process(R"(%(def n-zelph (zelph/number "3")))");
+            interactive.process(".lang en");
+            interactive.process("&3 tagged t");
+            collector.clear();
+            interactive.process(R"js(%(string "LIT-" (zelph/exists n-zelph "tagged" "t")))js");
+            CHECK(any_output_contains(collector, "LIT-true"));
+        }
+        SUBCASE("zelph/int of a negative literal")
+        {
+            interactive.process(".import integer-arithmetic");
+            interactive.process(R"(%(def i-zelph (zelph/int "-3")))");
+            interactive.process(".lang en");
+            collector.clear();
+            interactive.process(R"js(%(string "INT-" (= i-zelph (zelph/int "-3"))))js");
+            CHECK(any_output_contains(collector, "INT-true"));
+        } });
+}
+
+TEST_CASE("number literals: a substrate imported under another .lang computes on the same literals" * doctest::test_suite("slow"))
+{
+    // A substrate bound its digit alphabet, its tables, and its typed rules
+    // to the language into which it was imported. After literals resolve
+    // within zelph, a substrate imported under .lang en would perform
+    // computations on en digits that no literal reaches. Thus, each
+    // substrate names its vocabulary in zelph, and the .import restores the
+    // importer's language afterwards.
+    auto under_en = [](const char* module)
+    {
+        run_both_modes([&](auto& collector, auto& interactive)
+                       {
+            interactive.process(".lang en");
+            interactive.process(std::string(".import ") + module);
+
+            SUBCASE("the importer's language is back")
+            {
+                collector.clear();
+                interactive.process(".lang");
+                CHECK(any_output_contains(collector, "The current language is 'en'"));
+            }
+            SUBCASE("its literals are the ones of .lang zelph")
+            {
+                interactive.process(R"(%(def n-en (zelph/number "3")))");
+                interactive.process(".lang zelph");
+                collector.clear();
+                interactive.process(R"js(%(string "SUB-NUM-" (= n-en (zelph/number "3"))))js");
+                CHECK(any_output_contains(collector, "SUB-NUM-true"));
+            }
+            SUBCASE("it computes under .lang zelph")
+            {
+                interactive.process(".lang zelph");
+                collector.clear();
+                interactive.process("? &3 + &4");
+                CHECK(any_output_contains(collector, "(&3 + &4) = &7"));
+            } });
+    };
+
+    SUBCASE("decimal-arithmetic") { under_en("decimal-arithmetic"); }
+    SUBCASE("binary-arithmetic") { under_en("binary-arithmetic"); }
+    SUBCASE("binary-nand-arithmetic") { under_en("binary-nand-arithmetic"); }
+}
+
+TEST_CASE("number literals: an arithmetic module imported under another .lang names nothing in it" * doctest::test_suite("slow"))
+{
+    // Above the substrates, the modules write rules that operate on
+    // the substrates' vocabulary (+, cmp, zint, the digits). A module
+    // that named its own lines within the importer's language would
+    // establish rules targeting nodes that the substrate -- now in zelph
+    // -- never writes. A single name in en serves as the trace of
+    // such a line, which is precisely what .stat counts per language.
+    auto under_en = [](const char* module)
+    {
+        zelph::io::OutputCollector  collector;
+        zelph::console::Interactive interactive(collector.sink());
+        interactive.process(".lang en");
+        interactive.process(std::string(".import ") + module);
+        collector.clear();
+        interactive.process(".stat");
+        CHECK(any_output_contains(collector, "  zelph: "));
+        CHECK_FALSE(any_output_contains(collector, "  en: "));
+    };
+
+    SUBCASE("decimal-arithmetic") { under_en("decimal-arithmetic"); }
+    SUBCASE("binary-arithmetic") { under_en("binary-arithmetic"); }
+    SUBCASE("binary-nand-arithmetic") { under_en("binary-nand-arithmetic"); }
+    SUBCASE("common-arithmetic") { under_en("common-arithmetic"); }
+    SUBCASE("integer-arithmetic") { under_en("integer-arithmetic"); }
+    SUBCASE("symbolic-core") { under_en("symbolic-core"); }
+    SUBCASE("symbolic-minus") { under_en("symbolic-minus"); }
+    SUBCASE("symbolic-pow") { under_en("symbolic-pow"); }
+    SUBCASE("symbolic-integers") { under_en("symbolic-integers"); }
+    SUBCASE("diff") { under_en("diff"); }
+    SUBCASE("eml") { under_en("eml"); }
+    SUBCASE("polynomial") { under_en("polynomial"); }
+    SUBCASE("topoly") { under_en("topoly"); }
+    SUBCASE("math-syntax") { under_en("math-syntax"); }
+    SUBCASE("math") { under_en("math"); }
+    SUBCASE("primes") { under_en("primes"); }
+    SUBCASE("primes-naf") { under_en("primes-naf"); }
 }

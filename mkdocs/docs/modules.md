@@ -10,6 +10,22 @@ zelph allows nodes to have names in multiple languages. This feature is particul
 
 This capability is fully utilized in the Wikidata integration, where node names include both human-readable labels and Wikidata identifiers. An item in zelph can be assigned names in any number of languages, with Wikidata IDs being handled as a specific language ("wikidata").
 
+A `.lang` placed within a module, a script brought in via `.import` or `zelph/import`, applies exclusively to the module’s own lines. Upon completion of the import, the importer’s language is restored, even if the module halted due to an error, and a nested import gives the surrounding module its own language back in the same way. A module can thus name its vocabulary in a fixed language without moving the session into it.
+
+The arithmetic modules use this method to name everything in `zelph`. When imported under `.lang en`, they leave the session in `en`, and their digits and rules are the nodes they would be under `.lang zelph`. An `&`-literal refers to the identical node across every language; operators are found by name just like any other node, hence a computation is written under `.lang zelph`:
+
+```
+zelph> .lang en
+en> .import decimal-arithmetic
+en+> .lang
+The current language is 'en'
+en+> .lang zelph
+zelph+> ? &3 + &4
+Answer: (&3 + &4) = &7
+```
+
+When a script is executed as a session (`zelph script.zph`, as detailed below), it maintains its `.lang`: each line functions as though it had been manually typed.
+
 ## Two ways to run a script
 
 A script file reaches zelph on one of two paths, and they differ in what the

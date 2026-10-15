@@ -130,6 +130,7 @@ namespace zelph::network
         void               loadLeftRightChunks(kj::BufferedInputStreamWrapper& bufferedInput, const ::capnp::ReaderOptions& options, uint32_t leftChunkCount, uint32_t rightChunkCount, const detail::chunk_selector* leftSelection = nullptr, const detail::chunk_selector* rightSelection = nullptr);
         void               loadNameOfNodeChunks(kj::BufferedInputStreamWrapper& bufferedInput, const ::capnp::ReaderOptions& options, uint32_t nameOfNodeChunkCount, const detail::chunk_selector* selection = nullptr);
         void               loadNodeOfNameChunks(kj::BufferedInputStreamWrapper& bufferedInput, const ::capnp::ReaderOptions& options, uint32_t nodeOfNameChunkCount, const detail::chunk_selector* selection = nullptr);
+        void               loadAnnotationChunks(kj::BufferedInputStreamWrapper& bufferedInput, const ::capnp::ReaderOptions& options, uint32_t annotationChunkCount);
         void               loadLeftRightChunkFromPath(const std::string& source_path, uint64_t source_offset, const detail::chunk_selector* selection, const char* which_name, uint32_t section_count);
         void               loadNameOfNodeChunkFromPath(const std::string& source_path, uint64_t source_offset, const detail::chunk_selector* selection);
         void               loadNodeOfNameChunkFromPath(const std::string& source_path, uint64_t source_offset, const detail::chunk_selector* selection);
@@ -174,6 +175,19 @@ namespace zelph::network
         bool                                         try_indexed_fact_lookup(Node predicate, Node node, bool forward, adjacency_set& out) const;
         void                                         invalidate_predicate_index() const noexcept;
         void                                         invalidate_relation_type_set() const;
+
+        // For one predicate, its index and its sidecar for the rest of the
+        // session; all other predicates keep both.
+        void invalidate_predicate_index(Node predicate) const;
+        // Whether the `predicate` sidecar can be read or written: the
+        // session loaded it from a file and has not changed it since.
+        bool pidx_io_allowed(Node predicate) const;
+        // Whether a write has anything associated with its predicate to
+        // invalidate -- such as a built index or active sidecars. A graph that
+        // builds no index and was not loaded from a file does not require any
+        // further action.
+        bool predicate_index_in_use() const noexcept;
+
         // `stop_at`: end the walk upon arriving at this node. `via`: for each
         // node that is reached, the fact it was reached by and the node it
         // came from. `skip2`: further facts to bypass during traversal.
@@ -269,7 +283,9 @@ namespace zelph::network
 
         // Template-variable store: for each node materialized via
         // triple-level construction, the precise set of variables within its
-        // genuine structural closure. Entries are present exclusively for
+        // genuine structural closure, alongside the variables of each set
+        // pattern that a value holds within it (Zelph::set_pattern_variables,
+        // read in _set_patterns). Entries are present exclusively for
         // nodes possessing a non-empty set (rule-template nodes), thus,
         // while authoritative, their absence signifies
         // "provably no variables". Absorbs the former _var_closure flag set:
@@ -327,6 +343,71 @@ namespace zelph::network
         // never marks anything and therefore never takes a lock at all.
         std::atomic<bool> _has_rule_patterns{false};
 
+        // The number of marks unmark_rule_pattern has revoked
+        // (Zelph::rule_patterns_unmarked).
+        std::atomic<uint64_t> _rule_patterns_unmarked{0};
+
+        // The set of predicates a claimed `P ~ opaque` has declared since the
+        // most recent load (Zelph::is_opaque_predicate), each validated upon
+        // reading against its declaration, meaning that a removal or a
+        // revoked claim needs no bookkeeping here. One entry per declared
+        // predicate: rule-scale, nothing to deactivate.
+        mutable std::shared_mutex _opaque_mtx;
+        std::unordered_set<Node>  _opaque_predicates;
+        std::atomic<bool>         _has_opaque_predicates{false};
+
+        // The variables contained within the set literals constructed by
+        // Zelph::set outside the template scope, as a member holds a
+        // variable: the `{...}` found in queries, in `zelph/set`, and in
+        // `zelph_set`. This kind of collection qualifies as a set pattern
+        // through its id class (Network::is_value_set_pattern,
+        // Zelph::set_pattern_members), making this map solely a cache of what
+        // Zelph::set_pattern_variables reads: the variables of the literal's
+        // members, excluding any inside a rule a member mentions, read at the
+        // moment the literal is built, or, after a load has cleared the map,
+        // the first time they are requested; null if no such variables are
+        // present. Removal takes an entry out. Read before the mutex: a
+        // session that never writes such a literal never takes the lock.
+        mutable std::shared_mutex                                                 _set_patterns_mtx;
+        std::unordered_map<Node, std::shared_ptr<const std::unordered_set<Node>>> _set_patterns;
+        std::atomic<bool>                                                         _has_set_patterns{false};
+        // Established upon the creation of a rule's text collection, which
+        // might constitute a set pattern (Zelph::may_hold_set_patterns);
+        // never reset.
+        std::atomic<bool> _has_template_collections{false};
+        // Whether a ground fact containing multiple objects may be present
+        // (Zelph::may_hold_wider_statements): set by fact() for such a fact
+        // and by every load, which is unable to determine it without a scan;
+        // never reset.
+        std::atomic<bool> _may_hold_wider_statements{false};
+
+        // The language currently in use, as observed by any thread other than
+        // the one responsible for setting it, is accessed via
+        // Zelph::published_lang. The set_lang function retains a single copy of
+        // every language it receives and publishes a pointer to that copy; the
+        // copy remains unaltered and unreleased throughout the engine's
+        // lifetime, ensuring that any reader obtains a string that no entity
+        // modifies. Each language that has ever been set corresponds to exactly
+        // one entry, not one per node.
+        std::mutex                      _langs_mtx;
+        std::unordered_set<std::string> _langs;
+        std::atomic<const std::string*> _published_lang{nullptr};
+
+        void publish_lang(const std::string& lang)
+        {
+            std::lock_guard lock(_langs_mtx);
+            _published_lang.store(&*_langs.insert(lang).first, std::memory_order_release);
+        }
+
+        // The language set_lang published last, as perceived by a reader on
+        // any thread: the string is the copy within _langs, unaltered
+        // and unreleased by anything, ensuring that a reference to it stays
+        // valid.
+        const std::string& published_lang() const
+        {
+            return *_published_lang.load(std::memory_order_acquire);
+        }
+
         // The template scope (see Zelph::enter_template_scope), for each
         // thread holding it open on this network: its depth. The writers of a
         // rule's text open it: zelph/dedup-rule, zelph/build-rule, and
@@ -355,6 +436,26 @@ namespace zelph::network
             std::lock_guard lock(_template_scopes_mtx);
             return _template_scopes.count(std::this_thread::get_id()) != 0;
         }
+
+        // The same for the pattern scope.
+        bool pattern_scope_open() const
+        {
+            if (_pattern_scopes_open.load(std::memory_order_acquire) == 0) return false;
+            std::lock_guard lock(_pattern_scopes_mtx);
+            return _pattern_scopes.count(std::this_thread::get_id()) != 0;
+        }
+
+        // The pattern scope (refer to Zelph::enter_pattern_scope), kept per
+        // thread just as the template scope is, and accessed in identical
+        // fashion: a marking written outside any scope pays one atomic load.
+        struct PatternScopeState
+        {
+            int                             depth{0};
+            std::vector<std::vector<Node>*> collectors; // one per open scope, innermost last
+        };
+        mutable std::mutex                                             _pattern_scopes_mtx;
+        mutable std::unordered_map<std::thread::id, PatternScopeState> _pattern_scopes;
+        mutable std::atomic<int>                                       _pattern_scopes_open{0};
 
         // The fingerprint index of the rules (see Zelph::find_equivalent_rule):
         // fingerprint -> rule, and rule -> fingerprint. One entry per `=>`
@@ -388,6 +489,12 @@ namespace zelph::network
         std::unordered_set<Node>  _refuted_facts;
         std::atomic<bool>         _has_refuted_facts{false};
 
+        // Set while a prune command matches its pattern: the content it
+        // matches gets eliminated, and a rule's own text
+        // (Zelph::is_rule_text_fact) is no claim to remove, even though
+        // queries and conditions access it for reading.
+        std::atomic<bool> _prune_scan{false};
+
         // Genuine-structure store: the exact (subject, predicate, objects)
         // triple of every node materialized through triple-level
         // construction (Zelph::fact), stored at creation as an immutable
@@ -411,6 +518,12 @@ namespace zelph::network
         Node                      _pidx_last{0};
         Node                      _pidx_last_var{0};
         mutable std::atomic<bool> _pidx_io_enabled{false};
+        // The predicates written since the whole-file load that enabled the
+        // sidecars: their sidecars represent the graph as it existed at load
+        // time. One entry per predicate, meaning the set grows with the
+        // predicates, not the facts. Guarded by _pred_idx_mtx; cleared each
+        // time a load enables the sidecars.
+        mutable ankerl::unordered_dense::set<Node> _pidx_changed;
 
         // The memberships of the literals that an older engine wrote into
         // the rule text, recorded during a whole-file load that detected
@@ -441,6 +554,9 @@ namespace zelph::network
         // the facts declaring the core relations: what
         // Zelph::holds_only_core compares the graph against.
         std::vector<Node> _core_graph;
+
+        // See Zelph::observe_merges.
+        std::function<void(const std::unordered_map<Node, Node>&)> _on_merge;
 
         int               _max_log_depth{0};
         bool              _logging{false};

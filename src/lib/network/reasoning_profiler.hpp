@@ -252,6 +252,7 @@ namespace zelph::network
             _zelph->reset_genuine_stats();
             _zelph->reset_template_vars_stats();
             _zelph->reset_rules_fingerprinted();
+            _zelph->reset_rule_patterns_unmarked();
 
             // maps
             {
@@ -368,6 +369,8 @@ namespace zelph::network
             oss << "  construction: built=" << load(constructions_built)
                 << " remembered=" << load(constructions_remembered)
                 << " fingerprinted=" << _zelph->rules_fingerprinted() << "\n";
+
+            oss << "  rule_patterns: unmarked=" << _zelph->rule_patterns_unmarked() << "\n";
 
             oss << "  check_fact: known=" << load(check_fact_known)
                 << " new=" << load(check_fact_new)

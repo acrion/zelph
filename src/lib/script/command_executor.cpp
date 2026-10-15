@@ -72,6 +72,22 @@ namespace zelph::console
     // unterminated block into an error instead of silence.
     void CommandExecutor::Impl::finish_input() const
     {
+        // A block dispatched here serves as input, much as a block concluded
+        // by a blank line or a closing `%` does, and Interactive::process
+        // performs inference following such a block. Without that run, a
+        // keyword block or a `%` block that was finalized by the end of
+        // input derived nothing: a piped session printed `asserted` and
+        // terminated, whereas the identical session with a trailing blank
+        // line printed the derivation.
+        _n->begin_input_capture();
+        bool dispatched = false;
+        // Whether the keyword handler was the final writer and ran the
+        // engine afterwards, which skips the run below, as
+        // Interactive::process skips it after a block that a blank line
+        // dispatches. Any other input dispatched here is still followed by
+        // the run.
+        bool handler_ran_last = false;
+
         if (_repl_state->accumulating_keyword)
         {
             std::string keyword               = _repl_state->active_keyword;
@@ -80,7 +96,20 @@ namespace zelph::console
             _repl_state->active_keyword.clear();
             _repl_state->keyword_buffer.clear();
             _repl_state->keyword_prev_blank = false;
-            _script_engine->invoke_keyword(keyword, text, /*force*/ true);
+
+            // Named as Interactive::process names a block that a blank line
+            // dispatches; the end of input does not possess a line of its
+            // own.
+            const size_t runs_before = _n->completed_runs();
+            try
+            {
+                dispatched = _script_engine->invoke_keyword(keyword, text, /*force*/ true);
+            }
+            catch (const std::exception& ex)
+            {
+                throw std::runtime_error("Error in line \"" + keyword_block_label(keyword, text) + "\": " + ex.what());
+            }
+            handler_ran_last = dispatched && _n->completed_runs() != runs_before && _n->unchanged_since_last_run();
         }
 
         if (_repl_state->accumulating_zelph && !_repl_state->zelph_buffer.empty())
@@ -106,7 +135,9 @@ namespace zelph::console
                 // meant a truncated script or paste looked like it had run.
                 throw std::runtime_error("Input ends inside an unfinished statement: " + string::trim(buffered));
             }
+            handler_ran_last = false;
             _script_engine->process_janet(transformed, true);
+            dispatched = true;
         }
         _repl_state->accumulating_zelph = false;
 
@@ -120,7 +151,17 @@ namespace zelph::console
         _repl_state->script_mode               = ScriptMode::Zelph;
         _script_engine->drop_inline_janet();
 
-        if (!janet_code.empty()) _script_engine->process_janet(janet_code, false);
+        if (!janet_code.empty())
+        {
+            handler_ran_last = false;
+            _script_engine->process_janet(janet_code, false);
+            dispatched = true;
+        }
+
+        // Within a module, auto_run is off, and the module's
+        // single postponed run encompasses the dispatch made here.
+        if (dispatched && _repl_state->auto_run && !handler_ran_last)
+            _n->run(_repl_state->deduction_mode != DeductionMode::Off, false, false, true);
     }
 
     // `sources` is each token in the form the PARSER needs, with the
@@ -326,6 +367,11 @@ void console::CommandExecutor::execute(const std::vector<std::string>& cmd, cons
 void console::CommandExecutor::finish_input()
 {
     _pImpl->finish_input();
+}
+
+void console::CommandExecutor::require_full_graph_mode(const std::string& name) const
+{
+    _pImpl->require_full_graph_mode(name.c_str());
 }
 
 std::size_t console::CommandExecutor::import_file(const std::string& file, const std::vector<std::string>& args, const ScriptRole role, const std::size_t lines_done) const

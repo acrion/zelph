@@ -61,11 +61,11 @@ The progress of the NLnet-funded work is monitored via the [project status page]
 
 ## Software Bill of Materials
 
-The following external dependencies are compiled into zelph during compilation. CMake retrieves each one at build time, specifically at the version specified and locked in the build configuration, with no alterations applied to any of them. `zelph --version` displays the set of components included in a given binary.
+During the build process, the following external dependencies are compiled into zelph. CMake retrieves each one at build time, specifically at the version specified and locked in the build configuration. One of these is altered: `src/lib/patch_janet_gc.cmake` inserts into Janet’s garbage collector a marking step for a table that the pinned release was prematurely freeing, a correction borrowed from Janet’s own master branch. `zelph --version` displays the set of components present within a given binary.
 
 | Component | Version | Licence | Used for | Included in |
 | --- | --- | --- | --- | --- |
-| [Janet](https://janet-lang.org) | 1.41.2 | MIT | the embedded scripting layer | all builds |
+| [Janet](https://janet-lang.org) | 1.42.1 | MIT | the embedded scripting layer | all builds |
 | [unordered_dense](https://github.com/martinus/unordered_dense) | 4.8.1 | MIT | hash maps | all builds |
 | [Cap'n Proto](https://capnproto.org) | 1.4.0 | MIT | the `.bin` network format | native builds, not WebAssembly |
 | [bzip2](https://sourceware.org/bzip2/) | 1.0.8 | bzip2 licence (BSD-style) | reading compressed dumps | native builds, not WebAssembly |

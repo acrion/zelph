@@ -27,6 +27,8 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #include "test_helpers.hpp"
 
+#include "network/reasoning.hpp"
+
 #include <algorithm>
 #include <filesystem>
 #include <fstream>
@@ -135,6 +137,35 @@ x trigger x
         interactive.process("x2 trigger x2");
         CHECK(any_output_contains(collector, "x2 step2 x2"));
         CHECK_FALSE(any_output_contains(collector, "racewin")); });
+}
+
+TEST_CASE("stratified: a base fact arriving later does not retract a negation that already succeeded")
+{
+    // A pin of documented behaviour (logic.md, Stratified Evaluation): a
+    // negation is tested against the facts of its run, zelph never retracts a
+    // derived fact, and a base fact arriving with a later input does not
+    // withdraw what the negation had derived: `bill ~ impatient` stays and
+    // answers, and nothing is reported. That is the REPL's default setting,
+    // `.semi-naive on` without negation records. The test binary runs in
+    // check mode, which reports exactly this case as an error (the negation
+    // record cases further down pin that), so the case switches back to the
+    // default first.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process(".semi-naive on");
+        interactive.process("((X ~ man), ¬(X waits nil)) => (X ~ impatient)");
+        collector.clear();
+        interactive.process("bill ~ man");
+        REQUIRE(any_output_contains(collector, "(bill ~ impatient) ⇐"));
+
+        collector.clear();
+        CHECK_NOTHROW(interactive.process("bill waits nil"));
+        CHECK_FALSE(any_event_contains(collector, "no longer justified"));
+        CHECK_FALSE(any_event_contains(collector, "Negation check"));
+
+        collector.clear();
+        interactive.process("X ~ impatient");
+        CHECK(collect_answers(collector) == std::vector<std::string>{"bill ~ impatient"}); });
 }
 
 TEST_CASE("stratified: negation still fires when the pattern is truly absent")
@@ -283,20 +314,385 @@ c p d
         CHECK_THROWS(interactive.process("a p b")); });
 }
 
-// A typed rule whose statement is rejected by fact() -- specifically due to one
-// of its conditions being a fact that the graph holds as incorrect -- failed
-// after its other conditions were built, and the construction preserved those
-// conditions: `k is on`, stated solely as a condition of a rule that never
-// materialized, was the answer to `k is O`, as data. A refused rule retains
-// none of the elements its statement built.
-TEST_CASE("negation: a typed rule that fact() refuses asserts none of its conditions")
+// A ground rule writes its statements down as patterns, and nothing claims
+// them. Refuting one was refused as known to be true, since the refusal
+// asked whether the statement held with a probability of 1, which every
+// pattern inherently does, instead of whether anybody claimed it. The
+// refutation stands now, and the rule that would conclude the refuted
+// statement reports the contradiction once it fires. A query marks what it
+// builds beneath `¬` as a pattern in the identical fashion, and the
+// statement it negated constitutes no claim either.
+TEST_CASE("negation: a statement a ground rule only writes down can be refuted")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        SUBCASE("written down by a rule")
+        {
+            interactive.process("(mary waits nil) => (john sleeps nil)");
+            CHECK_NOTHROW(interactive.process("¬(john sleeps nil)"));
+
+            collector.clear();
+            interactive.process("mary waits nil");
+            CHECK(has_contradiction(collector));
+            collector.clear();
+            interactive.process("S sleeps O");
+            CHECK(collect_answers(collector).empty());
+        }
+        SUBCASE("negated by a query")
+        {
+            interactive.process("t go k");
+            interactive.process("X go Y, ¬(a p b)");
+            CHECK_NOTHROW(interactive.process("¬(a p b)"));
+            collector.clear();
+            interactive.process("S p O");
+            CHECK(collect_answers(collector).empty());
+        } });
+}
+
+// The alternative order. Building the rule claimed its ground patterns via
+// fact(), refusing the refuted statement as known to be wrong, thus
+// preventing any rule from being formulated about a statement previously
+// refuted -- neither one concluding it nor one whose condition consists of its
+// refutation. The refuted statement is now looked up for the rule, just as an
+// operand beneath `¬` had already been, and the rule behaves as it does when
+// it was written first.
+TEST_CASE("negation: a ground rule may name a statement refuted before it")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        SUBCASE("as its consequence")
+        {
+            interactive.process("¬(john sleeps nil)");
+            CHECK_NOTHROW(interactive.process("(mary waits nil) => (john sleeps nil)"));
+
+            collector.clear();
+            interactive.process("mary waits nil");
+            CHECK(has_contradiction(collector));
+            collector.clear();
+            interactive.process("S sleeps O");
+            CHECK(collect_answers(collector).empty());
+        }
+        SUBCASE("through its refutation, as its condition")
+        {
+            interactive.process("¬(john waits nil)");
+            CHECK_NOTHROW(interactive.process("((john waits nil) ~ refuted) => (mary sleeps nil)"));
+            interactive.run(true, false, false);
+
+            collector.clear();
+            interactive.process("S sleeps O");
+            CHECK(collect_answers(collector) == std::vector<std::string>{"mary sleeps nil"});
+        } });
+}
+
+// A rule that a rule derives may name a refuted fact as the typed rule may
+// (above), also one the binding completes. The construction built the fact at
+// probability 1, so after "¬(john waits nil)", the rule
+// "(X go Y) => ((X waits nil) => (mary sleeps nil))" ended its run with "known
+// to be wrong", and every later line similarly, whereas the typed
+// "(john waits nil) => (mary sleeps nil)" is accepted. The refuted fact is now
+// looked up for the derived rule, as the parser looks it up for a typed one.
+TEST_CASE("negation: a derived rule may name a statement refuted before it")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        std::string refuted = "john waits nil";
+        SUBCASE("as its consequence")
+        {
+            refuted = "john sleeps nil";
+            process_lines(interactive, "¬(john sleeps nil)\n(X go Y) => ((mary waits nil) => (X sleeps nil))\n");
+            collector.clear();
+            CHECK_NOTHROW(interactive.process("john go k"));
+            CHECK_FALSE(has_contradiction(collector));
+
+            collector.clear();
+            CHECK_NOTHROW(interactive.process("mary waits nil"));
+            CHECK(has_contradiction(collector));
+            collector.clear();
+            interactive.process("S sleeps O");
+            CHECK(collect_answers(collector).empty());
+        }
+        SUBCASE("as its condition")
+        {
+            process_lines(interactive, "¬(john waits nil)\n(X go Y) => ((X waits nil) => (mary sleeps nil))\n");
+            collector.clear();
+            CHECK_NOTHROW(interactive.process("john go k"));
+            CHECK_FALSE(has_contradiction(collector));
+            CHECK_NOTHROW(interactive.run(true, false, false));
+
+            collector.clear();
+            interactive.process("S sleeps O");
+            CHECK(collect_answers(collector).empty());
+            collector.clear();
+            interactive.process(".list-rules");
+            CHECK(any_output_contains(collector, "(john waits nil) => (mary sleeps nil)"));
+        }
+        SUBCASE("through its refutation as its condition")
+        {
+            process_lines(interactive, "¬(john waits nil)\n(X go Y) => (((X waits nil) ~ refuted) => (mary sleeps nil))\n");
+            collector.clear();
+            CHECK_NOTHROW(interactive.process("john go k"));
+            CHECK_FALSE(has_contradiction(collector));
+            CHECK_NOTHROW(interactive.run(true, false, false));
+
+            collector.clear();
+            interactive.process("S sleeps O");
+            CHECK(collect_answers(collector) == std::vector<std::string>{"mary sleeps nil"});
+        }
+        // The operand beneath `¬` is a fact that the construction also
+        // establishes, and a refuted one is absent, just as the typed
+        // operand is.
+        SUBCASE("as the operand of a negated condition")
+        {
+            process_lines(interactive, "¬(john waits nil)\n(X go Y) => ((Z q r, ¬(X waits nil)) => (Z sleeps nil))\n");
+            collector.clear();
+            CHECK_NOTHROW(interactive.process("john go k"));
+            CHECK_FALSE(has_contradiction(collector));
+            CHECK_NOTHROW(interactive.process("mary q r"));
+            CHECK_NOTHROW(interactive.run(true, false, false));
+
+            collector.clear();
+            interactive.process("S sleeps O");
+            CHECK(collect_answers(collector) == std::vector<std::string>{"mary sleeps nil"});
+        }
+        CHECK_THROWS_WITH(interactive.process(refuted), doctest::Contains("known to be wrong")); });
+}
+
+// The side of the condition in the first case: a statement that a rule names
+// solely as its condition may also be refuted, and the rule then never fires.
+TEST_CASE("negation: a statement a rule's condition only names can be refuted")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("(john sleeps nil) => (x y z)");
+        CHECK_NOTHROW(interactive.process("¬(john sleeps nil)"));
+        interactive.run(true, false, false);
+
+        collector.clear();
+        interactive.process("S y O");
+        CHECK(collect_answers(collector).empty()); });
+}
+
+// A refutation claims its marking `(a p b) ~ refuted` and nothing of `a p b`
+// (Zelph::refute). Every route a refutation took used to claim `a p b` as
+// well, thereby removing it from the patterns of `(a p b) => (c q d)`; once
+// the marking was pruned, `a p b` answered `S p O` and fired the rule, while
+// asserting it was refused as known to be wrong, since the 0 the refutation
+// had written on its edge stayed. The pattern belongs to the rule itself, and
+// the refutation is withdrawn through pruning its marking, as the
+// documentation states; subsequently, the fact is what it was before the
+// refutation, both within the session and following a reload.
+TEST_CASE("negation: a refuted rule pattern stays a pattern and withdrawing the refutation leaves it as before")
+{
+    const auto file = std::filesystem::temp_directory_path() / "zelph_withdrawn_pattern_refutation.bin";
+    run_both_modes([&](auto& collector, auto& interactive)
+                   {
+        const auto answers = [&](const std::string& query)
+        {
+            collector.clear();
+            interactive.process(query);
+            return collect_answers(collector);
+        };
+
+        const auto as_before = [&]
+        {
+            interactive.run(true, false, false);
+            CHECK(answers("X ~ refuted").empty());
+            CHECK(answers("S p O").empty());
+            CHECK(answers("S q O").empty());
+
+            CHECK_NOTHROW(interactive.process("a p b"));
+            interactive.run(true, false, false);
+            CHECK(answers("S q O") == std::vector<std::string>{"c q d"});
+        };
+        const auto refuted_by = [&](const std::string& refutation, const std::string& pruned = "Pruned 1")
+        {
+            process_lines(interactive, "(a p b) => (c q d)\nt go k\n");
+            interactive.process(refutation);
+            REQUIRE(answers("X ~ refuted") == std::vector<std::string>{"(a p b) ~ refuted"});
+            CHECK(answers("S p O").empty());
+            collector.clear();
+            interactive.process(".prune-facts X ~ refuted");
+            REQUIRE(any_output_contains(collector, pruned));
+
+            SUBCASE("in the session") { as_before(); }
+            SUBCASE("after a .save and a .load")
+            {
+                interactive.process(".save \"" + file.string() + "\"");
+                interactive.process(".load \"" + file.string() + "\"");
+                as_before();
+            }
+        };
+        SUBCASE("the ¬ line") { refuted_by("¬(a p b)"); }
+        SUBCASE("the marking line") { refuted_by("(a p b) ~ refuted"); }
+        SUBCASE("the marking line with the focus") { refuted_by("*(a p b) ~ refuted"); }
+        // The statement that holds the marking goes with it, just as every
+        // statement containing a pruned fact does, and the count names both.
+        SUBCASE("a marking nested in a statement") { refuted_by("x says ((a p b) ~ refuted)", "Pruned 2"); }
+        SUBCASE("zelph/refute in a Janet block") { refuted_by(R"(%(zelph/refute "a" "p" "b"))"); }
+        SUBCASE("a ground marking in a query") { refuted_by("X go Y, (a p b) ~ refuted"); }
+        // A member of a comma list devoid of variables, which asserts every
+        // one of its members: the marking among them is claimed as a
+        // marking is, and the fact it refutes is not.
+        //
+        // The conjunction of the comma list holds the marking as a member and
+        // goes with it, together with its memberships and its tag; the member
+        // `x r y` remains unchanged.
+        SUBCASE("a marking in a comma list") { refuted_by("x r y, (a p b) ~ refuted", "Pruned 5"); } });
+    std::filesystem::remove(file);
+}
+
+// The other half: a fact generated by the refutation is written as a mention,
+// marked as written down yet not asserted, as zelph/mention writes one.
+// Created as data at probability 0, it was read as asserted after the marking
+// was pruned: `S q O` answered `c q d`, which nobody had claimed.
+TEST_CASE("negation: a fact a refutation creates is a mention that stays unasserted once the refutation is withdrawn")
+{
+    const auto file = std::filesystem::temp_directory_path() / "zelph_withdrawn_new_refutation.bin";
+    run_both_modes([&](auto& collector, auto& interactive)
+                   {
+        const auto answers = [&](const std::string& query)
+        {
+            collector.clear();
+            interactive.process(query);
+            return collect_answers(collector);
+        };
+
+        const auto unasserted = [&]
+        {
+            CHECK(answers("X ~ refuted").empty());
+            CHECK(answers("S q O").empty());
+            CHECK_NOTHROW(interactive.process("c q d"));
+            CHECK(answers("S q O") == std::vector<std::string>{"c q d"});
+        };
+        const auto refuted_by = [&](const std::string& refutation, const std::string& pruned = "Pruned 1")
+        {
+            interactive.process("t go k");
+            interactive.process(refutation);
+            REQUIRE(answers("X ~ refuted") == std::vector<std::string>{"(c q d) ~ refuted"});
+            collector.clear();
+            interactive.process(".prune-facts X ~ refuted");
+            REQUIRE(any_output_contains(collector, pruned));
+
+            SUBCASE("in the session") { unasserted(); }
+            SUBCASE("after a .save and a .load")
+            {
+                interactive.process(".save \"" + file.string() + "\"");
+                interactive.process(".load \"" + file.string() + "\"");
+                unasserted();
+            }
+        };
+        SUBCASE("the ¬ line") { refuted_by("¬(c q d)"); }
+        SUBCASE("the marking line") { refuted_by("(c q d) ~ refuted"); }
+        // The statement that holds the marking goes with it, just as every
+        // statement containing a pruned fact does, and the count names both.
+        SUBCASE("a marking nested in a statement") { refuted_by("x says ((c q d) ~ refuted)", "Pruned 2"); }
+        SUBCASE("zelph/refute in a Janet block") { refuted_by(R"(%(zelph/refute "c" "q" "d"))"); }
+        SUBCASE("a ground marking in a query") { refuted_by("X go Y, (c q d) ~ refuted"); }
+        // The conjunction of the comma list holds the marking as a member and
+        // goes with it, together with its memberships and its tag; the member
+        // `x r y` remains unchanged.
+        SUBCASE("a marking in a comma list") { refuted_by("x r y, (c q d) ~ refuted", "Pruned 5"); } });
+    std::filesystem::remove(file);
+}
+
+// After a reload, the withdrawal occurs. The load reads the refutation back
+// from its marking (Zelph::rebuild_refuted_index), and pruning the marking
+// must locate the fact among the refuted ones to take back the 0 on its edge:
+// a fact the load did not count as refuted kept its 0 once the marking was
+// gone, and asserting it was refused as known to be wrong. The two tests
+// above perform pruning before saving and leave this order out.
+TEST_CASE("negation: a refutation withdrawn after a .save and a .load leaves its fact as before")
+{
+    const auto file = std::filesystem::temp_directory_path() / "zelph_refutation_withdrawn_after_load.bin";
+    run_both_modes([&](auto& collector, auto& interactive)
+                   {
+        const auto answers = [&](const std::string& query)
+        {
+            collector.clear();
+            interactive.process(query);
+            return collect_answers(collector);
+        };
+
+        bool rule = false;
+        SUBCASE("a rule's pattern")
+        {
+            interactive.process("(a p b) => (c q d)");
+            rule = true;
+        }
+        SUBCASE("a new fact") {}
+        interactive.process("¬(a p b)");
+        interactive.process(".save \"" + file.string() + "\"");
+        interactive.process(".load \"" + file.string() + "\"");
+        REQUIRE(answers("X ~ refuted") == std::vector<std::string>{"(a p b) ~ refuted"});
+
+        collector.clear();
+        interactive.process(".prune-facts X ~ refuted");
+        REQUIRE(any_output_contains(collector, "Pruned 1"));
+        interactive.run(true, false, false);
+        CHECK(answers("X ~ refuted").empty());
+        CHECK(answers("S p O").empty());
+        CHECK(answers("S q O").empty());
+
+        CHECK_NOTHROW(interactive.process("a p b"));
+        interactive.run(true, false, false);
+        CHECK(answers("S p O") == std::vector<std::string>{"a p b"});
+        if (rule) CHECK(answers("S q O") == std::vector<std::string>{"c q d"}); });
+    std::filesystem::remove(file);
+}
+
+// A marking that a rule reads as its condition is simultaneously the rule's
+// text and the refutation, causing the prune to retract the claim and leave
+// the node, which then reverts to being the rule's pattern once more
+// (Reasoning::withdraw_claims). The refutation ends there just the same;
+// previously, the 0 on the edge of `john waits nil` stayed, and asserting the
+// fact was refused as known to be wrong.
+TEST_CASE("negation: a refutation a rule reads as its condition is withdrawn as any other")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        const auto answers = [&](const std::string& query)
+        {
+            collector.clear();
+            interactive.process(query);
+            return collect_answers(collector);
+        };
+
+        process_lines(interactive, "((john waits nil) ~ refuted) => (mary sleeps nil)\n¬(john waits nil)\n");
+        interactive.run(true, false, false);
+        REQUIRE(answers("S sleeps O") == std::vector<std::string>{"mary sleeps nil"});
+
+        collector.clear();
+        SUBCASE("pruned by its ground form") { interactive.process(".prune-facts (john waits nil) ~ refuted"); }
+        SUBCASE("pruned by a pattern") { interactive.process(".prune-facts X ~ refuted"); }
+        REQUIRE(any_output_contains(collector, "Pruned 1"));
+
+        CHECK(answers("X ~ refuted").empty());
+        collector.clear();
+        interactive.process(".list-rules");
+        CHECK(any_output_contains(collector, "((john waits nil) ~ refuted) => (mary sleeps nil)"));
+        CHECK(answers("S waits O").empty());
+        CHECK_NOTHROW(interactive.process("john waits nil"));
+        CHECK(answers("S waits O") == std::vector<std::string>{"john waits nil"}); });
+}
+
+// A typed rule whose statement is rejected by fact() failed after its other
+// conditions were built, and the construction preserved those conditions:
+// `k is on`, stated solely as a condition of a rule that never materialized,
+// was the answer to `k is O`, as data. A refused rule retains none of the
+// elements its statement built.
+// This replaces "negation: a typed rule that fact() refuses asserts none of
+// its conditions", where the refusal came from a condition tied to a fact that
+// was refuted before the rule: a rule can now name a refuted fact (refer to "a
+// ground rule may name a statement refuted before it" below), hence the
+// refusal now stems from a condition that fact() cannot represent instead.
+TEST_CASE("rules: a typed rule that fact() refuses asserts none of its conditions")
 {
     run_both_modes([](auto& collector, auto& interactive)
                    {
         interactive.process("¬(a p b)");
         const std::size_t before = node_count(collector, interactive);
 
-        CHECK_THROWS_WITH(interactive.process("(k is on, a p b, X q Y) => (X r Y)"), doctest::Contains("this fact is known to be wrong"));
+        CHECK_THROWS_WITH(interactive.process("(k is on, c in {a b}, X q Y) => (X r Y)"), doctest::Contains("cannot be extended"));
 
         CHECK(node_count(collector, interactive) == before);
         collector.clear();
@@ -316,9 +712,17 @@ TEST_CASE("negation: a typed rule that fact() refuses asserts none of its condit
 // ¬(a p b)) => (X ok Y)" and the query "X go Y, ¬(a p b)" were halted with the
 // message "this fact is known to be wrong", since the operand was treated as
 // being asserted just like any other fact. An operand is a pattern, and it is
-// retrieved from the graph where it is held. A positive condition concerning
-// the refuted fact is rejected, as previously described (above).
-TEST_CASE("negation: a refuted fact is negated in a condition as it stands")
+// retrieved from the graph where it is held.
+// A positive condition related to a refuted fact is looked up in the same
+// way and never yields a match (see "a ground rule may name a statement
+// refuted before it").
+// Replaces "negation: a refuted fact is negated in a condition as it stands",
+// which additionally verified that `.node a p b` reports no rule pattern
+// afterwards. The fact that `¬(a p b)` creates is now a mention, written down
+// and not asserted (Zelph::refute), and `.node` names the mark after the
+// position where the fact stands, which is the rule's condition; the rule and
+// the query mark nothing that existed before them.
+TEST_CASE("negation: a refuted fact is negated in a condition as it stands and stays refuted")
 {
     run_both_modes([](auto& collector, auto& interactive)
                    {
@@ -334,12 +738,11 @@ TEST_CASE("negation: a refuted fact is negated in a condition as it stands")
         interactive.process("X go Y, ¬(a p b)");
         CHECK(collect_answers(collector).size() == 1);
 
-        // Consulted, not rebuilt: it remains the refuted fact, and neither
-        // a pattern of the rule nor of the query.
+        // Consulted, not rebuilt: it remains the refuted fact.
         collector.clear();
         interactive.process(".node a p b");
         CHECK(any_output_contains(collector, "Refuted (claimed not to hold): yes"));
-        CHECK_FALSE(any_output_contains(collector, "Rule pattern")); });
+        CHECK_THROWS_WITH(interactive.process("a p b"), doctest::Contains("this fact is known to be wrong")); });
 }
 
 // The reading `¬(F)` got on its own line does not extend below the top level,
@@ -680,6 +1083,310 @@ TEST_CASE("negation: a query that fails keeps nothing it built")
         CHECK(collect_answers(collector).empty()); });
 }
 
+// The query's statement and the patterns composing it stayed within the graph
+// after the query was answered, alongside the variables that made them
+// patterns. When such variables are part of a set's members, they are not
+// accessed: a comma list's conjunction set serves as an illustration of this,
+// and `S ~ conjunction` yielded `{(Y p Z) (X go Y)} ~ conjunction`, during the
+// session and after a round trip, while a set with a variable typed on a line
+// of its own left its memberships, which `S in O` answered. An answered query
+// now retains no element that holds its variables, hence the graph reverts to
+// its earlier state before the query being issued.
+TEST_CASE("negation: an answered query keeps nothing that holds its variables, its conjunction tag included")
+{
+    const auto file = std::filesystem::temp_directory_path() / "zelph_answered_query.bin";
+    run_both_modes([&](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, "t go k\nk p m\n");
+        const std::size_t before = node_count(collector, interactive);
+
+        const auto ask = [&](const std::string& query, const std::size_t answers)
+        {
+            collector.clear();
+            interactive.process(query);
+            CHECK(collect_answers(collector).size() == answers);
+            CHECK(node_count(collector, interactive) == before);
+
+            SUBCASE("in the session") {}
+            SUBCASE("after .save and .load")
+            {
+                interactive.process(".save \"" + file.string() + "\"");
+                interactive.process(".load \"" + file.string() + "\"");
+            }
+            for (const char* question : {"S ~ conjunction", "S in O"})
+            {
+                CAPTURE(question);
+                collector.clear();
+                interactive.process(question);
+                CHECK(collect_answers(collector).empty());
+            }
+        };
+
+        SUBCASE("a comma list") { ask("X go Y, Y p Z", 1); }
+        SUBCASE("a set on a line of its own") { ask("{t X}", 0); }
+        SUBCASE("a negation on a line of its own") { ask("¬(X p t)", 1); } });
+    std::filesystem::remove(file);
+}
+
+// The initial fact associated with a predicate establishes it as a relation
+// type, `b ~ ->`, and a query performed the same function: `X b Y`, posed
+// following `a likes b`, wrote the declaration of `b`, which stayed after the
+// question was answered, featuring bidirectional edges at `b` and an
+// additional node within the graph, even after a .save and a .load. It does
+// not carry any variable from the query, hence the query's text did not
+// include it. It now accompanies the text, regardless of what occupies the
+// predicate slot, and a fact typed later with the same predicate declares it
+// again, just as every first fact does.
+TEST_CASE("negation: an answered query takes back the relation-type declaration it wrote for an older predicate")
+{
+    const auto file = std::filesystem::temp_directory_path() / "zelph_query_declaration.bin";
+    run_both_modes([&](auto& collector, auto& interactive)
+                   {
+        const auto declarations = [&]
+        {
+            collector.clear();
+            interactive.process("P ~ ->");
+            std::vector<std::string> answers = collect_answers(collector);
+            std::sort(answers.begin(), answers.end());
+            return answers;
+        };
+        const auto edges = [&]
+        { return janet_value(collector, interactive, "[(zelph/degree pred :in) (zelph/degree pred :out)]"); };
+
+        const auto ask = [&](const std::string& predicate)
+        {
+            const std::size_t              nodes    = node_count(collector, interactive);
+            const std::vector<std::string> declared = declarations();
+            const std::string              at_pred  = edges();
+
+            collector.clear();
+            interactive.process("X " + predicate + " Y");
+            CHECK(collect_answers(collector).empty());
+            CHECK(interactive.graph()->fact_stores_enabled());
+
+            SUBCASE("in the session") {}
+            SUBCASE("after .save and .load")
+            {
+                interactive.process(".save \"" + file.string() + "\"");
+                interactive.process(".load \"" + file.string() + "\"");
+            }
+            CHECK(node_count(collector, interactive) == nodes);
+            CHECK(edges() == at_pred);
+            CHECK(declarations() == declared);
+
+            interactive.process("c " + predicate + " d");
+            CHECK(std::ranges::count(declarations(), predicate + " ~ ->") == 1);
+            collector.clear();
+            interactive.process("S " + predicate + " O");
+            CHECK(collect_answers(collector) == std::vector<std::string>{"c " + predicate + " d"});
+        };
+
+        SUBCASE("an atom")
+        {
+            process_lines(interactive, "a likes b\n%(def pred (zelph/resolve \"b\"))");
+            ask("b");
+        }
+        SUBCASE("a statement")
+        {
+            process_lines(interactive, "%(def pred (zelph/fact \"k\" \"p\" \"l\"))");
+            ask("(k p l)");
+        }
+        SUBCASE("a set constant")
+        {
+            process_lines(interactive, "%(def pred (zelph/set (zelph/fact \"c\" \"p\" \"d\")))\n%(zelph/fact \"k\" \"says\" pred)");
+            ask("{(c p d)}");
+        } });
+    std::filesystem::remove(file);
+}
+
+// The declaration remains in place as long as something that persists
+// relies on it: a fact with the predicate that the query asserts as a ground
+// part, a statement the query formulates regarding the declaration, and the
+// declaration itself when the query presents it beside the question, in
+// either order -- in `X b Y, b ~ ->`, the first use writes it before the
+// comma list holds it. A declaration that predated the question was never
+// the question's.
+TEST_CASE("negation: an answered query keeps the relation-type declaration that something which stays uses")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("a likes b");
+        std::string              query;
+        std::string              check = "S b O";
+        std::vector<std::string> answer;
+        SUBCASE("a fact the query asserts")
+        {
+            query  = "X b Y, c b d";
+            answer = {"c b d"};
+        }
+        SUBCASE("a statement the query makes about the declaration")
+        {
+            query  = "X b Y, k says (b ~ ->)";
+            check  = "S says O";
+            answer = {"k says (b ~ ->)"};
+        }
+        SUBCASE("the declaration the query states after the question")
+        {
+            query = "X b Y, b ~ ->";
+        }
+        SUBCASE("the declaration the query states before the question")
+        {
+            query = "b ~ ->, X b Y";
+        }
+        SUBCASE("a declaration that existed before the question")
+        {
+            interactive.process("c b d");
+            query  = "X b Y";
+            answer = {"c b d"};
+        }
+        interactive.process(query);
+
+        collector.clear();
+        interactive.process("P ~ ->");
+        CHECK(answers_contain(collector, "b ~ ->"));
+        collector.clear();
+        interactive.process(check);
+        CHECK(collect_answers(collector) == answer);
+        CHECK(interactive.graph()->fact_stores_enabled()); });
+}
+
+// A query's text incorporates a collection that the query created as soon
+// as one of its members holds a variable of the query, and every membership
+// of that collection with it. A node named by the query is not such a
+// collection, even if the query inquires about what it holds: in
+// `X in newd, newd r e`, the line introduces the name `newd` just as `X p b`
+// introduces `b`, and `newd r e` represents a ground condition that the
+// query asserts. Interpreted as the query's own collection, `newd`
+// accompanied the answered query and carried `newd r e` with it.
+TEST_CASE("negation: an answered query keeps a node it names as a container, and the ground facts about it")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("t go k");
+
+        SUBCASE("on a line of its own")
+        {
+            interactive.process("X in newd");
+        }
+        SUBCASE("beside a ground condition about it")
+        {
+            interactive.process("X in newd, newd r e");
+            collector.clear();
+            interactive.process("S r O");
+            CHECK(collect_answers(collector) == std::vector<std::string>{"newd r e"});
+        }
+
+        CHECK_NOTHROW(interactive.process(".node newd")); });
+}
+
+// A predicate that the question names for the first time remains the name the
+// question established, just as `newd` does above, whereas the declaration
+// the question wrote for it accompanies the question's text: only the
+// question made use of it. Kept, `X zzz Y` left `zzz ~ ->` behind.
+TEST_CASE("negation: an answered query keeps a predicate it names, without the relation-type declaration it wrote")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("t go k");
+        const std::size_t before = node_count(collector, interactive);
+
+        collector.clear();
+        interactive.process("X zzz Y");
+        CHECK(collect_answers(collector).empty());
+
+        CHECK(node_count(collector, interactive) == before + 1);
+        CHECK(janet_value(collector, interactive, R"([(zelph/degree (zelph/lookup "zzz") :in) (zelph/degree (zelph/lookup "zzz") :out)])") == "(0 0)");
+        collector.clear();
+        interactive.process("P ~ ->");
+        CHECK_FALSE(answers_contain(collector, "zzz ~ ->"));
+
+        interactive.process("c zzz d");
+        collector.clear();
+        interactive.process("P ~ ->");
+        CHECK(answers_contain(collector, "zzz ~ ->")); });
+}
+
+// The patterns a query wrote are removed as a single cluster drop, which keeps
+// the fact stores armed solely while nothing outside the dropped nodes refers
+// to them. An operand whose variable resides within a set nested inside
+// another set reads as ground, prompting the query to mark it as a pattern,
+// and that marking constitutes such a reference: excluded from the drop, it
+// sent the drop to follow the general path, and that path switches the stores
+// off for the rest of the session.
+TEST_CASE("negation: an answered query takes its patterns away without disarming the fact stores")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process("t go k");
+        REQUIRE(interactive.graph()->fact_stores_enabled());
+
+        collector.clear();
+        interactive.process("X go Y, ¬({{Y} a} can nil)");
+        CHECK(collect_answers(collector).size() == 1);
+        CHECK(interactive.graph()->fact_stores_enabled()); });
+}
+
+// The drop that takes a query's text remains on the fast path only as long
+// as no element beyond the text refers to it, and each of the following
+// forms writes its text in a distinctive manner: a path condition, an
+// operand situated under a negation, a rule the query mentions, an opaque
+// argument, a set pattern located within a set, a collection literal, a
+// refutation marking, a focus. A write occurring after the query's scratch
+// has been closed and that holds a node of the text, just as the marking of
+// an operand did, sends the drop to follow the general path, and the stores
+// are off for the rest of the session.
+TEST_CASE("negation: an answered query of any shape takes its text away without disarming the fact stores")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, "t go k\nk p m\nbelieves ~ opaque\n{(john enters card1) (card1 ~ card)} can nil\n");
+        REQUIRE(interactive.graph()->fact_stores_enabled());
+
+        for (const char* query : {"t go∗ X", "X go Y, ¬(Y p t)", "S noted ((X p Y, e p f) => (X q Y))", "X believes (Y waits nil)",
+                                  "{(X enters C) (C ~ card)} can nil", "{{X} a} can nil", "X in @{t k}", "X go Y, (Y p t) ~ refuted",
+                                  "*(X go k) q c"})
+        {
+            CAPTURE(query);
+            collector.clear();
+            interactive.process(query);
+            CHECK(interactive.graph()->fact_stores_enabled());
+        } });
+}
+
+// When the query names a refutation, the same rollback occurs. A fact
+// that the graph holds is refused at once (refer to "refuted marking: a
+// ground one a query asserts is read as a refutation"); the marking of a
+// fact that a rule only writes down is held back until the query is
+// complete, ensuring that a query which later fails refutes nothing.
+// Previously, the marking went with the query's scratch while the index of
+// refuted facts kept the fact, leaving it concealed from every query
+// during the session until a .save and a .load rebuilt the index from the
+// markings.
+TEST_CASE("negation: a query that fails leaves no refutation behind")
+{
+    const auto file = std::filesystem::temp_directory_path() / "zelph_failed_query_refutation.bin";
+    run_both_modes([&](auto& collector, auto& interactive)
+                   {
+        interactive.process("(john waits nil) => (john is calm)");
+        CHECK_THROWS_WITH(interactive.process("X go Y, (john waits nil) ~ refuted, ¬{(e f g)}"), doctest::Contains("is not one"));
+
+        collector.clear();
+        interactive.process("X ~ refuted");
+        CHECK(collect_answers(collector).empty());
+        interactive.process("john waits nil");
+        collector.clear();
+        interactive.process("S waits O");
+        CHECK(collect_answers(collector) == std::vector<std::string>{"john waits nil"});
+
+        // The session and a reload are in alignment.
+        interactive.process(".save \"" + file.string() + "\"");
+        interactive.process(".load \"" + file.string() + "\"");
+        collector.clear();
+        interactive.process("S waits O");
+        CHECK(collect_answers(collector) == std::vector<std::string>{"john waits nil"}); });
+    std::filesystem::remove(file);
+}
+
 // A set is DATA: it holds its members, and nothing interprets them as
 // conditions. "{(X go Y) (¬(X p b))} => (X ok Y)" was permitted, displayed
 // again without the "¬", and listed no rule -- the operator had simply
@@ -713,7 +1420,11 @@ TEST_CASE("negation: a condition operator inside a set literal is refused, in a 
 // line remained pending a rest it lacks and took the next line. It now
 // re-enters as the same statement: a collection holding the rule, which is
 // data, thus no rule is listed and nothing fires.
-TEST_CASE("negation: the echo of a set holding a rule re-enters, and lists no rule")
+// This case pinned an echo of the collection spelling, `@{...}`. The literal
+// holds a rule with variables, making it a set pattern, and it echoes as the
+// literal that builds one again; `@{...}` built a collection of a different
+// kind.
+TEST_CASE("negation: the echo of a set holding a rule re-enters as the literal, and lists no rule")
 {
     run_both_modes([](auto& collector, auto& interactive)
                    {
@@ -722,7 +1433,7 @@ TEST_CASE("negation: the echo of a set holding a rule re-enters, and lists no ru
         collector.clear();
         interactive.process("{((X go Y, ¬(X p b)) => (X ok Y))}");
         const std::string echo = last_out_text(collector);
-        REQUIRE(echo.rfind("@{", 0) == 0);
+        REQUIRE(echo.rfind("{(", 0) == 0);
 
         collector.clear();
         interactive.process(echo);
@@ -2660,6 +3371,120 @@ TEST_CASE("negation records: a recorded fact that was pruned is not reported")
         } });
 }
 
+// A name merge re-creates the facts and rules that were constructed upon the
+// node it merges away, assigning them new ids, and a record named the old
+// ones: the record of `jim ~ impatient` named a fact that had vanished and
+// bound X to a node that was no longer present, the re-test discarded it, and
+// `jim waits nil` defeated the conclusion without generating a report. When
+// the merge also reconstructed a ground rule, the record referred to a rule
+// that had disappeared and was never subjected to further testing.
+TEST_CASE("negation records: a name merge carries them to the nodes it rebuilt")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process(".semi-naive on");
+        interactive.process(".negation-records on");
+        interactive.process("jon ~ thing");
+        SUBCASE("the merge rebuilt the fact")
+        {
+            interactive.process("(X ~ person, ¬(X waits nil)) => (X ~ impatient)");
+        }
+        SUBCASE("the merge rebuilt the rule")
+        {
+            interactive.process("(jim ~ person, ¬(jim waits nil)) => (jim ~ impatient)");
+        }
+        collector.clear();
+        interactive.process("jim ~ person");
+        REQUIRE(any_output_contains(collector, "(jim ~ impatient) ⇐"));
+        interactive.process(".name jon jim");
+        collector.clear();
+        CHECK_NOTHROW(interactive.process("jim waits nil"));
+        CHECK(any_output_contains(collector, "Warning: 1 fact(s) no longer justified"));
+        CHECK(count_outputs_containing(collector, "jim ~ impatient  (by") == 1); });
+}
+
+// In check mode, the negation records are maintained internally, without
+// `.negation-records`, and a defeat is reported as an error. The records are
+// carried over during the merge as well: the error names `jim ~ impatient`,
+// which the merge rebuilt. Previously, no run issued any report.
+TEST_CASE("negation records: a name merge carries them in check mode, where the defeat is an error")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, "jon ~ thing\n(X ~ person, ¬(X waits nil)) => (X ~ impatient)");
+        collector.clear();
+        interactive.process("jim ~ person");
+        REQUIRE(any_output_contains(collector, "(jim ~ impatient) ⇐"));
+        interactive.process(".name jon jim");
+        collector.clear();
+        CHECK_THROWS_WITH(interactive.process("jim waits nil"), doctest::Contains("Negation check: 1 fact(s) derived under a negated premise that has come to hold"));
+        CHECK(count_outputs_containing(collector, "jim ~ impatient  (by") == 1); });
+}
+
+// The act of merging can make a negated premise hold: the node `jim` carries
+// `jim waits nil` along, and `jon ~ impatient` was derived because `jon` did
+// not wait. `.name` runs no inference, thus the next run reports it, and
+// because no predicate gained a fact that the run would note, the merge has
+// that run re-test every record. Without this, no run would have reported the
+// defeat.
+TEST_CASE("negation records: a merge that makes a negated premise hold is reported by the next run")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process(".semi-naive on");
+        interactive.process(".negation-records on");
+        process_lines(interactive, "(X ~ person, ¬(X waits nil)) => (X ~ impatient)\njon ~ person\njim waits nil\n.name jon jim");
+        collector.clear();
+        interactive.process(".run");
+        CHECK(any_output_contains(collector, "Warning: 1 fact(s) no longer justified"));
+        CHECK(count_outputs_containing(collector, "jim ~ impatient  (by") == 1); });
+}
+
+// A merge does not perform any inference, even when auto-run is enabled:
+// the defeat it causes is reported by the run immediately after the next
+// statement, which in this case is a query, and `.help .name` confirms
+// this.
+TEST_CASE("negation records: a merge runs no inference even with auto-run on and leaves the defeat it causes to the run after the next statement")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, ".semi-naive on\n.negation-records on\n(X ~ person, ¬(X waits nil)) => (X ~ impatient)\njon ~ person\njim waits nil");
+        REQUIRE(interactive.is_auto_run_active());
+        collector.clear();
+        interactive.process(".name jon jim");
+        CHECK_FALSE(any_output_contains(collector, "no longer justified"));
+        collector.clear();
+        interactive.process("S ~ impatient");
+        CHECK(collect_answers(collector) == std::vector<std::string>{"jim ~ impatient"});
+        CHECK(any_output_contains(collector, "Warning: 1 fact(s) no longer justified"));
+        collector.clear();
+        interactive.process(".help .name");
+        CHECK(any_output_contains(collector, "A merge runs no inference")); });
+}
+
+// A defeat reported while a cluster remains active is retained by that
+// cluster, and the drop returns it as a record, because the fact that
+// defeated it goes with the drop. A merge occurring in between rebuilds the
+// fact the record names; the kept report follows it, and `jim waits nil`,
+// written again after the drop, is reported once again. Previously, the
+// record referred to the old fact, and nothing was reported.
+TEST_CASE("negation records: a defeat reported in a cluster comes back on the nodes a merge rebuilt when the cluster is dropped")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process(".semi-naive on");
+        interactive.process(".negation-records on");
+        process_lines(interactive, "jon ~ thing\n(X ~ person, ¬(X waits nil)) => (X ~ impatient)\njim ~ person");
+        collector.clear();
+        process_lines(interactive, ".cluster t\njim waits nil");
+        REQUIRE(any_output_contains(collector, "Warning: 1 fact(s) no longer justified"));
+        process_lines(interactive, ".cluster default\n.name jon jim\n.cluster-drop t");
+        collector.clear();
+        CHECK_NOTHROW(interactive.process("jim waits nil"));
+        CHECK(any_output_contains(collector, "Warning: 1 fact(s) no longer justified"));
+        CHECK(count_outputs_containing(collector, "jim ~ impatient  (by") == 1); });
+}
+
 TEST_CASE("negation records: a recorded fact dropped with its cluster is not reported")
 {
     // When a cluster drop occurs, it eliminates the facts that were
@@ -2682,6 +3507,142 @@ TEST_CASE("negation records: a recorded fact dropped with its cluster is not rep
         CHECK_FALSE(any_output_contains(collector, "no longer justified"));
         interactive.process("X is happy");
         CHECK_FALSE(answers_contain(collector, "bill is happy")); });
+}
+
+TEST_CASE("negation records: a defeat reported inside a dropped cluster is reported again where it holds")
+{
+    // A program may attempt a block of input within a cluster that it drops
+    // afterwards (a dry run), and subsequently write the block for real.
+    // Once a record was reported, it was removed, meaning the dry run's
+    // quiet run consumed the report: following the drop, the identical
+    // defeat in the caller's cluster was not reported by any run, and its
+    // conclusion remained unspoken. The drop now gives the reported records
+    // back. .semi-naive on: check mode, this binary's default, preserves
+    // records too, though the switch is what keeps them at the REPL default.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process(".semi-naive on");
+        interactive.process(".negation-records on");
+        interactive.process(".auto-run");
+        interactive.process("(M ~ man, ¬(M h1 nil)) => (M is happy)");
+        interactive.process("bill ~ man");
+        interactive.process(".run");
+        // Whether the next quiet run reports that bill is happy has lost
+        // its support.
+        const auto defeated = [&](const std::string& tag)
+        {
+            collector.clear();
+            interactive.process("%(zelph/out (string \"" + tag + "=\" (string/join (map |(string ($ :fact)) ((zelph/run :quiet) :naf-final)) \",\")))");
+            return any_output_contains(collector, tag + "=bill is happy");
+        };
+
+        SUBCASE("the defeating fact went with the cluster")
+        {
+            interactive.process(".cluster dry");
+            interactive.process("bill h1 nil");
+            CHECK(defeated("dry"));
+            interactive.process(".cluster default");
+            interactive.process(".cluster-drop dry");
+            interactive.process("bill h1 nil");
+            CHECK(defeated("real"));
+        }
+        SUBCASE("the defeating fact was there before the cluster")
+        {
+            // Since the last re-test, nothing written has pointed the next
+            // test at the record, thus the drop itself must do so.
+            interactive.process("bill h1 nil");
+            interactive.process(".cluster dry");
+            CHECK(defeated("dry"));
+            interactive.process(".cluster default");
+            interactive.process(".cluster-drop dry");
+            CHECK(defeated("real"));
+        }
+        SUBCASE("a merge into another cluster hands the report on, and dropping that one gives it back")
+        {
+            interactive.process(".cluster dry");
+            interactive.process("bill h1 nil");
+            CHECK(defeated("dry"));
+            interactive.process(".cluster-merge dry outer");
+            interactive.process(".cluster default");
+            interactive.process(".cluster-drop outer");
+            interactive.process("bill h1 nil");
+            CHECK(defeated("real"));
+        }
+        SUBCASE("a merge into the default cluster keeps the report")
+        {
+            // The cluster's work has become the session's responsibility,
+            // report included, thus no run reports the defeat a second time.
+            interactive.process(".cluster dry");
+            interactive.process("bill h1 nil");
+            CHECK(defeated("dry"));
+            interactive.process(".cluster-merge dry default");
+            CHECK_FALSE(defeated("again"));
+        }
+        SUBCASE("dropping another cluster gives nothing back")
+        {
+            // A report is associated with the cluster whose run made it: dry
+            // continues to hold the one it made, and the next run in the
+            // default cluster remains silent until dry is dropped.
+            interactive.process("bill h1 nil");
+            interactive.process(".cluster other");
+            interactive.process(".cluster dry");
+            CHECK(defeated("dry"));
+            interactive.process(".cluster default");
+            interactive.process(".cluster-drop other");
+            CHECK_FALSE(defeated("other"));
+            interactive.process(".cluster-drop dry");
+            CHECK(defeated("real"));
+        }
+        SUBCASE("a replacing load forgets the reports its clusters held")
+        {
+            // A load replaces the graph and drops the records, hence no
+            // conclusion from the loaded graph is reported. The reports a
+            // cluster held are also records: a cluster sharing the same name,
+            // created post-load and subsequently dropped, must not give back
+            // a record from the old graph, whose fact and bindings name nodes
+            // that the loaded file holds under the same identifiers.
+            const auto file = std::filesystem::temp_directory_path() / "zelph_negation_reports.bin";
+            interactive.process(".save \"" + file.string() + "\"");
+            interactive.process("bill h1 nil");
+            interactive.process(".cluster dry");
+            CHECK(defeated("dry"));
+            interactive.process(".load \"" + file.string() + "\"");
+            interactive.process(".cluster dry");
+            interactive.process(".cluster default");
+            interactive.process("bill h1 nil");
+            interactive.process(".cluster-drop dry");
+            CHECK_FALSE(defeated("loaded"));
+            std::error_code ec;
+            std::filesystem::remove(file, ec);
+        } });
+}
+
+TEST_CASE("negation records: in check mode a defeat reported inside a dropped cluster is reported again")
+{
+    // Check mode keeps the records without the switch, and this binary
+    // executes each engine within it, including the front ends' own tests.
+    // The drop gives the report back, whichever of the two keeps the
+    // records.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process(".auto-run");
+        interactive.process("(M ~ man, ¬(M h1 nil)) => (M is happy)");
+        interactive.process("bill ~ man");
+        interactive.process(".run");
+        const auto defeated = [&](const std::string& tag)
+        {
+            collector.clear();
+            interactive.process("%(zelph/out (string \"" + tag + "=\" (string/join (map |(string ($ :fact)) ((zelph/run :quiet) :naf-final)) \",\")))");
+            return any_output_contains(collector, tag + "=bill is happy");
+        };
+
+        interactive.process(".cluster dry");
+        interactive.process("bill h1 nil");
+        CHECK(defeated("dry"));
+        interactive.process(".cluster default");
+        interactive.process(".cluster-drop dry");
+        interactive.process("bill h1 nil");
+        CHECK(defeated("real")); });
 }
 
 TEST_CASE("negation records: a load discards them, and the switch stays on")
@@ -2831,6 +3792,48 @@ TEST_CASE("negation records: zelph/defeated returns what the latest run named")
         CHECK(any_output_contains(collector, "defeated 0")); });
 }
 
+// The `zelph/defeated` function yields pairs that follow a name merge as the
+// records do. These pairs retained the original identifiers, so between the
+// merge and the next run the list named nodes that the merge had removed,
+// printed as `??`; and when no record remained, because a reported record
+// leaves with its report, the merge never managed to access the list in the
+// first place. Two pairs that the merge makes into one are named a single
+// time.
+TEST_CASE("negation records: zelph/defeated names the nodes a name merge rebuilt")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process(".semi-naive on");
+        interactive.process(".negation-records on");
+        interactive.process("jon ~ thing");
+        const std::string by_rule = "@[(<zelph/node jim ~ impatient> <zelph/node (¬(X waits nil), (X ~ person)) => (X ~ impatient)>)]";
+        std::string       expected;
+        collector.clear();
+        SUBCASE("no record remains")
+        {
+            process_lines(interactive, "(X ~ person, ¬(X waits nil)) => (X ~ impatient)\njim ~ person\njim waits nil");
+            expected = by_rule;
+        }
+        SUBCASE("another record remains")
+        {
+            process_lines(interactive, "(X ~ person, ¬(X waits nil)) => (X ~ impatient)\njim ~ person\nann ~ person\njim waits nil");
+            expected = by_rule;
+        }
+        SUBCASE("the merge rebuilt the rule")
+        {
+            process_lines(interactive, "(jim ~ person, ¬(jim waits nil)) => (jim ~ impatient)\njim ~ person\njim waits nil");
+            expected = "@[(<zelph/node jim ~ impatient> <zelph/node ((jim ~ person), ¬(jim waits nil)) => (jim ~ impatient)>)]";
+        }
+        SUBCASE("two reported facts the merge makes one")
+        {
+            process_lines(interactive, "(X ~ person, ¬(X waits nil)) => (X ~ impatient)\njon ~ person\njim ~ person\n.auto-run\njon waits nil\njim waits nil\n.run");
+            expected = by_rule;
+        }
+        REQUIRE(any_output_contains(collector, "no longer justified"));
+        interactive.process(".name jon jim");
+        CHECK(janet_value(collector, interactive, "(zelph/defeated)") == expected); });
+}
+
 TEST_CASE("negation records: zelph/negation-records reads and sets the switch")
 {
     // A front end that controls zelph via Janet is unable to input
@@ -2936,6 +3939,75 @@ TEST_CASE("stratified: zelph/strata returns what .strata shows, rule by rule")
         CHECK(any_output_contains(collector, "rules=5"));
         CHECK(any_output_contains(collector, "one cycle: true"));
         CHECK(any_output_contains(collector, "two components: true")); });
+}
+
+TEST_CASE("stratified: zelph/strata marks a rule over predicates")
+{
+    // A rule over predicates, like transitivity applied to a predicate
+    // variable, joins no cycle, and as long as it remains in force, the
+    // levels compare predicates alone, not predicate and object. A front
+    // end depending on the verdict of zelph/strata must recognize this,
+    // since rules sharing merely a predicate then become interdependent.
+    // The row for such a rule carries :transparent true, and no other row
+    // possesses this key.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process(".auto-run");
+        interactive.process(R"js(%(defn show [sub] (def e (find |(string/find sub (string ($ :rule))) (zelph/strata))) (zelph/out (string sub " transparent=" (get e :transparent "absent")))))js");
+        interactive.process("(:start A, ¬(:blockp A)) => (:q A)");
+        SUBCASE("a transitivity rule over a predicate variable")
+        {
+            interactive.process("(R is transitive, A R B, B R C) => (A R C)");
+            collector.clear();
+            interactive.process(R"js(%(show "is transitive"))js");
+            interactive.process(R"js(%(show "¬(:blockp A)"))js");
+            CHECK(any_output_contains(collector, "is transitive transparent=true"));
+            CHECK(any_output_contains(collector, "¬(:blockp A) transparent=absent"));
+        }
+        SUBCASE("a rule whose predicate variable depends on a second one is not")
+        {
+            // The R facts depend on the facts from each S, hence the
+            // engine counts it as creating every predicate (refer to "a
+            // rule over predicates that reads a second predicate variable
+            // is not left out"), and it does not qualify as a rule over
+            // predicates in this sense.
+            interactive.process("(R pairs S, A R B, B S C) => (A R C)");
+            collector.clear();
+            interactive.process(R"js(%(show "pairs"))js");
+            CHECK(any_output_contains(collector, "pairs transparent=absent"));
+        }
+        SUBCASE("without a rule over predicates no row has the key")
+        {
+            collector.clear();
+            interactive.process(R"js(%(zelph/out (string "marked=" (length (filter |($ :transparent) (zelph/strata))))))js");
+            CHECK(any_output_contains(collector, "marked=0"));
+        } });
+}
+
+TEST_CASE("stratified: zelph/strata lists the rules written in a cluster until the cluster is dropped")
+{
+    // A front end, prior to keeping any rule, reads the verdict that
+    // zelph/strata gives on the rules it wrote in a scratch cluster. The
+    // rules written in that cluster are in force there and join the
+    // component of a rule written before; dropping the cluster removes
+    // them, and the levels are those of the rule that is left.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process(".auto-run");
+        interactive.process("(X ~ married, X ~ man) => (X h1 nil)");
+        interactive.process(R"js(%(do (zelph/cluster "trial") nil))js");
+        interactive.process("(X ~ man, ¬(X h1 nil)) => (X ~ bachelor)");
+        interactive.process("(X ~ bachelor) => (X ~ man)");
+        interactive.process(R"js(%(do (zelph/cluster nil) nil))js");
+        const auto rows = R"js(%(zelph/out (string "rules=" (length (zelph/strata)) " stratifiable=" (string/join (map |(string ($ :stratifiable)) (zelph/strata)) ","))))js";
+        collector.clear();
+        interactive.process(rows);
+        CHECK(any_output_contains(collector, "rules=3 stratifiable=false,false,false"));
+
+        interactive.process(R"js(%(do (zelph/cluster-drop "trial") nil))js");
+        collector.clear();
+        interactive.process(rows);
+        CHECK(any_output_contains(collector, "rules=1 stratifiable=true")); });
 }
 
 TEST_CASE("stratified: a negated condition depends on the predicates of its pattern, not on the ~ of its own fact")

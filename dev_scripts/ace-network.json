@@ -1,0 +1,51 @@
+{
+ "about": "Criteria of the Wikidata network <stem>-ace.bin for dev_scripts/wikidata-subset.py: every property, the subclass-of graph without the instances of seven chemistry, biology and coin classes, and the notable items with their claims among each other. Thresholds and class ids are data; the module documentation of the tool describes every key.",
+ "instance_of": "P31",
+ "subclass_of": "P279",
+ "quantities": ["P1082"],
+ "languages": ["en", "mul"],
+ "keep": [
+  {"reason": "property", "entity_type": "property"},
+  {"reason": "sitelinks>=30", "min_sitelinks": 30, "not_instance_of_subclass_of": ["Q17442446"]},
+  {"reason": "state", "instance_of": ["Q3624078", "Q6256"], "keep_values_of": {"P36": "capital"}},
+  {"reason": "settlement pop>=100000", "instance_of_subclass_of": ["Q486972"], "min_quantity": {"P1082": 100000}},
+  {"reason": "taxon rank>=order", "instance_of": ["Q16521"], "has_value": {"P105": ["Q36732", "Q38348", "Q37517", "Q36602"]}},
+  {"reason": "taxon sitelinks>=20", "instance_of": ["Q16521"], "min_sitelinks": 20},
+  {"reason": "given name", "instance_of_subclass_of": ["Q202444"]}
+ ],
+ "value_items": {"reason": "value of >=20 kept", "min_referrers": 20, "ignore_properties": ["P31", "P279"]},
+ "ancestors": {"reason": "P279 ancestor"},
+ "class_graph": {
+  "reason": "P279 graph",
+  "exclude_instances_of": ["Q113145171", "Q7187", "Q8054", "Q59199015", "Q277338", "Q113813711", "Q427087"]
+ },
+ "absent_samples": [
+  {"name": "taxon", "instance_of": "Q16521"},
+  {"name": "person", "instance_of": "Q5"},
+  {"name": "village", "instance_of": "Q532"}
+ ],
+ "acceptance": {
+  "labels": {"en": [
+   ["animal", "Q729"], ["mammal", "Q7377"], ["bird", "Q5113"], ["plant", "Q756"], ["horse", "Q726"],
+   ["dog", "Q144"], ["cat", "Q146"], ["water", "Q283"], ["night", "Q575"], ["Earth", "Q2"],
+   ["Sun", "Q525"], ["Moon", "Q405"], ["human", "Q5"], ["man", "Q8441"], ["woman", "Q467"],
+   ["writer", "Q36180"], ["city", "Q515"], ["Germany", "Q183"], ["France", "Q142"], ["Berlin", "Q64"],
+   ["Paris", "Q90"], ["London", "Q84"], ["Bonn", "Q586"], ["New York City", "Q60"], ["Douglas Adams", "Q42"],
+   ["occupation", "P106"], ["author", "P50"], ["capital", "P36"], ["instance of", "P31"],
+   ["subclass of", "P279"], ["country", "P17"], ["given name", "P735"]
+  ]},
+  "carried_labels": {"en": [["country", "Q6256"], ["given name", "Q202444"]]},
+  "facts": [
+   ["Q42", "P31", "Q5"], ["Q42", "P106", "Q36180"], ["Q3107329", "P50", "Q42"],
+   ["Q183", "P36", "Q64"], ["Q183", "P36", "Q586"], ["Q2", "P31", "Q3504248"]
+  ],
+  "paths": [
+   ["Q7377", "P279*", "Q729"], ["Q144", "P279*", "Q729"], ["Q726", "P279*", "Q7377"],
+   ["Q64", "P31/P279*", "Q515"], ["Q183", "P31/P279*", "Q6256"]
+  ],
+  "no_instances_of": ["Q4167836"],
+  "present_reasons": ["state", "capital"],
+  "marker": "wikidata:labels-v2",
+  "targets": {"nodes": 10000000, "ram_gib": 3, "file_bytes": 1200000000, "load_seconds": 10}
+ }
+}

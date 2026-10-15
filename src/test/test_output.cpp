@@ -158,6 +158,43 @@ TEST_CASE(".deductions focus: interactively entered anchors persist across runs"
         } });
 }
 
+TEST_CASE(".deductions focus: a statement after a run in the same block is still an anchor")
+{
+    // A run ends the input capture, and solely the start of the next input
+    // line began it again. A `%` block or a keyword handler running
+    // inference midway and subsequently writing more therefore wrote
+    // statements that were not anchors: their deductions were derived and
+    // hidden, and the block indicated this in a note.
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process(".deductions focus");
+        interactive.process("(X ~ man) => (X ~ human)");
+        interactive.process("(X ~ woman) => (X ~ human)");
+
+        SUBCASE("after a run that ended normally")
+        {
+            collector.clear();
+            interactive.process(R"js(%(do (zelph/fact "john" "~" "man") (zelph/run) (zelph/fact "sue" "~" "woman")))js");
+        }
+        SUBCASE("after a run that raised")
+        {
+            // In check mode, the test binary's default setting, an error is
+            // triggered at the end of a run where a fact no longer has its
+            // negated premise; by that point, the facts and the delta
+            // record are fully assembled, allowing a block that protects its
+            // run to continue. The capture must also resume along that same
+            // path.
+            interactive.process("(X ~ person, ¬(X ~ busy)) => (X ~ idle)");
+            interactive.process("bill ~ person");
+            collector.clear();
+            interactive.process(R"js(%(do (zelph/fact "bill" "~" "busy") (def r (protect (zelph/run))) (zelph/out (string "RAISED-" (not (r 0)))) (zelph/fact "sue" "~" "woman")))js");
+            REQUIRE(any_output_contains(collector, "RAISED-true"));
+        }
+
+        CHECK(any_deduction_of(collector, "sue ~ human"));
+        CHECK_FALSE(any_output_contains(collector, "hidden")); });
+}
+
 TEST_CASE(".deductions focus: imported statements do not become anchors")
 {
     run_both_modes([](auto& collector, auto& interactive)
@@ -615,6 +652,26 @@ TEST_CASE("help: .negation-records is documented and listed with the engine sett
     collector.clear();
     interactive.process(".help .new");
     CHECK(any_output_contains(collector, ".contradiction-records, .negation-records,"));
+}
+
+// A declaration is not a command, thus ".help opaque" could not locate an
+// entry: the bare name was read as the command ".opaque" and rejected for
+// being unrecognized. The overview lists the topic alongside the inference
+// commands.
+TEST_CASE("help: opaque is documented as a topic and listed with the inference commands")
+{
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+    interactive.process(".help opaque");
+    CHECK(any_output_contains(collector, "Declares the predicate P opaque"));
+    CHECK_FALSE(any_event_contains(collector, "Unknown command"));
+    // The fact a refutation marks is the second location where a statement
+    // claims nothing it brings into existence.
+    CHECK(any_output_contains(collector, "and in the fact a refutation marks"));
+
+    collector.clear();
+    interactive.process(".help");
+    CHECK(any_output_contains(collector, ".help opaque"));
 }
 
 // When a statement extends across multiple lines, the terminal displays

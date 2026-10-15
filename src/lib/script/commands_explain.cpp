@@ -221,7 +221,7 @@ namespace zelph::console
         // regarding the asserted (y val 7 3) answered "Fact is not asserted",
         // because the shorter pattern parses and refers to the absent
         // (y val 7).
-        std::size_t   depth  = 4;
+        std::size_t   depth  = network::Reasoning::default_explain_depth;
         network::Node target = 0;
 
         const auto max_depth = [](const std::string& digits) -> std::size_t
@@ -297,7 +297,8 @@ namespace zelph::console
             if (!_n->exists(target))
                 throw std::runtime_error(
                     ".explain: the node printed last no longer exists -- a cluster drop or a removal "
-                    "took it. Pass a fact pattern.");
+                    "took it, or it was the pattern of a query, which goes once the query is answered. "
+                    "Pass a fact pattern.");
         }
 
         if (!_n->check_fact(target).is_known())
@@ -382,6 +383,8 @@ namespace zelph::console
     // involving a few thousand levels.
     void CommandExecutor::Impl::render_proof(const std::shared_ptr<network::ProofNode>& root, const std::size_t max_depth, const std::map<const network::ProofNode*, std::size_t>& shallowest, const std::set<const network::ProofNode*>& cyclic, std::string& out) const
     {
+        const zelph::string::PremiseRendering premises;
+
         // A fact appears again within a tree ("[see above]", an expansion
         // repeated at a more elevated level), and writing a lengthy
         // term is not cheap: each one is written only once.
@@ -450,6 +453,12 @@ namespace zelph::console
                     // with this statement as a ground pattern, and nobody claimed
                     // it.
                     write("  [rule pattern; not asserted]\n");
+                    return false;
+                case network::ProofNode::Status::Mentioned:
+                    // The identical mark, in which a statement wrote the
+                    // node down as a mention instead of a rule serving as
+                    // its pattern.
+                    write("  [mentioned; not asserted]\n");
                     return false;
                 case network::ProofNode::Status::RuleMentioned:
                     // Not an axiom either: a statement mentions this rule,

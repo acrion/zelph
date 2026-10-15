@@ -32,6 +32,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #include <filesystem>
 #include <fstream>
+#include <sstream>
 #include <string>
 
 using namespace zelph::test;
@@ -199,6 +200,86 @@ TEST_CASE("bin inspection: the header report and the chunk walk divide the work"
     CHECK_THROWS_AS(interactive.process(".index-file \"" + f.truncated.string() + "\" \""
                                         + (f.root / "out.json").string() + "\""),
                     std::runtime_error);
+
+    fs::remove_all(f.root);
+}
+
+TEST_CASE("bin inspection: the annotation section is counted")
+{
+    // Node annotations constitute a fifth section following the name
+    // sections, appearing solely when the network includes any. Both
+    // commands convey this information: the header's count, and the chunk
+    // walk's place for the section, which runs from the last name chunk to
+    // the end of the file. For every other file, they continue to express
+    // the same details as before the section's existence, ensuring that
+    // published networks and the indexes made from them remain unchanged.
+    const Fixtures f = build();
+
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+
+    const fs::path annotated = f.root / "annotated.bin";
+    process_lines(interactive, R"(
+a p b
+c p d
+%(zelph/annotate (zelph/fact "a" "p" "b") "source" "a sentence")
+)");
+    interactive.process(".save \"" + annotated.string() + "\"");
+
+    collector.clear();
+    interactive.process(".stat-file \"" + annotated.string() + "\"");
+    CHECK(any_output_contains(collector, "Annotation Chunks: 1"));
+    CHECK(any_output_contains(collector, "Total Chunks: 5"));
+
+    const fs::path json = f.root / "annotated.json";
+    interactive.process(".index-file \"" + annotated.string() + "\" \"" + json.string() + "\"");
+    std::string index;
+    {
+        std::ifstream     in(json);
+        std::stringstream text;
+        text << in.rdbuf();
+        index = text.str();
+    }
+    const auto number_after = [&index](const std::size_t from, const std::string& key)
+    {
+        const std::size_t at = index.find("\"" + key + "\":", from);
+        REQUIRE(at != std::string::npos);
+        return std::stoull(index.substr(at + key.size() + 3));
+    };
+    const std::size_t section = index.find("\"annotations\": [");
+    REQUIRE(section != std::string::npos);
+    CHECK(number_after(section, "chunkIndex") == 0);
+    CHECK(number_after(section, "offset") + number_after(section, "length") == fs::file_size(annotated));
+    const std::size_t names = index.find("\"nodeOfName\": [");
+    REQUIRE(names != std::string::npos);
+    CHECK(number_after(names, "offset") + number_after(names, "length") == number_after(section, "offset"));
+
+    SUBCASE("a file without annotations reports no section")
+    {
+        collector.clear();
+        interactive.process(".stat-file \"" + f.good.string() + "\"");
+        CHECK(any_output_contains(collector, "Total Chunks: 4"));
+        CHECK_FALSE(any_output_contains(collector, "Annotation Chunks"));
+
+        interactive.process(".index-file \"" + f.good.string() + "\" \"" + json.string() + "\"");
+        std::ifstream     in(json);
+        std::stringstream text;
+        text << in.rdbuf();
+        CHECK(text.str().find("annotations") == std::string::npos);
+    }
+    SUBCASE("a file cut inside the section is noticed by the walk and by a load")
+    {
+        // The header continues to assert the section, which .stat-file
+        // believes; the commands that read the chunks detect its
+        // incompleteness.
+        const fs::path cut = f.root / "annotated-cut.bin";
+        copy_prefix(annotated, cut, static_cast<std::streamsize>(fs::file_size(annotated) - 8));
+        collector.clear();
+        interactive.process(".stat-file \"" + cut.string() + "\"");
+        CHECK(any_output_contains(collector, "Total Chunks: 5"));
+        CHECK_THROWS_AS(interactive.process(".index-file \"" + cut.string() + "\" \"" + json.string() + "\""), std::runtime_error);
+        CHECK_THROWS_WITH_AS(interactive.process(".load \"" + cut.string() + "\""), doctest::Contains("zelph .bin"), std::runtime_error);
+    }
 
     fs::remove_all(f.root);
 }
@@ -427,6 +508,19 @@ p3 q3 r3
         interactive.process(".lang");
         CHECK(any_output_contains(collector, "The current language is 'en'"));
     }
+    SUBCASE("a small file says that the load switched auto-run off and why, without calling itself large")
+    {
+        // A load switches auto-run off, regardless of the content it loads,
+        // and it indicated this with the message "due to loading a large
+        // dataset" even when the file contained just two facts. No mechanism
+        // evaluates the size of a load, hence the message explains the
+        // occurrence and the rationale applicable to every load.
+        collector.clear();
+        interactive.process(".load \"" + plain.string() + "\"");
+        CHECK(any_output_contains(collector, "Auto-run has been disabled, as every .load disables it"));
+        CHECK_FALSE(any_event_contains(collector, "large dataset"));
+        CHECK_FALSE(interactive.is_auto_run_active());
+    }
     SUBCASE("a self-fact whose predicate shares an id with a verbose one is sugar")
     {
         // zelph/no-selffact-sugar records a predicate via its identifier. The
@@ -508,6 +602,76 @@ p3 q3 r3
     fs::remove(self_fact);
     fs::remove(list);
     fs::remove(term);
+}
+
+// Annotations associated with a session are tied to its nodes, and a load
+// replaces them. Node identifiers are positions: the session's `x`
+// and the file's `john` take the same identifier, meaning an annotation
+// referencing x that persisted past the load would be interpreted as
+// belonging to john. The file's original annotations occupy their position
+// instead; a partial load retrieves none, since a view contains no
+// annotations.
+TEST_CASE("annotations: a replacing load takes them along")
+{
+    const fs::path annotated = fs::temp_directory_path() / "zelph_load_annotations.bin";
+    const fs::path bare      = fs::temp_directory_path() / "zelph_load_annotations_bare.bin";
+    {
+        zelph::io::OutputCollector  collector;
+        zelph::console::Interactive interactive(collector.sink());
+        process_lines(interactive, R"(
+john ~ man
+%(zelph/annotate "john" "source" "from the file")
+)");
+        interactive.process(".save \"" + annotated.string() + "\"");
+    }
+    {
+        zelph::io::OutputCollector  collector;
+        zelph::console::Interactive interactive(collector.sink());
+        interactive.process("john ~ man");
+        interactive.process(".save \"" + bare.string() + "\"");
+    }
+
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+    process_lines(interactive, R"(
+x ~ man
+%(def x (zelph/lookup "x"))
+%(zelph/annotate x "source" "from the session")
+)");
+
+    SUBCASE("a file with annotations")
+    {
+        interactive.process(".load \"" + annotated.string() + "\"");
+        REQUIRE(janet_value(collector, interactive, R"((= x (zelph/lookup "john")))") == "true");
+        CHECK(janet_value(collector, interactive, "(zelph/annotations x)") == R"({"source" ("from the file")})");
+    }
+    SUBCASE("a file without annotations")
+    {
+        interactive.process(".load \"" + bare.string() + "\"");
+        REQUIRE(janet_value(collector, interactive, R"((= x (zelph/lookup "john")))") == "true");
+        CHECK(janet_value(collector, interactive, "(zelph/annotations x)") == "{}");
+    }
+    SUBCASE("a partial load")
+    {
+        interactive.process(".load-partial \"" + annotated.string() + "\"");
+        REQUIRE(janet_value(collector, interactive, R"((= x (zelph/lookup "john")))") == "true");
+        CHECK(janet_value(collector, interactive, "(zelph/annotations x)") == "{}");
+    }
+    SUBCASE("a file that is not a network")
+    {
+        // A file that does not constitute a network is rejected at the
+        // header stage, before any interaction with the graph: the session
+        // keeps its graph, along with the annotations attached to its nodes.
+        const fs::path garbage = fs::temp_directory_path() / "zelph_load_annotations_garbage.bin";
+        std::ofstream(garbage, std::ios::binary) << "hello, this is not a serialized network";
+        CHECK_THROWS_AS(interactive.process(".load \"" + garbage.string() + "\""), std::runtime_error);
+        REQUIRE(janet_value(collector, interactive, R"((= x (zelph/lookup "x")))") == "true");
+        CHECK(janet_value(collector, interactive, "(zelph/annotations x)") == R"({"source" ("from the session")})");
+        fs::remove(garbage);
+    }
+
+    fs::remove(annotated);
+    fs::remove(bare);
 }
 
 TEST_CASE("bin inspection: a mistyped chunk selector leaves the session alone")
