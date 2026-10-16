@@ -47,7 +47,7 @@ The second session runs the mapping. `ace/execute-drs!` takes a DRS, plans the z
     Answer: John ~ human
     ```
 
-The three lines are ordinary zelph: a fact, a rule, and the question as a comment. The rule line is the form in which zelph itself lists a rule of one condition that `ace` built: the condition stands in a one-element condition set, so that every rule `ace` builds has a condition set ([The Rule Idiom](#the-rule-idiom)). Typed under `.lang ace`, each line meets what was written instead of adding to it ([Verbalising Nodes and `ace/zelph-of`](#verbalising-nodes-and-acezelph-of) shows it on today's zelph). The funded work is the mapping between the two sides, written as stdlib `.zph` modules.
+The three lines are ordinary zelph: a fact, a rule, and the question as a comment. The rule line is the form in which zelph itself lists a rule of one condition that `ace` built: the condition stands in a one-element condition set, so that every rule `ace` builds has a condition set ([The Rule Idiom](#the-rule-idiom)). Typed under `.lang ace`, each line meets what was written instead of adding to it ([Verbalising Nodes and `ace/zelph-of`](#verbalising-nodes-and-acezelph-of) shows it on today's zelph). The proposed work is the mapping between the two sides, written as stdlib `.zph` modules.
 
 ## The Modules
 

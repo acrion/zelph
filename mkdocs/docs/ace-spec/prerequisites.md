@@ -1,6 +1,6 @@
 # What zelph Still Needs
 
-The ACE front end consists of a set of standard-library modules that turn English sentences into zelph facts, rules, and questions; the actual reasoning process belongs to zelph. Almost every component these modules need from the engine has already been built for this purpose and is included in zelph 1.1.0 ([What zelph Already Provides](foundation.md)). This page specifies what still needs attention: seven engine items where today's zelph behaves in a way the front end must not depend on, and whose fix would reach too deep into the engine to be handled incidentally. Implementing these is included in the funded work.
+The ACE front end consists of a set of standard-library modules that turn English sentences into zelph facts, rules, and questions; the actual reasoning process belongs to zelph. Almost every component these modules need from the engine has already been built for this purpose and is included in zelph 1.1.0 ([What zelph Already Provides](foundation.md)). This page specifies what still needs attention: seven engine items where today's zelph behaves in a way the front end must not depend on, and whose fix would reach too deep into the engine to be handled incidentally. Implementing these is included in the proposed work.
 
 None among the seven holds the front end up. For each, the specification assigns to the first version of the front end (v1) a way to live without the fix: a sentence that would depend on the missing behaviour is refused under the name of its construct, the mapping from sentences to zelph is written so it avoids the flaw entirely, or a cost is accepted and documented. A fix subsequently lifts a refusal, removes a constraint on the mapping, removes a cost, or – in a single instance, Y2-P1 – ensures that an answer required by the specification is valid in every case rather than only in certain instances.
 
@@ -28,9 +28,9 @@ The first block is accepted and produces no output, just like any accepted state
 While the engine's functionalities for the front end were implemented, each gap that emerged – defects uncovered by the tests of the new features, deficiencies, absent functionalities – was categorized into one of four categories ([DEC-WORKMODE](decisions.md#dec-workmode)):
 
 1. **Low-hanging fruit**: fixed immediately.
-2. **Clear bugs**: fixed immediately, as zelph is released before the commencement of the funded work on the front end.
+2. **Clear bugs**: fixed immediately, as zelph is released before the commencement of the proposed work on the front end.
 3. **A more extensive fix that is clearly manageable**: executed without delay, provided it does not cascade. If a fix requires repeated iterations, it is reverted and treated as category 4.
-4. **Everything else**: left unfixed, yet specified on this page with real sessions, as a prerequisite for the front end. Its implementation falls within the scope of the funded work.
+4. **Everything else**: left unfixed, yet specified on this page with real sessions, as a prerequisite for the front end. Its implementation falls within the scope of the proposed work.
 
 The amount of time a fix would require was not a criterion; what counted was whether it remains confined to the local scope.
 
@@ -41,7 +41,7 @@ flowchart LR
     Q -->|2 clear bug| F
     Q -->|3 larger but manageable| C{Does the fix cascade?}
     C -->|no| F
-    C -->|yes, reverted| S[Specified on this page, built in the funded work]
+    C -->|yes, reverted| S[Specified on this page, built in the proposed work]
     Q -->|4 the rest| S
 ```
 
@@ -811,7 +811,7 @@ The front end is not directly affected. It writes a single object for every fact
 
 A fact with several objects, natively expressed, already reaches ACE questions at the top level, where both interpretations align: a yes/no question initially verifies its atom using the exact probe `(zelph/exists s p o :exact)` and, upon failure, proceeds with the unqualified `zelph/exists`, which reads a broader fact akin to how a rule condition processes it, thus enabling a native `John sees Mary Bill` to respond "Does John see Mary?" with Yes ([DEC-YESNO-WIDER](decisions.md#dec-yesno-wider); [Facts With Several Objects](answers.md#facts-with-several-objects) on the answers page, and [on the features page](zelph-features.md#facts-with-several-objects)). This secondary check stands as the sole deviation from the rule that the front end calls `zelph/exists` exclusively with `:exact`; it is invoked solely after the exact probe missed, and its expense is limited to the subject's facts sharing that predicate, never requiring a full graph traversal. That is the single-object case, where both interpretations concur, and a fix introduces no alteration there.
 
-The inconsistency reaches an ACE session only one level deep: a user types native facts involving multiple objects, embeds them within a statement that an ACE sentence references (a that-clause, M8), and then applies a native rule with two object variables to that nested statement, which yields results different from those produced by the identical rule operating at the top level. The order-dependent join matters when a rule generated by the front end uses a shared variable at a statement position across two conditions (M8). The front end documents interoperation with native rules as supported ([Native zelph on ACE-Built Knowledge](zelph-features.md#native-zelph-on-ace-built-knowledge)), meaning this matter pertains to the coherence of the engine underpinning the funded work, rather than to the ACE grammar itself.
+The inconsistency reaches an ACE session only one level deep: a user types native facts involving multiple objects, embeds them within a statement that an ACE sentence references (a that-clause, M8), and then applies a native rule with two object variables to that nested statement, which yields results different from those produced by the identical rule operating at the top level. The order-dependent join matters when a rule generated by the front end uses a shared variable at a statement position across two conditions (M8). The front end documents interoperation with native rules as supported ([Native zelph on ACE-Built Knowledge](zelph-features.md#native-zelph-on-ace-built-knowledge)), meaning this matter pertains to the coherence of the engine underpinning the proposed work, rather than to the ACE grammar itself.
 
 ### What a fix must achieve
 

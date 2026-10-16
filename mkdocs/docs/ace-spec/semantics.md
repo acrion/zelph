@@ -12,7 +12,7 @@ provably" that a later block defeats.
 The point a reviewer should take from it: every construct the front end supports maps onto a zelph
 feature that exists, is documented and is released with zelph 1.1.0 — a rule with one `=>`, a
 refutation `¬(…)`, a negated condition, a closure condition, a rule that writes a rule, an opaque
-predicate for "John believes that …". The reasoning is zelph's; the funded work is this mapping,
+predicate for "John believes that …". The reasoning is zelph's; the proposed work is this mapping,
 written in Janet as the stdlib modules `ace-drs.zph` (DRS, anaphora, classifier, normalization, plan)
 and `ace-zelph.zph` (resolution and execution), in the same way `stdlib/sparql.zph` puts SPARQL on top
 of the public Janet API. Where this page shows "the zelph a block writes", that text can be typed into

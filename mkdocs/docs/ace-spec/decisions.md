@@ -2,7 +2,7 @@
 
 Wherever this specification had more than one reasonable answer, the choice was taken as a design decision with a stable id of the form `DEC-<NAME>`. This page lists every one of them: the question it answers, the option taken, the reason, the alternatives that were weighed, and the milestone at which it takes effect. The other pages of this category cite the ids, so a reader who meets "DEC-ATOMIC" in a paragraph about the `ace` block finds the reasoning here.
 
-Most decisions fall into one of two kinds. The first maps an ACE construct onto a zelph feature that already exists – a rule, a refutation, a negated condition, a path condition, an opaque predicate – and fixes the exact shape the front end writes. The second refuses a construct by its id where zelph cannot yet give the right answer, rather than writing a graph that answers wrongly. A third, smaller group concerns zelph itself: general engine behaviour that the work on the front end raised and that was decided and built before the funded work, released with zelph 1.1.0. Together they carry the central point of this specification: the reasoning exists, and the work is the mapping, written as stdlib `.zph` modules on top of documented engine features.
+Most decisions fall into one of two kinds. The first maps an ACE construct onto a zelph feature that already exists – a rule, a refutation, a negated condition, a path condition, an opaque predicate – and fixes the exact shape the front end writes. The second refuses a construct by its id where zelph cannot yet give the right answer, rather than writing a graph that answers wrongly. A third, smaller group concerns zelph itself: general engine behaviour that the work on the front end raised and that was decided and built before the proposed work, released with zelph 1.1.0. Together they carry the central point of this specification: the reasoning exists, and the work is the mapping, written as stdlib `.zph` modules on top of documented engine features.
 
 A reader with little time finds the decisions that shape the whole effort in five entries: [DEC-WORKMODE](#dec-workmode) (general engine work first, the remainder specified as bounded prerequisites), [DEC-ORDER](#dec-order) (the meaning structure first, so every refusal names a construct), [DEC-ATOMIC](#dec-atomic) (zelph itself validates each block), [DEC-STRATA](#dec-strata) (refuse what the engine cannot yet order) and [DEC-WIKIDATA](#dec-wikidata) (words reach Wikidata through their labels, deterministically and announced).
 
@@ -106,7 +106,7 @@ Specified sessions on this page show behaviour the specification requires and th
 | [DEC-QWORD](#dec-qword) | a quoted word is one proper name | M1 |
 | [DEC-THE-NAME](#dec-the-name) | `the` + an undeclared capitalised word is a name | M1 |
 | [DEC-GOAL-DOCS](#dec-goal-docs) | the specification as a documentation category | – |
-| [DEC-CAT4](#dec-cat4) | the remaining engine items are specified, not built | the funded work |
+| [DEC-CAT4](#dec-cat4) | the remaining engine items are specified, not built | the proposed work |
 | [DEC-OPAQUE-QUERY](#dec-opaque-query) | a query asserts what it creates in an opaque argument | engine, built |
 | [DEC-RESIDUE](#dec-residue) | what a query leaves, how names resolve, how forms print | engine, built |
 | [DEC-DECL-RESIDUE](#dec-decl-residue) | a query or a dropped cluster takes back the relation-type declaration it wrote | engine, built |
@@ -156,11 +156,11 @@ What zelph still lacks is sorted, item by item, into four categories:
 1. low-hanging fruit, fixed now;
 2. clear bugs, fixed now;
 3. a more extensive fix that is clearly manageable, fixed now unless it cascades through many rounds, in which case it is reverted and treated as 4;
-4. the rest: not fixed, but specified with example sessions as a prerequisite in [What zelph Still Needs](prerequisites.md), its implementation part of the funded work.
+4. the rest: not fixed, but specified with example sessions as a prerequisite in [What zelph Still Needs](prerequisites.md), its implementation part of the proposed work.
 
 Hours are no criterion for the sorting. The grounds that decide a doubtful case are the performance of the Jacobian computation (the engine's benchmark, guarded by exact counters), mathematics, the Wikidata use case (ACE instead of SPARQL), ACE without a Wikidata import, and the documentation; compatibility with old `.bin` networks is not one of them.
 
-**Why.** zelph is released before the funded front-end work begins, so its users get every general fix at once; the front end is then written against an engine that behaves as documented, and needs no interim workaround that a later engine fix would throw away.
+**Why.** zelph is released before the proposed front-end work begins, so its users get every general fix at once; the front end is then written against an engine that behaves as documented, and needs no interim workaround that a later engine fix would throw away.
 
 **As built.** The engine work grew the test suite from 1474 to 2016 test cases; every one passes, the Jacobian counters stay within their ceilings, and seven items remain in category 4 ([DEC-CAT4](#dec-cat4); [How the Remaining Items Were Chosen](prerequisites.md#how-the-remaining-items-were-chosen)).
 
@@ -1109,7 +1109,7 @@ Building the engine items raised design questions that the specification had lef
 
 **Question.** Some engine items the front end needs change zelph's model or broke unrelated tests when attempted. Are they built now?
 
-**Decision.** No: they are category 4 of [DEC-WORKMODE](#dec-workmode), specified with real sessions in [What zelph Still Needs](prerequisites.md#the-seven-items-at-a-glance) and implemented in the funded work. There are seven:
+**Decision.** No: they are category 4 of [DEC-WORKMODE](#dec-workmode), specified with real sessions in [What zelph Still Needs](prerequisites.md#the-seven-items-at-a-glance) and implemented in the proposed work. There are seven:
 
 - **[K1-P1](prerequisites.md#k1-p1-a-mention-switches-a-typed-ground-rule-off)** – mentioning a ground rule takes the typed rule out of force, and typing it again does not put it back;
 - **[K1-P2](prerequisites.md#k1-p2-a-rule-generator-cannot-put-a-ground-rule-in-force)** – a rule generator never puts a fully ground rule in force;
@@ -1123,7 +1123,7 @@ K1-P1 and K1-P2 have one cause – whether a `=>` fact is in force is read off i
 
 **Why.** Each of them changes the engine's model or its output in places unrelated to ACE, and is too large for a fix round; an attempt at L3-P1 broke pinned tests in three areas and was reverted. The front end does not wait for them: in v1 it lives with each as a refusal by id or a mapping constraint – `:sub/ground-conditional` stays refused and fully ground nested conditionals are flattened (K1-P1, K1-P2); every nested atom is also written at the top level (L3-P1); no comma list obtained elsewhere is placed into a conclusion by node (Z3-P2); Z3-P1 is a cost; Y2-P1 a firing applied by halves when one consequence is refused; Z2-P1 reaches the front end only through native facts with several objects.
 
-**Milestone.** The funded work; K1-P1 and K1-P2 after v1.
+**Milestone.** The proposed work; K1-P1 and K1-P2 after v1.
 
 ### DEC-OPAQUE-QUERY – a query asserts what it creates in an opaque argument {#dec-opaque-query}
 
@@ -1220,7 +1220,7 @@ K1-P1 and K1-P2 have one cause – whether a `=>` fact is in force is read off i
 
 ## Three Engine Questions Settled Last
 
-Three questions about zelph itself remained after the engine rounds above. None is a prerequisite of the front end, and each is general engine behaviour; all three are settled for zelph 1.1.0, which is released before the funded work begins. [What zelph Already Provides](foundation.md#tests-that-pin-the-foundation) names the tests that pin them.
+Three questions about zelph itself remained after the engine rounds above. None is a prerequisite of the front end, and each is general engine behaviour; all three are settled for zelph 1.1.0, which is released before the proposed work begins. [What zelph Already Provides](foundation.md#tests-that-pin-the-foundation) names the tests that pin them.
 
 ### DEC-FACT-RULE – a `=>` written with `zelph/fact` is checked when the outermost evaluation ends {#dec-fact-rule}
 

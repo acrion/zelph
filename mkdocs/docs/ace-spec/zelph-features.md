@@ -70,7 +70,7 @@ id or the evidence note behind the route, the milestone, and the status.
 | planned | an engine feature that does not exist yet; the row says what it would open for ACE |
 | used by the front end | an engine feature the `ace` modules use themselves, which no sentence names (rule builders, annotations, plan terms) |
 | constraint | an engine rule the `ace` modules must obey |
-| not built | a category-4 prerequisite: specified, implemented in the funded work ([What zelph Still Needs](prerequisites.md#the-seven-items-at-a-glance)) |
+| not built | a category-4 prerequisite: specified, implemented in the proposed work ([What zelph Still Needs](prerequisites.md#the-seven-items-at-a-glance)) |
 
 The other ids on this page:
 
@@ -809,7 +809,7 @@ and a real run of the native form. The senses:
 - **A ground conditional inside a that-clause** ("John believes that if Mary waits then Bill
   sleeps.") is refused by `:sub/ground-conditional` in v1: a typed plain ground rule and its mention
   are one node, and the mention takes the rule out of force. Lifting the refusal needs the
-  asserted-rule record (K1-P1, Z144), part of the funded work
+  asserted-rule record (K1-P1, Z144), part of the proposed work
   ([A Rule Inside a That-Clause](constructs.md#a-rule-inside-a-that-clause) shows all three
   refusals).
 
@@ -1050,7 +1050,7 @@ comma list a rule holds by node, so the mapping never places such a list into a 
 | Z141 | revision of NAF conclusions | NAF across blocks without `[ace/w-naf-final]` | FM-strata | — | **planned** (the outlook's "A conclusion that a later fact withdraws"): in v1 a defeated NAF conclusion is reported, never withdrawn (DEC-NAF-RECORDS) |
 | Z142 | a Janet binding for the negation levels | `:naf/unstratified` from the engine's verdict, native rules included | FM-strata | M4 | **supported**: `(zelph/strata)` (built), with a `:transparent` field for rules over predicates (P-strata-transparent, built); from M4 the dry run refuses as `:naf/unstratified` a component zelph cannot order that holds a NAF rule `ace` wrote beside a rule `ace` did not write, or while a rule over predicates is in force. Never an acceptance criterion |
 | Z143 | a report of lost facts outside check mode | `[ace/w-naf-final]` in every mode | FM-strata | M4 | **supported**: `.negation-records`, `(zelph/negation-records &opt on)` and `(zelph/defeated)` (built); `ace` switches the records on with its first NAF rule, so the quiet run returns the defeats in every mode (Z43, Z114) |
-| Z144 | the asserted-rule record (a positive record that a rule was asserted) | that-clauses holding a ground conditional (`:sub/ground-conditional`, Z27); ground switches kept as switches | FM-modal; K1-P1, K1-P2 | — | **not built**, category 4 ([DEC-CAT4](decisions.md#dec-cat4); also the outlook's "A rule in force due to being asserted"): specified with example sessions, implemented in the funded work; v1 refuses what would need it by id and flattens fully ground nested conditionals |
+| Z144 | the asserted-rule record (a positive record that a rule was asserted) | that-clauses holding a ground conditional (`:sub/ground-conditional`, Z27); ground switches kept as switches | FM-modal; K1-P1, K1-P2 | — | **not built**, category 4 ([DEC-CAT4](decisions.md#dec-cat4); also the outlook's "A rule in force due to being asserted"): specified with example sessions, implemented in the proposed work; v1 refuses what would need it by id and flattens fully ground nested conditionals |
 | Z145 | quoting of rules (matching a mentioned rule up to a renaming of its variables) | conditions over a that-clause holding a conditional with variables (now refused by `:sub/conditional-with-referents-in-body`); questions over one, which answer "not provable" until then | FM-modal | — | **planned** (the outlook's "Quoting a rule") |
 | Z146 | `zelph/claim-text`: a typed statement that carries a refutation, takes a reference or builds a part runs in a scratch cluster, merged on success, dropped on refusal (built) | — | DEC-REFUTE-ROUTES | — | **no direct use**: the parser emits it for typed statements, which is why a refused typed statement leaves the graph as it was; `ace` refutes with `zelph/refute` and asks in its own scratch clusters |
 | Z147 | the C API's `zelph_refute` and `zelph_mention`, Rust `Engine::refute` and `Engine::mention`; the refusals of `zelph_fact`, `zelph_exists` and `zelph_rule` (built) | — | — | — | **no route**: `ace` is a stdlib module and uses the Janet bindings; the [C API](../capi.md) entries keep programmatic writers on the same rules |
@@ -1220,7 +1220,7 @@ Each finding is generic engine behaviour, without ACE knowledge; the host specif
 - [Scripting with Janet](../janet.md), [Rules and Inference](../rules.md) (clusters, deduction
   modes) and the [command reference](../quickstart.md#full-command-reference).
 - [The project's outlook](../about.md#where-the-logic-goes-next) for the planned engine items Z141
-  and Z145, and for the asserted-rule record of Z144, which the funded work implements.
+  and Z145, and for the asserted-rule record of Z144, which the proposed work implements.
 - [What zelph Already Provides](foundation.md) for the engine items built for the front end, among
   them [negation levels as data](foundation.md#quiet-runs-the-rules-in-force-and-negation-levels) and
   [opaque predicates](foundation.md#statements-about-statements-opaque-predicates).
