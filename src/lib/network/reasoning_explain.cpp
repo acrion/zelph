@@ -1287,7 +1287,7 @@ namespace zelph::network
         // specified predicate: in seed mode, Unification of a consequence
         // with a plain predicate yields no match with any other. Set up per
         // rule and fact all the same, across the hundreds of rules
-        // in the maths stack, this process accounted for the bulk of the
+        // in the math stack, this process accounted for the bulk of the
         // expense in a deep explanation.
         bool may_match(const Reasoning::ExplainRules::Head& head, const Node fact_pred)
         {
@@ -3552,7 +3552,7 @@ namespace zelph::network
         // achieves a clean proof, after which the annotation's own bound takes
         // effect. In a search large enough to matter, each unit consumes
         // between 0.25 us (the transitive closure of a ring) and 2.5 us
-        // (proofs involving the arithmetic of the maths stack, and conditions
+        // (proofs involving the arithmetic of the math stack, and conditions
         // anchored at a hub, which read its adjacency and try the candidates
         // discovered there), on the machine where the budget was measured,
         // meaning 80 000 units halt the search for the complete proof after

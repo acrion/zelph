@@ -233,7 +233,7 @@ Error in line "kk John waits.": Janet error in handler for keyword 'kk': {:ace/i
 
 #### `ace/execute!` runs under `.lang zelph`
 
-`ace/execute!` establishes `.lang zelph` via `zelph/lang` and restores the caller's language on every exit path, just as every other public function that might instantiate a node does (decision [DEC-CONTENT-NS](decisions.md#dec-content-ns)). Anything that zelph names implicitly (rule and query variables, characters within a string) is placed in `zelph`; every node explicitly named by the front end receives an explicit language: content within `ace`, internal vocabulary, the pin, the individual mark, and the maths stack all reside in `zelph`. The user's `.lang` never influences how the front end resolves anything. The rationale behind content being housed in its dedicated language `ace`, rather than in Wikidata's label language `en`, is detailed in [Naming Languages](words.md#naming-languages); the implications for native lines entered alongside `ace` blocks are covered in [Content Lives in Language ace](zelph-features.md#content-lives-in-language-ace).
+`ace/execute!` establishes `.lang zelph` via `zelph/lang` and restores the caller's language on every exit path, just as every other public function that might instantiate a node does (decision [DEC-CONTENT-NS](decisions.md#dec-content-ns)). Anything that zelph names implicitly (rule and query variables, characters within a string) is placed in `zelph`; every node explicitly named by the front end receives an explicit language: content within `ace`, internal vocabulary, the pin, the individual mark, and the math stack all reside in `zelph`. The user's `.lang` never influences how the front end resolves anything. The rationale behind content being housed in its dedicated language `ace`, rather than in Wikidata's label language `en`, is detailed in [Naming Languages](words.md#naming-languages); the implications for native lines entered alongside `ace` blocks are covered in [Content Lives in Language ace](zelph-features.md#content-lives-in-language-ace).
 
 ## Modules and Partial Imports
 
@@ -268,7 +268,7 @@ flowchart LR
 | `ace-zelph.zph` | all components responsible for graph writes: word resolution, plan execution, inference, questions, contradiction reports, `ace/load!` | no changes |
 | `ace.zph` | the handlers, `ace/incomplete?`, `ace/option`, the keyword registrations (`ace`, `ace-lexicon`; added in M9: `ace-retract`), the import notification | no changes |
 | `evaluation.zph` | a general arithmetic module (`exquo`, `difference`, `compare`) without any `ace/` name | its rules |
-| `ace-math.zph` | numeric values, arithmetic expressions, the decision of formulas; the maths vocabulary provided as shipped data | the maths stack |
+| `ace-math.zph` | numeric values, arithmetic expressions, the decision of formulas; the maths vocabulary provided as shipped data | the math stack |
 
 [Files](api.md#files) enumerates each module's public functions alongside their precise import lines; [When Each Part Arrives](api.md#when-each-part-arrives) specifies the milestone that delivers each one. Three directional rules govern the chain:
 

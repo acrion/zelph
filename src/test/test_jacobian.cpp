@@ -197,7 +197,7 @@ TEST_CASE("jacobian: the shipped example script reproduces det J_G = -512" * doc
     // The symbolic-core and diff components each implement a contradiction
     // rule to handle a term yielding two distinct outcomes, one tailored for
     // `simp` and another for `deriv`. The largest workload within the
-    // maths stack must not trigger either of these.
+    // math stack must not trigger either of these.
     CHECK_FALSE(has_contradiction(collector));
     collector.clear();
 

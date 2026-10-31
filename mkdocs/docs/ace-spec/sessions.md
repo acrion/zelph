@@ -19,7 +19,7 @@ Three further conventions:
 - The block's handler triggers an error, which is then displayed by zelph's host in the format `Error in line "ace <first line>": <message>`, appending ` …` if the block includes additional lines. Input processed through a pipe terminates at the first error, meaning a session exhibiting an error ends with that error. Every message's wording is illustrative; however, its layout (class, id, position, the sentence containing the marker `<>`, and the hint lines) and its id are normative. A position names the token serving as evidence of the construct, as [Positions and the Marker](block.md#positions-and-the-marker) defines it; the catalogue of ids is provided in [The Message Catalogue](block.md#the-message-catalogue).
 - Construct ids such as `:rule/horn` name the language constructs; each section lists the ones it covers. The full reference table, including examples and reasons, is available in [Constructs and Refusals](constructs.md).
 
-**"Show me the zelph."** The option `(ace/option :show-zelph true)` makes a block print the native zelph lines it writes, via the pure function `ace/zelph-of`. The first session employs this; subsequent sections present the identical listing under each session, marked as the zelph the block writes, with the questions incorporated as `ace/zelph-of` renders them (a yes/no question as a comment `# yes/no: …`, a wh-question as its query line). Lines containing solely content words, core names, and rule variables re-enter natively under `.lang ace` and add no node; lines containing `ace`'s internal vocabulary (`refuted`, `opaque`, names beginning with `ace:`) or the maths stack are intended for reading, since those names reside within the language `zelph`.
+**"Show me the zelph."** The option `(ace/option :show-zelph true)` makes a block print the native zelph lines it writes, via the pure function `ace/zelph-of`. The first session employs this; subsequent sections present the identical listing under each session, marked as the zelph the block writes, with the questions incorporated as `ace/zelph-of` renders them (a yes/no question as a comment `# yes/no: …`, a wh-question as its query line). Lines containing solely content words, core names, and rule variables re-enter natively under `.lang ace` and add no node; lines containing `ace`'s internal vocabulary (`refuted`, `opaque`, names beginning with `ace:`) or the math stack are intended for reading, since those names reside within the language `zelph`.
 
 !!! example "Specified session — the behaviour this specification requires, not yet implemented"
 
@@ -560,7 +560,7 @@ A condition containing a disjunction generates a separate rule for each disjunct
 
 ## Numbers and Formulas
 
-**Milestone M5.** The maths stack is required for handling numbers and formulas, which changes the entire session: zelph's mathematics, its primes module, and the newly introduced evaluation module collectively amount to 6135 nodes and 456 rules (measured on the current tree using the evaluation module's starting text). Consequently, the stack is brought in explicitly via `.import ace-math` (decision [DEC-MATH-IMPORT](decisions.md#dec-math-import)). Absent this import, arithmetic parses and is refused by name:
+**Milestone M5.** The math stack is required for handling numbers and formulas, which changes the entire session: zelph's mathematics, its primes module, and the newly introduced evaluation module collectively amount to 6135 nodes and 456 rules (measured on the current tree using the evaluation module's starting text). Consequently, the stack is brought in explicitly via `.import ace-math` (decision [DEC-MATH-IMPORT](decisions.md#dec-math-import)). Absent this import, arithmetic parses and is refused by name:
 
 !!! example "Specified session — the behaviour this specification requires, not yet implemented"
 
@@ -600,7 +600,7 @@ Using it, a formula (`:formula/compare` applied to numbers, `:formula/identity` 
       <>1 + 2 = 4.
     ```
 
-    The zelph the first block writes (`ace/zelph-of`; lines that name the maths stack are for reading):
+    The zelph the first block writes (`ace/zelph-of`; lines that name the math stack are for reading):
 
     ```
     John age &30
@@ -609,7 +609,7 @@ Using it, a formula (`:formula/compare` applied to numbers, `:formula/identity` 
     ((X ~ person), (X age Y), ((Y compare &17) = gt)) => (X ~ adult)
     ```
 
-`29 + 1` was evaluated once before the dry run, within a standalone scratch cluster `ace:math`; the fact holds the value `&30`. Since age is numeric, the rule lacks a class condition for it (no `Y ~ age`; decision [DEC-NUMERIC-REFERENT](decisions.md#dec-numeric-referent)), and its comparison transforms into a seed rule that requests a verdict and a main rule that tests it ([Formulas in Rules](math.md#formulas-in-rules)). `7 / 2` does not yield an integer result, thus it produces no answer (it is never rounded down to 3). A false universal answer carries the difference as its evidence on the identical line. These answer lines correspond to those in the question table under [Questions and Answers](math.md#questions-and-answers). The prompt `zelph+>` following the import is zelph's own: similar to `.import math`, the import ends with a run that hides the deductions from the maths stack.
+`29 + 1` was evaluated once before the dry run, within a standalone scratch cluster `ace:math`; the fact holds the value `&30`. Since age is numeric, the rule lacks a class condition for it (no `Y ~ age`; decision [DEC-NUMERIC-REFERENT](decisions.md#dec-numeric-referent)), and its comparison transforms into a seed rule that requests a verdict and a main rule that tests it ([Formulas in Rules](math.md#formulas-in-rules)). `7 / 2` does not yield an integer result, thus it produces no answer (it is never rounded down to 3). A false universal answer carries the difference as its evidence on the identical line. These answer lines correspond to those in the question table under [Questions and Answers](math.md#questions-and-answers). The prompt `zelph+>` following the import is zelph's own: similar to `.import math`, the import ends with a run that hides the deductions from the math stack.
 
 Today's zelph performs the arithmetic and the request-driven rule, using the `cmp` comparison that the standard library already provides; `compare` within `stdlib/evaluation.zph` is the version that only delivers a verdict, which `ace-math` uses:
 

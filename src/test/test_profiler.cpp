@@ -148,7 +148,7 @@ TEST_CASE("profiler: every fs_cache miss is answered by one genuine hit or one w
         // (begin_fact_structures_scoped), inaccessible to any query, so it gets
         // a distinct window that activates just before the `.remove`. Auto-run
         // is disabled exclusively for performance: with the stores deactivated,
-        // executing a run across the maths stack after each input line incurs
+        // executing a run across the math stack after each input line incurs
         // significant delay, and these facts need no inference.
         interactive.process(".auto-run");
         interactive.process("gamma1 rel gamma2");

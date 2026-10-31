@@ -5813,7 +5813,7 @@ TEST_CASE("explain: a second justification through the fact's own cycle still co
 // (:h a) was proved through the rule pattern (:g a), printed "[rule pattern;
 // not asserted]", or announced it as a second justification alongside the
 // real one, and the same occurred for (:z a) one level further up. On the
-// maths stack, it displaced a genuine derivation of (&0 cmp &0) following
+// math stack, it displaced a genuine derivation of (&0 cmp &0) following
 // the tutorial-identities example. Two variants keep the competing rules at
 // identical ids and swap which of their conditions serves as the pattern,
 // ensuring that one variant meets the pattern first regardless of the hash
@@ -5848,7 +5848,7 @@ TEST_CASE("explain: a rule's ground condition is not a premise")
         SUBCASE("k is the pattern") { check("k", "g"); } });
 }
 
-// The case on the maths stack: polynomial.zph writes the ground
+// The case on the math stack: polynomial.zph writes the ground
 // condition ((pos zint &0) pneg (pos zint &0)), and following the
 // tutorial-identities example, the proof for (&0 cmp &0) ran through it
 // even though a genuine derivation is present.
