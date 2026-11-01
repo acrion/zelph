@@ -107,7 +107,9 @@ If one of these matters to your work — or if the interesting direction is one 
 
 ## Project History
 
-zelph has been in continuous development since 2012, when it began as a C# application called "NeoCortex" ([archived project page from 2012, in German](https://web.archive.org/web/20120826111106/http://www.zipproth.de/entwicklung_einer_neuartigen_inferenzmaschine.html)). The core idea was already the same: the inference engine is not external to the semantic network but part of it — rules are network structures, and the system can make statements about itself. The current C++ engine is a from-scratch realization of that idea.
+zelph traces a lineage that predates its current repository. Its foundational concept – the inference engine is not separate from the semantic network but integrated within it, rules are network structures, and the system is capable of making statements about itself – originates in NeoCortex, a C# library initiated in 2010 ([archived project page from 2012, in German](https://web.archive.org/web/20120826111106/http://www.zipproth.de/entwicklung_einer_neuartigen_inferenzmaschine.html)). In 2016, scripts written in a language called babelscript declared relation types and rules for NeoCortex using a syntax that already bears resemblance to zelph's. In 2018, the engine was ported to C++ under the name babelscript, which has read Wikidata since April 2018; its development history is openly documented at [acrion/babelscript](https://github.com/acrion/babelscript). Following a hiatus beginning in September 2020, work resumed in February 2025, and on 5 March 2025, babelscript became zelph: zelph's initial commit matches the exact state of babelscript on that day.
+
+An earlier predecessor to today's [controlled-English front end](ace-spec/index.md) was the "Beantworter" from 2007, a C++ program that provided answers in natural language by delivering summaries of Wikipedia articles ([archived page](https://web.archive.org/web/20161031225859/http://www.zipproth.de/Beantworter/main.html)).
 
 ## Funding and Collaboration
 
