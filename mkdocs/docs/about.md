@@ -129,7 +129,7 @@ and the
 
 ## Use of generative AI
 
-zelph was written by hand from 2012 until the middle of 2026. Since then a
+zelph was written by hand from 2010 until the middle of 2026. Since then a
 substantial part of new code is produced with the help of a large language
 model, working from the existing codebase under the author's direction. The
 architecture, the design decisions and the acceptance of every change remain
