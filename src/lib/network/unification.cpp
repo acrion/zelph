@@ -138,6 +138,82 @@ bool zelph::network::holds_set_pattern(const Zelph* const n, const Node node)
     return condition_set_below(n, node, seen, false);
 }
 
+bool zelph::network::may_match_wider_statement(const Zelph* const n, const Node node)
+{
+    if (!Zelph::Impl::is_hash(node) || !n->may_hold_wider_statements()) return false;
+
+    // A statement differs from a node that matches it solely at the point
+    // where the matching node carries more objects at a particular level; at
+    // the deepest such level, the two agree on subject and predicate, so a
+    // statement whose predicate and the predicates of its parts each hold no
+    // fact with more than one object is matched exclusively by itself. While
+    // the record remains unknown, every predicate counts, and the walk
+    // delivers an answer at the first statement.
+    //
+    // Once a predicate is marked, conditions ask this about their bound
+    // values on every evaluation, and on the math stack these are terms of
+    // numerous statements, which share their parts: the walk enters each
+    // statement just once, keeps what remains to be entered and what has
+    // already been entered in buffers associated with its thread that it
+    // does not reallocate, and reads the record without a lock while it
+    // holds only a few predicates (Zelph::may_hold_wider_statements). One
+    // fact with two objects, where no term holds its predicate, caused the
+    // sequential Jacobian example to execute 18% more instructions using a
+    // fresh set and stack per walk and a lock per predicate, and 10.5% more
+    // in this manner; the remainder stems from reading the structures. The
+    // walk calls nothing that performs another walk, so a single set of
+    // buffers per thread is adequate. A walk over a term of many statements
+    // leaves buffers of its size behind, which the next walk of the thread
+    // releases rather than preserving for each future one.
+    constexpr std::size_t                           few  = 32;
+    constexpr std::size_t                           kept = 4096;
+    thread_local std::vector<Node>                  pending;
+    thread_local std::vector<Node>                  entered; // while few
+    thread_local ankerl::unordered_dense::set<Node> entered_many;
+    const auto                                      enter = [](const Node part)
+    {
+        if (entered.size() < few)
+        {
+            if (std::find(entered.begin(), entered.end(), part) != entered.end()) return false;
+            entered.push_back(part);
+            return true;
+        }
+        if (entered_many.empty()) entered_many.insert(entered.begin(), entered.end());
+        return entered_many.insert(part).second;
+    };
+    const auto push = [](const Node part)
+    {
+        if (part != 0 && Zelph::Impl::is_hash(part) && !Zelph::Impl::is_var(part)) pending.push_back(part);
+    };
+    if (pending.capacity() > kept)
+        std::vector<Node>().swap(pending);
+    else
+        pending.clear();
+    entered.clear();
+    if (entered_many.size() > kept)
+        entered_many = {};
+    else if (!entered_many.empty())
+        entered_many.clear();
+    push(node);
+    while (!pending.empty())
+    {
+        const Node part = pending.back();
+        pending.pop_back();
+        if (!enter(part)) continue;
+        const auto structures = get_fact_structures(n, part, 1); // held: the cache might not be
+        for (const auto& fs : *structures)
+        {
+            if (fs.predicate == 0) continue;
+            if (n->may_hold_wider_statements(fs.predicate)) return true;
+            push(fs.subject);
+            push(fs.predicate);
+            for (const Node object : fs.objects)
+                push(object);
+        }
+    }
+    return false;
+}
+
 // Recursive Unification Algorithm with Cycle Detection
 //
 // `forks` gathers the alternate pairings derived from a set of conditions
@@ -523,11 +599,12 @@ static bool unify_members(
 // (consequences_already_exist) take for a consequence. A condition takes the
 // subset reading: a statement within it is stated by a fact that includes
 // additional objects too, as `(a p b c)` states `(a p b)` (unify_nodes). The
-// exact lookup therefore decides only when no ground fact with more than one
-// object can exist (Zelph::may_hold_wider_statements). As soon as one may
-// exist, the caller does not treat the grounded node as the sole candidate
-// nor interpret a missing one as a failure, and the partial anchors climb
-// from the statement's atoms.
+// exact lookup therefore decides only where no ground fact with more than one
+// object can exist for a predicate within the statement
+// (may_match_wider_statement). Where such a fact might exist, the caller does
+// not treat the grounded node as the sole candidate, a missing one is
+// returned as Unbound instead of Missing, and the partial anchors climb from
+// the statement's atoms.
 
 enum class GroundResult
 {
@@ -630,7 +707,17 @@ static GroundResult ground_pattern(Zelph* n, Node pattern, const Variables& vars
     }
 
     const Answer ans = n->check_fact(gs, gp, gobjs);
-    if (!ans.is_known()) return GroundResult::Missing;
+    if (!ans.is_known())
+    {
+        // The statement denoted by the bindings is absent, yet a fact
+        // containing more objects at this level, or a part that one states, may
+        // still match it: the caller performs scans rather than failing.
+        if (n->may_hold_wider_statements(gp) || may_match_wider_statement(n, gs) || may_match_wider_statement(n, gp)
+            || std::any_of(gobjs.begin(), gobjs.end(), [n](const Node o)
+                           { return may_match_wider_statement(n, o); }))
+            return GroundResult::Unbound;
+        return GroundResult::Missing;
+    }
 
     out = ans.relation();
     return GroundResult::Grounded;
@@ -717,10 +804,10 @@ static void collect_partial_anchors(
             if (n->var_in_closure(bound)) return;
             // A statement that a variable is bound to is compared through
             // its structure (unify_nodes), meaning a fact containing
-            // additional objects matches it as well: while one may exist,
-            // the climb starts at the statement's atoms rather than at the
-            // statement itself.
-            if (n->may_hold_wider_statements() && n->predicate_of(bound) != 0)
+            // additional objects matches it as well: in cases where one
+            // may match it, the climb starts at the statement's atoms
+            // rather than at the statement itself.
+            if (may_match_wider_statement(n, bound))
             {
                 collect_partial_anchors(n, bound, parent_rule, vars, chain, visited, depth_left, log_depth, out, stand_ins);
                 return;
@@ -739,11 +826,11 @@ static void collect_partial_anchors(
         return;
     }
 
-    // The same applies to a concrete statement within the pattern: while a
-    // fact involving additional objects may exist, it does not serve as an
-    // anchor, but its atoms do.
+    // The same applies to a concrete statement within the pattern: where a
+    // fact involving additional objects may match it, it does not serve as
+    // an anchor, but its atoms do.
     if (!n->var_in_closure(pattern)
-        && (!n->may_hold_wider_statements() || n->predicate_of(pattern) == 0 || holds_member_matched_set(n, pattern)))
+        && (!may_match_wider_statement(n, pattern) || holds_member_matched_set(n, pattern)))
     {
         if (pattern != parent_rule && !holds_member_matched_set(n, pattern))
             out.push_back({pattern, chain}); // fully concrete subterm
@@ -764,11 +851,10 @@ static void collect_partial_anchors(
         // function as a filter either: no data statement includes an edge
         // directed toward the pattern's own node.
         // Nor does a concrete statement function as a filter when a fact
-        // with additional objects may be present: a candidate whose
+        // with additional objects could match it: a candidate whose
         // predicate is `(a r s s2)` states the pattern's `(a r s)`
         // (unify_nodes) without referencing it.
-        const Node p = Zelph::Impl::is_var(fs.predicate) || n->var_in_closure(fs.predicate)
-                            || (n->may_hold_wider_statements() && n->predicate_of(fs.predicate) != 0)
+        const Node p = Zelph::Impl::is_var(fs.predicate) || n->var_in_closure(fs.predicate) || may_match_wider_statement(n, fs.predicate)
                          ? Node{0}
                          : fs.predicate;
 
@@ -977,10 +1063,10 @@ Unification::Unification(
         // validate anchor lookups, also disables it.
         _subject_pred_hint = _n->use_anchors() ? pattern.subject_pred_hint : Node{0};
         // Nor does a statement serve as the hint when a fact containing more
-        // objects could exist: a candidate subject with predicate
+        // objects might match it: a candidate subject with predicate
         // `(a r s s2)` states the pattern's `(a r s)` (unify_nodes) without
         // referencing it.
-        if (_subject_pred_hint != 0 && Zelph::Impl::is_hash(_subject_pred_hint) && _n->may_hold_wider_statements() && _n->predicate_of(_subject_pred_hint) != 0)
+        if (_subject_pred_hint != 0 && may_match_wider_statement(_n, _subject_pred_hint))
             _subject_pred_hint = 0;
 
         // A subject or an object that represents a bucket's term is matched
@@ -1029,8 +1115,7 @@ Unification::Unification(
             }
             _relation_variable = relation;
         }
-        else if (_n->var_in_closure(relation)
-                 || (Zelph::Impl::is_hash(relation) && _n->may_hold_wider_statements() && _n->predicate_of(relation) != 0))
+        else if (_n->var_in_closure(relation) || may_match_wider_statement(_n, relation))
         {
             // A COMPOSITE predicate carrying a variable -- `(X (Y r s) Z)` --
             // is a pattern, exactly as a structured subject is, and the two
@@ -1043,8 +1128,8 @@ Unification::Unification(
             // against each candidate instead of binding one variable to it.
             //
             // A concrete statement positioned there is interpreted identically
-            // when a fact involving multiple objects could exist
-            // (Zelph::may_hold_wider_statements): `x (a p c) Z` is stated by
+            // if a fact involving multiple objects may match it
+            // (may_match_wider_statement): `x (a p c) Z` is stated by
             // `x (a p b c) y`, just as a statement located elsewhere within a
             // condition is, whereas the relation it names as it stands holds
             // only `x (a p c) y`.
@@ -1134,22 +1219,21 @@ Unification::Unification(
         {
             Node              grounded = 0;
             std::vector<Node> ground_history;
-            // While a fact involving multiple objects may be present
-            // (Zelph::may_hold_wider_statements), the grounded statement is
-            // not the sole node that the subject can match, since
-            // `(a p b c)` states `(a p b)` as well, and the absence of one
-            // does not fail the condition: the partial anchors below climb
-            // from its atoms.
-            const bool wider = _n->may_hold_wider_statements();
+            // Where a fact involving multiple objects may exist for a
+            // predicate within the statement (may_match_wider_statement),
+            // the grounded statement is not the sole node that the subject
+            // can match, because `(a p b c)` states `(a p b)` as well: the
+            // partial anchors below climb from its atoms. Nor does the
+            // absence of one fail the condition then; ground_pattern answers
+            // Unbound for it.
             switch (ground_pattern(_n, _subject, *_variables, _log_depth, grounded, ground_history, _stand_ins))
             {
             case GroundResult::Grounded:
-                if (wider && _n->predicate_of(grounded) != 0) break;
+                if (may_match_wider_statement(_n, grounded)) break;
                 _subject_grounded = grounded;
                 U_LOG(_log_depth, "subject pattern grounded to " + U_NODE(grounded));
                 break;
             case GroundResult::Missing:
-                if (wider) break;
                 U_LOG(_log_depth, "subject pattern grounding: denoted fact missing -> condition cannot match");
                 _relation_list.clear();
                 return;
@@ -1294,6 +1378,7 @@ Unification::Unification(
                 size_t        climbed = 0;
                 const bool    climb   = climb_partial_anchor(_n, *best, fixed_rel, frontier_budget, work_budget, candidates, climbed);
                 _scanned += climbed;
+                if (_n->logging_active()) PROF(anchor_climbed.fetch_add(climbed, std::memory_order_relaxed));
                 if (climb)
                 {
                     _partial_snapshot       = std::move(candidates);
@@ -1631,11 +1716,12 @@ bool Unification::increment_fact_index()
                     if (own && (by_members || holds_member_matched_set(_n, nd)))
                         return false;
 
-                    // Nor does a statement serve as an anchor while a fact
-                    // involving additional objects may exist: its adjacency
-                    // holds only the facts that hold it as it stands, and a
-                    // broader fact also matches it (see anchor_role below).
-                    if (Zelph::Impl::is_hash(nd) && _n->may_hold_wider_statements() && _n->predicate_of(nd) != 0)
+                    // Nor does a statement serve as an anchor, or as a part of
+                    // the exact probe below, where a fact involving
+                    // additional objects may match it: its adjacency holds
+                    // only the facts that hold it as it stands, and a broader
+                    // fact also matches it (see anchor_role below).
+                    if (may_match_wider_statement(_n, nd))
                         return false;
 
                     return true;
@@ -1658,15 +1744,93 @@ bool Unification::increment_fact_index()
                 {
                     _listed = _by_id;
                     if (_listed) _facts_snapshot.clear();
-                    _scanned += _listed ? _n->collect_anchored_facts(anchor, current_rel, _listed_facts, anchor_role(anchor, role), resume_after)
-                                        : _n->collect_anchored_facts(anchor, current_rel, _facts_snapshot, anchor_role(anchor, role), resume_after);
+                    const std::size_t walked = _listed ? _n->collect_anchored_facts(anchor, current_rel, _listed_facts, anchor_role(anchor, role), resume_after)
+                                                       : _n->collect_anchored_facts(anchor, current_rel, _facts_snapshot, anchor_role(anchor, role), resume_after);
+                    _scanned += walked;
+                    if (_n->logging_active()) PROF(anchor_walked.fetch_add(walked, std::memory_order_relaxed));
                 };
 
-                // Check if Subject is bound
+                // The subject, whether bound or grounded, and the first object.
                 Node s = _subject;
                 if (Zelph::Impl::is_var(s)) s = string::get(*_variables, s, s);
                 if (_subject_grounded != 0) s = _subject_grounded; // anchor on the grounded pattern node
-                if (is_concrete_lookup_node(s, s == _subject, _conditions_by_members))
+                const bool subject_concrete = is_concrete_lookup_node(s, s == _subject, _conditions_by_members);
+
+                Node o               = 0;
+                bool object_concrete = false;
+                if (!_objects.empty())
+                {
+                    o = *_objects.begin();
+                    if (Zelph::Impl::is_var(o)) o = string::get(*_variables, o, o);
+                    object_concrete = is_concrete_lookup_node(o, o == *_objects.begin(), false);
+                }
+
+                // A condition in which the relation is fixed and both the
+                // subject and all objects are concrete denotes a single
+                // triple. If no fact with additional objects can state it --
+                // none may exist for the relation, and none can match a
+                // statement among its parts (is_concrete_lookup_node) --
+                // then that triple's own fact stands as the sole candidate,
+                // and a single hash probe finds it. Read from an anchor, the
+                // condition incurs the cost of the anchor's whole adjacency:
+                // `A isdigit true` in the stdlib's comparison rules, with A
+                // bound to a digit, walked every list cell that holds the
+                // digit, causing each comparison to scale with the numbers
+                // in the graph. The candidate is tried just like any other
+                // in Next().
+                bool probed = false;
+                if (subject_concrete && object_concrete && _relation_variable == 0 && _relation_pattern == 0
+                    && !_n->may_hold_wider_statements(current_rel))
+                {
+                    adjacency_set triple_objects{o};
+                    bool          all_concrete = true;
+                    for (auto ob = std::next(_objects.begin()); ob != _objects.end(); ++ob)
+                    {
+                        Node x = *ob;
+                        if (Zelph::Impl::is_var(x)) x = string::get(*_variables, x, x);
+                        if (!is_concrete_lookup_node(x, x == *ob, false))
+                        {
+                            all_concrete = false;
+                            break;
+                        }
+                        triple_objects.insert(x);
+                    }
+                    if (all_concrete)
+                    {
+                        const Answer answer = _n->check_fact(s, current_rel, triple_objects);
+                        _listed             = _by_id;
+                        _facts_snapshot.clear();
+                        _listed_facts.clear();
+                        if (answer.is_known() && answer.relation() > resume_after)
+                        {
+                            if (_listed)
+                                _listed_facts.push_back(answer.relation());
+                            else
+                                _facts_snapshot.insert(answer.relation());
+                        }
+                        _scanned += 1;
+                        if (_n->logging_active()) PROF(exact_probes.fetch_add(1, std::memory_order_relaxed));
+                        optimized_snapshot    = true;
+                        _snapshot_prefiltered = true;
+                        probed                = true;
+                        if (_n->should_log(1) && _n->should_log(_log_depth - 1))
+                        {
+                            u_log(_n, _log_depth, std::string("exact probe: rel=") + U_NODE(current_rel) + " subj=" + U_NODE(s) + " size=" + std::to_string(snapshot_size()));
+                        }
+                    }
+                }
+
+                // Otherwise, the anchor functions as a bound end of the
+                // condition. Every fact it can match holds the concrete
+                // subject as its subject and includes the concrete object
+                // among its objects, so with both ends bound, either
+                // adjacency yields all candidates, and the smaller one is
+                // read.
+                if (probed)
+                {
+                    // the probe has set the candidates
+                }
+                else if (subject_concrete && (!object_concrete || _n->_pImpl->right_count_of(s) <= _n->_pImpl->right_count_of(o)))
                 {
                     // Strategy: Subject Driven
                     // One lock scope filters the anchor's adjacency straight
@@ -1674,31 +1838,22 @@ bool Unification::increment_fact_index()
                     collect(s, Zelph::AnchorRole::Subject);
                     optimized_snapshot    = true;
                     _snapshot_prefiltered = true;
-                    optimized_snapshot    = true;
                     if (_n->should_log(1) && _n->should_log(_log_depth - 1))
                     {
                         u_log(_n, _log_depth, std::string("optimized_snapshot=") + (optimized_snapshot ? "YES" : "NO") + " rel=" + U_NODE(current_rel) + " subj=" + U_NODE(s) + (optimized_snapshot ? " size=" + std::to_string(snapshot_size()) : ""));
                     }
                 }
-                // Check if Object is bound (if Subject wasn't)
-                else if (!_objects.empty())
+                else if (object_concrete)
                 {
-                    Node o = *_objects.begin();
-                    if (Zelph::Impl::is_var(o)) o = string::get(*_variables, o, o);
-
-                    if (is_concrete_lookup_node(o, o == *_objects.begin(), false))
+                    // Strategy: Object Driven
+                    // One lock scope filters the anchor's adjacency straight
+                    // into the snapshot (Zelph::collect_anchored_facts).
+                    collect(o, Zelph::AnchorRole::Object);
+                    optimized_snapshot    = true;
+                    _snapshot_prefiltered = true;
+                    if (_n->should_log(1) && _n->should_log(_log_depth - 1))
                     {
-                        // Strategy: Object Driven
-                        // One lock scope filters the anchor's adjacency straight
-                        // into the snapshot (Zelph::collect_anchored_facts).
-                        collect(o, Zelph::AnchorRole::Object);
-                        optimized_snapshot    = true;
-                        _snapshot_prefiltered = true;
-                        optimized_snapshot    = true;
-                        if (_n->should_log(1) && _n->should_log(_log_depth - 1))
-                        {
-                            u_log(_n, _log_depth, std::string("optimized_snapshot=") + (optimized_snapshot ? "YES" : "NO") + " rel=" + U_NODE(current_rel) + " obj=" + U_NODE(o) + (optimized_snapshot ? " size=" + std::to_string(snapshot_size()) : ""));
-                        }
+                        u_log(_n, _log_depth, std::string("optimized_snapshot=") + (optimized_snapshot ? "YES" : "NO") + " rel=" + U_NODE(current_rel) + " obj=" + U_NODE(o) + (optimized_snapshot ? " size=" + std::to_string(snapshot_size()) : ""));
                     }
                 }
             }

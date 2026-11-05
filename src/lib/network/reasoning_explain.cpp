@@ -695,9 +695,12 @@ namespace zelph::network
         // Whether the matcher reads a part of the condition -- its subject,
         // its predicate, or an object -- through a subset reading that lies
         // beneath the top level: a part that constitutes a statement, written
-        // as one or bound to one. containing_fact widens only the top level,
-        // so the premise of such a condition is asked of the matcher
-        // (matched_premises).
+        // as one or bound to one. A concrete one qualifies when a fact with
+        // more objects can match it (may_match_wider_statement); one that
+        // holds a variable counts as it stands, because the predicates its
+        // bindings supply are not read here. containing_fact widens only the
+        // top level, so the premise of such a condition is asked of the
+        // matcher (matched_premises).
         bool nested_reading(const Zelph* z, const PatternInfo& pattern, const Variables& bindings)
         {
             const auto statement = [&](Node part)
@@ -708,7 +711,7 @@ namespace zelph::network
                     if (it == bindings.end()) return false;
                     part = it->second;
                 }
-                return z->predicate_of(part) != 0;
+                return z->var_in_closure(part) ? z->predicate_of(part) != 0 : may_match_wider_statement(z, part);
             };
             return statement(pattern.subject) || statement(pattern.relation) || std::any_of(pattern.objects.begin(), pattern.objects.end(), statement);
         }
@@ -720,10 +723,9 @@ namespace zelph::network
         // x (a p b c) y states x (a p c) y. The lookups that resolve a
         // premise find neither, and the search printed a fact the rule had
         // derived as "[asserted; no derivation found]". Asked solely for a
-        // condition containing a statement within its parts (nested_reading),
-        // and only after a fact with multiple objects might exist
-        // (Zelph::may_hold_wider_statements): before this, the node the lookups
-        // find is the sole fact capable of matching.
+        // condition containing a statement within its parts that a fact with
+        // multiple objects might match (nested_reading): elsewhere, the node
+        // the lookups find is the sole fact capable of matching.
         std::vector<Node> matched_premises(ExplainContext& ctx, const PatternInfo& pattern, const Node rule, const Variables& bindings, const Node except)
         {
             std::vector<Node> found;

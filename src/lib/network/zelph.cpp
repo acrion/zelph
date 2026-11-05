@@ -957,14 +957,16 @@ Node Zelph::fact(const Node subject, const Node predicate, const adjacency_set& 
 
     // A statement enclosed within a condition matches a fact that carries
     // additional objects too (refer to `ground_pattern` in unification.cpp).
-    // The first such fact switches grounding and the anchors to their reading
-    // via the statement's atoms. A pattern carries variables and states
-    // nothing, hence it does not count.
-    if (objects.size() > 1 && !_pImpl->_may_hold_wider_statements.load(std::memory_order_relaxed)
+    // The first such fact for a given predicate switches grounding, the
+    // anchors, and the exact probe to their reading through the statement's
+    // atoms wherever that predicate is involved; conditions over any other
+    // predicate keep reading a statement via its own node. A pattern carries
+    // variables and states nothing, hence it does not count.
+    if (objects.size() > 1 && !_pImpl->wider_predicate_marked(predicate)
         && !Impl::is_var(subject) && !var_in_closure(subject) && !Impl::is_var(predicate) && !var_in_closure(predicate)
         && std::none_of(objects.begin(), objects.end(), [this](const Node o)
                         { return Impl::is_var(o) || var_in_closure(o); }))
-        _pImpl->_may_hold_wider_statements.store(true, std::memory_order_release);
+        _pImpl->mark_wider_predicate(predicate);
 
     const Answer answer = check_fact(subject, predicate, objects);
 
@@ -2016,6 +2018,22 @@ std::shared_ptr<const std::unordered_set<Node>> Zelph::set_pattern_variables(con
 bool Zelph::may_hold_wider_statements() const
 {
     return _pImpl->_may_hold_wider_statements.load(std::memory_order_acquire);
+}
+
+bool Zelph::may_hold_wider_statements(const Node predicate) const
+{
+    return _pImpl->wider_predicate_marked(predicate);
+}
+
+Zelph::WiderStatements Zelph::wider_statements() const
+{
+    std::shared_lock lock(_pImpl->_wider_mtx);
+    return {_pImpl->_wider_predicates_unknown.load(std::memory_order_acquire), _pImpl->_wider_predicates.size()};
+}
+
+void Zelph::forget_wider_statement_record()
+{
+    _pImpl->reset_wider_predicates(true);
 }
 
 bool Zelph::may_hold_set_patterns() const

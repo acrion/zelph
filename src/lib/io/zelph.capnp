@@ -48,13 +48,19 @@ struct ZelphImpl {
   # that engine reads the four sections and halts, thus loading a newer
   # file without its annotations.
   annotationChunkCount @13 :UInt32;
-  # True in every file an engine writes when the network held no ground
-  # fact involving more than one object
-  # (Zelph::may_hold_wider_statements). An older engine leaves it false,
-  # and so does a save of a network that could contain such a fact: the
-  # load subsequently interprets a statement inside a condition as one
-  # that a fact with multiple objects might state.
-  singleObjectFacts @14 :Bool;
+  # Was: singleObjectFacts, true if the network held no ground fact with
+  # more than one object. No engine reads or writes it now that the record
+  # below has superseded it. It stays a Bool to ensure no later field
+  # takes its bit in the header of a file that set it.
+  deprecated4 @14 :Bool;
+  # The predicates for which the network might hold a ground fact involving
+  # multiple objects (Zelph::may_hold_wider_statements), listed in
+  # ascending order. Present and empty in every file of a network that held
+  # no such fact. Absent in a file from an older engine and in a save of a
+  # network whose record is unknown: the load then interprets a statement
+  # within a condition, regardless of its predicate, as one that a fact
+  # with multiple objects could potentially state.
+  widerStatementPredicates @15 :List(UInt64);
 }
 
 struct NamePair {

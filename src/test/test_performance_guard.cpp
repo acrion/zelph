@@ -63,10 +63,31 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 // the order of evaluation (deduce_calls 39866 to 39869, fs_cache misses
 // falling from about 428k to 425k). Three runs, bit-identical except
 // for fs_cache misses (spread of 1 out of 425k).
+//
+// On 5 November 2026, they were re-taken after a condition in which the
+// relation, subject, and objects were all bound came to be answered by a
+// single exact probe rather than a walk across the subject's adjacency, and
+// a condition bound at both ends came to be read at the smaller endpoint.
+// The derivation remained unchanged (deduce_calls 39869, facts_created
+// 15406); the number of candidates attempted dropped from 726870 + 72709 to
+// 650147 + 72709, and fs_cache misses decreased from approximately 416.9k
+// to 388.2k. The dump gained the `anchors:` line, and two ceilings read it:
+// the adjacency entries the anchors walked, 2876857, and the entries the
+// partial anchors' climbs read, 1678159. The walk represents the cost that
+// scanned(seq) cannot account for, as it only tracks the candidates a walk
+// kept: without the probe, the anchors walked 8.13M entries in this
+// workload, as measured by an instrumented build of the engine before the
+// change, and in the stdlib's comparisons the walk grew with each number in
+// the graph while scanned(seq) remained constant. Sixteen runs were
+// conducted, thirteen at the prompt and three of this case: fs_cache misses
+// ranged from 388178 to 388234, the climb from 1678159 to 1678163, the walk
+// from 2876857 to 2876859, the candidates scanned spread by 1, and all else
+// remained bit-identical.
 
 #include "test_helpers.hpp"
 
 #include "io/output.hpp"
+#include "network/reasoning.hpp"
 
 #include <stdexcept>
 #include <string>
@@ -144,6 +165,8 @@ TEST_CASE("performance guard: the Jacobian workload does the expected amount of 
     const uint64_t full_clears   = prof_counter(prof, "fs_cache:", "full_clears");
     const uint64_t walks         = prof_counter(prof, "genuine:", "walks");
     const uint64_t unmarked      = prof_counter(prof, "rule_patterns:", "unmarked");
+    const uint64_t walked        = prof_counter(prof, "anchors:", "walked");
+    const uint64_t climbed       = prof_counter(prof, "anchors:", "climbed");
 
     // Non-vacuity: a failed import would leave every ceiling below satisfied.
     // Deliberately far under the baseline -- this is not a second ceiling.
@@ -171,7 +194,7 @@ TEST_CASE("performance guard: the Jacobian workload does the expected amount of 
     // fs_cache. Rose from 455644, the August baseline, to 678673 when the
     // store went, so this is the second net under the same failure -- and it
     // also catches an invalidation storm that leaves the store armed.
-    CHECK(misses <= ceiling(424622));
+    CHECK(misses <= ceiling(388183));
     CHECK(full_clears <= ceiling(1105));
 
     // Volume of derivation and of candidate scanning: a different regression
@@ -179,7 +202,16 @@ TEST_CASE("performance guard: the Jacobian workload does the expected amount of 
     // and the one a rule change shows up in first.
     CHECK(deduce_calls <= ceiling(39869));
     CHECK(facts_created <= ceiling(15406));
-    CHECK(scanned_seq + scanned_par <= ceiling(727256 + 94054));
+    CHECK(scanned_seq + scanned_par <= ceiling(650147 + 72709));
+
+    // The cost of reading the candidates before any was tried, which the
+    // scan volume above does not account for: a condition anchored at a
+    // node reads its whole adjacency, and the climb from a partial anchor
+    // reads the adjacencies encountered along its ascent. A condition bound
+    // throughout that is read from its subject once more instead of via the
+    // exact probe raises the first to approximately 8.1M.
+    CHECK(walked <= ceiling(2876857));
+    CHECK(climbed <= ceiling(1678159));
 }
 
 // The blind spot of the prior scenario formed a case of its own. Its workload
@@ -213,4 +245,51 @@ TEST_CASE("performance guard: a dropped cluster leaves the math stack's stores a
     // Non-vacuity: the request managed to arrive at the stores.
     CHECK(prof_counter(prof, "genuine:", "hits") > 0);
     CHECK(prof_counter(prof, "genuine:", "walks") == 0);
+}
+
+// The first case in this file runs a session that holds no fact with several
+// objects, and it cannot observe the effect of any single such fact. While
+// the possibility of one existing was represented by a single bit for the
+// whole session, `zz p a b`, whose predicate is not held by any term of the
+// math stack, caused every statement within every condition to shift to a
+// reading based on its atoms, leaving no condition for the exact probe:
+// before the workload, it made the parent of the record scan 14498533 +
+// 5857845 candidates and hit the fs_cache 116.8M times, and a sequential run
+// of the example execute 124 G instructions instead of 10.5 G. The record
+// marks p exclusively, and deduce_calls, the candidates scanned, the
+// adjacency walked, and the climb performed are those associated with
+// `zz p a` and `zz p b`, which move the first case's through the same four
+// atoms. The fact incurs the cost of the walk that asks whether a statement
+// holds a marked predicate (may_match_wider_statement): its structure reads
+// cause fs_cache hits to rise from 2.75M to 4.73M and misses from 390k to
+// 489k, held by the last two ceilings; what each read costs, they cannot
+// discern. Recorded on 5 November 2026 across six runs: walked, scanned, and
+// the climb spread by 1, fs_cache misses and hits by 40, everything else
+// bit-identical.
+TEST_CASE("performance guard: one fact with two objects leaves the Jacobian workload's reading of its conditions as it was" * doctest::test_suite("slow"))
+{
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+
+    interactive.process(".semi-naive on"); // as in the first case: the classic passes in check mode do not constitute the workload
+    interactive.process(".log -1");
+    interactive.process(".deductions off");
+    interactive.process("zz p a b");
+    REQUIRE(interactive.graph()->wider_statements().predicates == 1);
+    interactive.process(".import examples/math/jacobian");
+
+    collector.clear();
+    interactive.process(".prof");
+    const std::string prof = all_event_text(collector);
+
+    const uint64_t deduce_calls = prof_counter(prof, "rules_applied", "deduce_calls");
+    CHECK(deduce_calls > 30000); // non-vacuity, as in the first case
+    CHECK(prof_counter(prof, "genuine:", "walks") == 0);
+    CHECK(deduce_calls <= ceiling(39879));
+    CHECK(prof_counter(prof, "rules_applied", "facts_created") <= ceiling(15406));
+    CHECK(prof_counter(prof, "unification:", "scanned(seq)") + prof_counter(prof, "unification:", "scanned(par)") <= ceiling(649573 + 72728));
+    CHECK(prof_counter(prof, "anchors:", "walked") <= ceiling(2857172));
+    CHECK(prof_counter(prof, "anchors:", "climbed") <= ceiling(1674922));
+    CHECK(prof_counter(prof, "fs_cache:", "hits") <= ceiling(4727086));
+    CHECK(prof_counter(prof, "fs_cache:", "misses") <= ceiling(489217));
 }

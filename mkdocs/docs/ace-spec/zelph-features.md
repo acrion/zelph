@@ -312,7 +312,7 @@ with further objects as a rule condition reads it
 Objects](answers.md#facts-with-several-objects)). This second probe is the one named exception to the
 rule that `ace` calls `zelph/exists` only with `:exact` ([Invariants](api.md#invariants)), and the
 source-rule test admits exactly that call. It asks the condition matcher only while the graph may hold
-a fact with several objects (one was written, a statement or set constant was merged by name, or a
+a fact with several objects (one was written, two statements were merged by name, or a
 network was loaded whose file does not record that it holds none, as no file saved by an older engine
 does), and then its cost is bounded by the subject's facts with that predicate, never a scan of the graph; a
 budget row times it on the `-small` Wikidata network at M3

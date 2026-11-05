@@ -228,6 +228,40 @@ TEST_CASE("slice: a slice keeps only the annotations of the nodes it keeps")
     fs::remove(file);
 }
 
+// A slice carries the record of the predicates that could hold a fact with
+// several objects among the predicates it preserves, and only among those:
+// the mark of P279, whose fact with two objects proceeds alongside the
+// slice, goes along, and the mark of P106, whose facts stay behind, does
+// not. If it had remained behind, the mark of P279 would have lost the
+// answers that the fact with two objects gives to a statement within a
+// condition; a mark that goes along without its associated facts reads the
+// conditions over its predicate through their atoms for no purpose.
+TEST_CASE("slice: a slice keeps the record of facts with several objects for the predicates it keeps")
+{
+    const auto file = slice_path("wider_record");
+    {
+        zelph::io::OutputCollector  collector;
+        zelph::console::Interactive interactive(collector.sink());
+        build_source(interactive);
+        process_lines(interactive, "Q60 P279 Q20 Q30\nQ11 P106 Q10 Q20");
+        REQUIRE(interactive.graph()->wider_statements().predicates == 2);
+        interactive.process(".save-predicates \"" + file.string() + "\" P279");
+    }
+
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+    interactive.process(".load \"" + file.string() + "\"");
+    auto* const graph = interactive.graph();
+    CHECK_FALSE(graph->wider_statements().unknown);
+    CHECK(graph->wider_statements().predicates == 1);
+    CHECK(graph->may_hold_wider_statements(graph->get_node("P279", "wikidata")));
+    collector.clear();
+    interactive.process(".stat");
+    CHECK(any_output_contains(collector, "Facts with multiple objects: may exist for 1 predicate"));
+
+    fs::remove(file);
+}
+
 TEST_CASE("slice: the closure over the slice equals the closure over the source")
 {
     const auto file = slice_path("closure");

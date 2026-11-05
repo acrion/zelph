@@ -90,6 +90,18 @@ namespace zelph::network
     // container.
     bool holds_set_pattern(const Zelph* n, Node node);
 
+    // Whether a node distinct from the concrete `node` itself can match it
+    // inside a condition: `node` is a statement, and either it or a
+    // statement contained within its parts, at any level of depth, possesses
+    // a predicate under which a fact involving more objects might exist
+    // (Zelph::may_hold_wider_statements). `(a p b c)` matches `(a p b)`, and
+    // `((a p b c) q d)` matches `((a p b) q d)` even when q does not hold
+    // such a fact (unify_nodes). An atom, and a set constant, match nothing
+    // except themselves. While no predicate is marked, this constitutes a
+    // single atomic load; otherwise, a walk through the statements within
+    // `node` occurs, halting at the first marked predicate.
+    bool may_match_wider_statement(const Zelph* n, Node node);
+
     // A node within a pattern that represents what a firing builds in its
     // place (Reasoning::firing_stand_ins): the `term` contained in a bucket,
     // which constitutes a single node, or -- `term` 0 -- any term a firing

@@ -78,6 +78,8 @@ This loads the entire network into memory. Afterwards, you can execute queries, 
 
 Tip: if you work with the full JSON file, zelph automatically creates a `.bin` cache file during the first import to speed up future runs.
 
+The header of a `.bin` file records the predicates for which the network might hold a fact involving several objects ([Facts with Multiple Objects](logic.md#facts-with-multiple-objects)), and the load restores that record. A rule condition, or a statement within one, whose predicate falls within that set is matched through its atoms as well, because a fact with more objects states it too, and this incurs a higher cost than the single lookup otherwise employed. The Wikidata importer writes one object per fact, so a network it constructs records none. A file saved by an older engine carries no record, and its network is read as potentially holding such facts for every predicate until the next load; `.stat` then shows the line `Facts with multiple objects: may exist for every predicate (not recorded)`, and saving the network again using a current engine does not alter this, as the engine remains unaware of which predicates hold such facts.
+
 The files above carry direct triples only, with one exception. A network **featuring the statement and qualifier layer** – what disjointness analysis reads – is what `wikidata-20260309-all-P11260.bin` is: the full dump combined with the _list item_ qualifiers of the _disjoint union of_ statements; see [Wikidata Qualifiers](qualifiers.md). Any other qualifier set is constructed using the `.wikidata-qualifiers` command from the JSON dump, and a published variant for it is a matter of asking: open an issue on [GitHub](https://github.com/acrion/zelph/issues).
 
 ## Partial Loading

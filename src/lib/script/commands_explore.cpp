@@ -809,6 +809,17 @@ namespace zelph::console
         _n->out_stream() << "Languages: " << _n->language_count() << std::endl;
         _n->out_stream() << "Rules: " << _n->rule_count() << std::endl;
 
+        // The predicates for which a statement within a condition might be
+        // stated by a fact involving more objects, as interpreted via its
+        // atoms (Zelph::may_hold_wider_statements). A network loaded from a
+        // file that does not preserve such records counts every predicate.
+        // Displayed solely when there is one: a network lacking such facts,
+        // the typical scenario, maintains its statistics unchanged.
+        if (const auto wider = _n->wider_statements(); wider.unknown)
+            _n->out_stream() << "Facts with multiple objects: may exist for every predicate (not recorded)" << std::endl;
+        else if (wider.predicates != 0)
+            _n->out_stream() << "Facts with multiple objects: may exist for " << wider.predicates << (wider.predicates == 1 ? " predicate" : " predicates") << std::endl;
+
         _n->out_stream() << "------------------------" << std::endl;
     }
 }

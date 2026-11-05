@@ -39,6 +39,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #include <ankerl/unordered_dense.h>
 
+#include <array>
 #include <atomic>
 #include <cstdint>
 #include <cstdlib>
@@ -375,11 +376,79 @@ namespace zelph::network
         // might constitute a set pattern (Zelph::may_hold_set_patterns);
         // never reset.
         std::atomic<bool> _has_template_collections{false};
-        // Whether a ground fact containing multiple objects may be present
-        // (Zelph::may_hold_wider_statements): set by fact() for such a fact
-        // and by every load, which is unable to determine it without a scan;
-        // never reset.
-        std::atomic<bool> _may_hold_wider_statements{false};
+        // The predicates for which a ground fact containing multiple objects
+        // may exist (Zelph::may_hold_wider_statements). fact() marks the
+        // predicate of such a fact, a name merge of two statements marks the
+        // predicate of the statement that contains the objects from both, and
+        // a merge hands the mark from each node it relocates to the node it
+        // moves to (Zelph::carry_out_name_merge_locked). A load reads the
+        // record from its file; a file lacking one leaves it unknown, and
+        // subsequently every predicate is considered marked. No operation
+        // unmarks a predicate before the next load: a mark associated with
+        // vanished facts causes a reading to be slower, but never wrong. One
+        // entry per marked predicate, bounded by the predicates rather than
+        // by the facts, so there is nothing to disable.
+        // `_may_hold_wider_statements` is read before the mutex on every hot
+        // path, and while no predicate is marked, no lock is taken.
+        mutable std::shared_mutex _wider_mtx;
+        std::unordered_set<Node>  _wider_predicates;
+        std::atomic<bool>         _wider_predicates_unknown{false};
+        std::atomic<bool>         _may_hold_wider_statements{false};
+        // The first predicates marked, in the order of their marking,
+        // accessible without the lock: a statement inside a condition is
+        // queried for every statement within it (may_match_wider_statement),
+        // and a session marks few predicates, often just one. An entry is
+        // written once and never moves before the next reset, so a reader
+        // observing the count sees the entries beneath it. Once additional
+        // predicates are marked, the count exceeds the entries, and the set
+        // answers under the lock.
+        static constexpr std::size_t                wider_inline = 4;
+        std::array<std::atomic<Node>, wider_inline> _wider_inline{};
+        std::atomic<std::size_t>                    _wider_inline_count{0};
+
+        // Under the unique lock of `_wider_mtx`.
+        void add_wider_predicate_locked(const Node predicate)
+        {
+            if (!_wider_predicates.insert(predicate).second) return;
+            const std::size_t count = _wider_predicates.size();
+            if (count <= wider_inline) _wider_inline[count - 1].store(predicate, std::memory_order_relaxed);
+            _wider_inline_count.store(count, std::memory_order_release);
+        }
+
+        void mark_wider_predicate(const Node predicate)
+        {
+            std::unique_lock lock(_wider_mtx);
+            add_wider_predicate_locked(predicate);
+            _may_hold_wider_statements.store(true, std::memory_order_release);
+        }
+
+        bool wider_predicate_marked(const Node predicate) const
+        {
+            if (!_may_hold_wider_statements.load(std::memory_order_acquire)) return false;
+            if (_wider_predicates_unknown.load(std::memory_order_acquire)) return true;
+            const std::size_t count = _wider_inline_count.load(std::memory_order_acquire);
+            if (count <= wider_inline)
+            {
+                for (std::size_t i = 0; i < count; ++i)
+                    if (_wider_inline[i].load(std::memory_order_relaxed) == predicate) return true;
+                return false;
+            }
+            std::shared_lock lock(_wider_mtx);
+            return _wider_predicates.count(predicate) != 0;
+        }
+
+        // The state from which a load begins (`unknown`), and the one
+        // that a file's record replaces it with.
+        void reset_wider_predicates(const bool unknown, const std::unordered_set<Node>& marked = {})
+        {
+            std::unique_lock lock(_wider_mtx);
+            _wider_predicates.clear();
+            _wider_inline_count.store(0, std::memory_order_release);
+            for (const Node predicate : marked)
+                add_wider_predicate_locked(predicate);
+            _wider_predicates_unknown.store(unknown, std::memory_order_release);
+            _may_hold_wider_statements.store(unknown || !_wider_predicates.empty(), std::memory_order_release);
+        }
 
         // The language currently in use, as observed by any thread other than
         // the one responsible for setting it, is accessed via

@@ -2255,15 +2255,18 @@ TEST_CASE("explain-budget: default restores the default budget")
 // incurs a higher cost than the default: a chain of a hundred steps, each
 // checking a negation at a hub containing sixty thousand facts from a
 // different predicate (see "the adjacency a condition is read from counts
-// against the budget"). Under the default setting, the tree is searched
-// within the limit; "unlimited" searches the complete proof regardless of the
-// amount of work required, which is precisely what a session demands when
-// large proofs must still be shown as the top of the complete proof.
+// against the budget"). The negation leaves its object open, `¬(h bad Z)`,
+// so that it is read at the hub: bound throughout, just as `¬(h bad X)` was,
+// it is answered by a single exact probe, and the hub imposes no cost. Under
+// the default setting, the tree is searched within the limit; "unlimited"
+// searches the complete proof regardless of the amount of work required,
+// which is precisely what a session demands when large proofs must still
+// be shown as the top of the complete proof.
 TEST_CASE("explain-budget: unlimited never falls back to the search within the limit")
 {
     zelph::io::OutputCollector  collector;
     zelph::console::Interactive interactive(collector.sink());
-    process_lines(interactive, ".deductions off\n((X next Y), (Y ok yes), ¬(h bad X)) => (X ok yes)\nzz bad qq\n");
+    process_lines(interactive, ".deductions off\n((X next Y), (Y ok yes), ¬(h bad Z)) => (X ok yes)\nzz bad qq\n");
     auto* const graph = interactive.graph();
     for (std::size_t i = 0; i < 100; ++i)
         assert_fact(graph, "n" + std::to_string(i), "next", "n" + std::to_string(i + 1));
@@ -2507,7 +2510,10 @@ TEST_CASE("explain: a dense component under a depth limit costs bounded work" * 
 // case, every step of a chain of a hundred checks a condition at a hub
 // containing ten thousand facts from a different predicate, which a budget of
 // 5 000 units is unable to cover. Without the hub, the same proof is searched
-// whole, and the tree within the limit remains unchanged.
+// whole, and the tree within the limit remains unchanged. The negation leaves
+// its object open, `¬(h bad Z)`, to be read at the hub; the one it was
+// written with, `¬(h bad X)`, is bound throughout and is no longer read
+// there, as the last case pins.
 TEST_CASE("explain: the adjacency a condition is read from counts against the budget")
 {
     struct Session
@@ -2560,7 +2566,7 @@ TEST_CASE("explain: the adjacency a condition is read from counts against the bu
         CHECK_FALSE(without.noted);
         CHECK(with.tree == without.tree);
     };
-    SUBCASE("a negation") { check("((X next Y), (Y ok yes), ¬(h bad X)) => (X ok yes)", "zz bad qq"); }
+    SUBCASE("a negation") { check("((X next Y), (Y ok yes), ¬(h bad Z)) => (X ok yes)", "zz bad qq"); }
     SUBCASE("a condition the join enumerates") { check("((X next Y), (Y ok yes), (h tag T)) => (X ok yes)", "h tag t0"); }
     // At the (h tag T) level, a match left exists as the search proceeds to
     // (n1 ok yes), and the search returns to it: there is no proof of the
@@ -2569,6 +2575,22 @@ TEST_CASE("explain: the adjacency a condition is read from counts against the bu
     // once per step; set aside, it would be read again when the search
     // returns.
     SUBCASE("a condition with a match left") { check("((X next Y), (Y ok yes), (h tag T)) => (X ok yes)", "h tag t0\nh tag t1"); }
+    // Bound throughout, the negation is read neither at the hub nor at the
+    // larger of its two ends: the exact probe answers it, and in the absence
+    // of the probe, the smaller adjacency, X's, would be read. The proof costs
+    // what it costs without the hub, and is searched in its entirety within
+    // the allocated budget.
+    SUBCASE("a negation bound throughout")
+    {
+        const std::string rule    = "((X next Y), (Y ok yes), ¬(h bad X)) => (X ok yes)";
+        const Session     with    = session(rule, "zz bad qq", true);
+        const Session     without = session(rule, "zz bad qq", false);
+        CAPTURE(with.whole);
+        CAPTURE(without.whole);
+        CHECK(with.whole < without.whole + 10000 / 64);
+        CHECK_FALSE(with.limited);
+        CHECK(with.tree == without.tree);
+    }
 }
 
 namespace

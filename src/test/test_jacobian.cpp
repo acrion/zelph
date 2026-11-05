@@ -27,6 +27,8 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #include "test_helpers.hpp"
 
+#include "network/reasoning.hpp"
+
 using namespace zelph::test;
 
 // ---------------------------------------------------------------------------
@@ -205,4 +207,34 @@ TEST_CASE("jacobian: the shipped example script reproduces det J_G = -512" * doc
     interactive.process(R"js(%(string "JEX-POS-" (> (length (zelph/query (zelph/fact '_M "jdet" (zelph/fact "pos" "zint" (zelph/number "512"))))) 0)))js");
     CHECK(any_output_contains(collector, "JEX-NEG-true"));
     CHECK(any_output_contains(collector, "JEX-POS-false"));
+}
+
+// The shipped example under the reading that counts every predicate as
+// capable of holding facts with more objects
+// (Zelph::forget_wider_statement_record), which a load of a file lacking
+// the record leaves: a statement within a condition is then interpreted
+// via its atoms, and no condition is answered by the exact probe. Both
+// readings must derive the same graph -- the same node count and the same
+// determinant. The record keeps the quicker reading where no fact with
+// more objects can state a statement, and the Jacobian stack, where
+// conditions hold statements at every level, is where an incorrect record
+// would lose a derivation. Slow: the forgotten reading performs
+// approximately twelve times the work.
+TEST_CASE("jacobian: the shipped example derives the same graph with the record of facts with several objects forgotten" * doctest::test_suite("slow"))
+{
+    const auto session = [](const bool forgotten)
+    {
+        zelph::io::OutputCollector  collector;
+        zelph::console::Interactive interactive(collector.sink());
+        if (forgotten) interactive.graph()->forget_wider_statement_record();
+        interactive.process(".import examples/math/jacobian");
+        CHECK_FALSE(has_contradiction(collector));
+        collector.clear();
+        interactive.process(R"js(%(string "JEX-NEG-" (> (length (zelph/query (zelph/fact '_M "jdet" (zelph/fact "neg" "zint" (zelph/number "512"))))) 0)))js");
+        CHECK(any_output_contains(collector, "JEX-NEG-true"));
+        return node_count(collector, interactive);
+    };
+    const std::size_t recorded = session(false);
+    CHECK(recorded > 0);
+    CHECK(session(true) == recorded);
 }

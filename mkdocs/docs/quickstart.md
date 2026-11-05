@@ -284,7 +284,7 @@ Assigning a node a name that another node already holds in that language **merge
 
 ### Exploring the Network
 
-- `.stat` – Show network statistics (nodes, RAM usage, name entries, languages, rules)
+- `.stat` – Show network statistics (nodes, RAM usage, name entries, languages, rules, facts with multiple objects)
 - `.explain [<fact>] [depth]` – Reconstruct why a fact holds (proof tree; no arg: last output, 0 = unlimited depth); alias: `.why`
 - `.list <count>` – List first N existing nodes (internal map order, with details)
 - `.clist <count>` – List first N nodes named in current language (sorted by ID if feasible)

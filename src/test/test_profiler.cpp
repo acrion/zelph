@@ -203,6 +203,77 @@ TEST_CASE("profiler: .prof counts the rule-pattern marks a claim revokes")
         CHECK(unmarked() == 0); });
 }
 
+// A condition anchored at a node reads the node's whole adjacency, even when
+// the predicate selects only a few of its facts, while scanned(seq) tallies
+// solely the candidates the walk kept: `d isdigit X` keeps two of the over
+// 300 facts naming d, the fact itself and the query's own pattern, which
+// constitutes no data. The `anchors:` line shows the walk. Absent this, the
+// digit tests in the stdlib's comparisons, which walked every list cell of a
+// digit, left scanned(seq) at 170 to 204 per comparison while the walk
+// tripled, and the performance guard could not see the cost.
+TEST_CASE("profiler: the anchors line counts the adjacency an anchor walked beside the candidates it kept")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        const auto counter = [&collector, &interactive](const std::string& section, const std::string& key) -> uint64_t
+        {
+            collector.clear();
+            interactive.process(".prof");
+            std::string prof;
+            for (const auto& event : collector.events())
+                prof += event.text + "\n";
+            const size_t start = prof.find(section);
+            REQUIRE(start != std::string::npos);
+            const size_t at = prof.find(key + "=", start);
+            REQUIRE(at != std::string::npos);
+            return std::stoull(prof.substr(at + key.size() + 1));
+        };
+
+        interactive.process(".deductions off");
+        interactive.process("d isdigit true");
+        interactive.process(R"js(%(for i 0 300 (zelph/fact "d" "inlist" (string "c" i))))js");
+        interactive.process(".log -1");
+        interactive.process(".prof reset");
+        interactive.process("d isdigit X");
+        CHECK(counter("unification:", "scanned(seq)") == 2);
+        CHECK(counter("anchors:", "walked") >= 301);
+        CHECK(counter("anchors:", "exact_probes") == 0); });
+}
+
+// The climb of a partial anchor reads the adjacencies along its trajectory
+// upward, and the `anchors:` line counts those entries as `climbed`: bound
+// to v, the pattern `(U op V) mark (U op V)` is climbed from v, whose
+// adjacency holds the 40 facts `uN op v`, to the facts that mark them. The
+// performance guard holds the climb of the Jacobian workload to a ceiling,
+// which a counter that counted nothing would meet.
+TEST_CASE("profiler: the anchors line counts the entries the climb of a partial anchor read")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        const auto counter = [&collector, &interactive](const std::string& section, const std::string& key) -> uint64_t
+        {
+            collector.clear();
+            interactive.process(".prof");
+            std::string prof;
+            for (const auto& event : collector.events())
+                prof += event.text + "\n";
+            const size_t start = prof.find(section);
+            REQUIRE(start != std::string::npos);
+            const size_t at = prof.find(key + "=", start);
+            REQUIRE(at != std::string::npos);
+            return std::stoull(prof.substr(at + key.size() + 1));
+        };
+
+        interactive.process(".deductions off");
+        interactive.process(R"js(%(each i (range 40) (def p (zelph/fact (string "u" i) "op" "v")) (zelph/fact p "mark" p)))js");
+        process_lines(interactive, "(V go V) => (V trig t)\n(V trig Q, (U op V) mark (U op V)) => ((U op V) found Q)");
+        interactive.process(".log -1");
+        interactive.process(".prof reset");
+        interactive.process("v go v");
+        CHECK(counter("unification:", "partial_anchor") > 0);
+        CHECK(counter("anchors:", "climbed") >= 40); });
+}
+
 // ---------------------------------------------------------------------------
 // The number of matches processed in the run summary ("N matches processed")
 // is not a profiler counter: `.run` reports this figure with logging off. It

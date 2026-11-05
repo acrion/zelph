@@ -165,6 +165,15 @@ document the switches. This section records the engineering invariants.
 **Anchoring** replaces full-relation scans with adjacency lookups from a
 concrete node. Subject/object-driven anchors collect a candidate's adjacency
 under one lock scope, rejecting rule-topology nodes via `var_in_closure`.
+This type of anchor reads the node's whole adjacency, even when the predicate
+selects only a few of its facts, and `.prof` counts these entries as
+`anchors: walked`. A condition with a fixed relation and all concrete subject
+and objects is therefore answered by a single **exact-triple probe**
+(`check_fact`, counted as `exact_probes`) instead: read from its subject, the
+digit test `A isdigit true` from the stdlib's comparison rules walked every
+list cell containing the digit, so that each comparison grew with the numbers
+present in the graph. When both ends are concrete and no probe is applicable,
+the anchor is the end with the smaller adjacency.
 **Bound-pattern grounding** resolves a fully bound structured pattern to the
 single node it denotes via pure hash lookups — the fact that contains
 precisely the pattern’s objects — and can fail a condition outright when
@@ -175,15 +184,28 @@ levels from the lowest-degree anchor, filtered by the pattern's predicate
 chain, yields a complete candidate superset. A concrete statement stands
 apart from foundation fact 3: a fact carrying more objects states it as
 well (refer to [Facts with Multiple Objects](../logic.md#facts-with-multiple-objects)).
-Once such a fact may exist – following the first one written during a
-session, or upon loading a file that might contain one; the file explicitly
-declares it, while a file from an older engine, which makes no such
-declaration, is treated as holding one – neither grounding nor an anchor
-takes a statement as the sole node matching it, and the climb starts at its
-atoms. This interpretation incurs a cost: `.explain` of the documentation’s
-polynomial identity does roughly ten times the work once a single fact with
-two objects appears anywhere within the graph, and exceeds the default
-budget. A concrete statement serving as the predicate in a condition is subsequently interpreted as a pattern there is: the candidates are the relations that share its own predicate, rather than the statement in isolation. Predicate positions never
+If such a fact could exist for the statement’s predicate, or for the predicate
+of a statement contained within it, neither grounding, nor an anchor, nor the
+probe considers the statement the sole node matching it, and the climb starts
+at its atoms. The engine keeps the predicates for which such a fact could
+exist (`Zelph::may_hold_wider_statements`): `fact()` marks the predicate of a
+ground fact having multiple objects, a name merge applies the mark solely when
+combining the objects from two statements, and a merge passes the mark from
+each node it relocates to the node that takes its place. The record travels in
+the `.bin` header; a file from an older
+engine, which carries none, is interpreted as marking every predicate, and
+`.stat` indicates how many predicates might have such a fact. This approach
+entails a cost: `.explain` of the documentation’s polynomial identity performs
+approximately tenfold more work when every predicate counts, surpassing the
+default budget. Whether a statement holds a marked predicate at any depth is
+decided by a walk across the statements inside it, which conditions use based
+on the values they are bound to once any predicate is marked: one fact with
+two objects whose predicate is not held by any term causes the Jacobian
+example to execute roughly a tenth more instructions, even though every
+condition is read as if it were without it. When a fact with more objects
+could match it, a concrete statement serving as the predicate in a condition
+is interpreted as a pattern there is: the candidates are the relations sharing
+its own predicate, not the statement in isolation. Predicate positions never
 qualify as anchors — a fact points _to_ its predicate, so the predicate's
 incoming side is the full extent, exactly the scan being avoided. All
 anchoring is budgeted, and an exceeded budget falls back to the full scan,

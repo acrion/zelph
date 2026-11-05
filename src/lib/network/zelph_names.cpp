@@ -294,6 +294,7 @@ Zelph::MergePlan Zelph::plan_name_merge(const Node from, const Node into, const 
     const Node survivor = merge_shape(from, into, holder, name, lang);
     MergePlan  plan     = plan_merge(from, into, collect_hash_dependents(from, survivor != 0 ? into : 0), survivor);
     plan.defines        = !is_term(from) && is_term(into);
+    plan.widens         = survivor != 0 ? predicate_of(into) : 0;
     refuse_conflicting_merge(plan, holder, name, lang);
 
     // The refutation prevails in the fold of a refuted statement and one
@@ -313,8 +314,21 @@ void Zelph::carry_out_name_merge_locked(const MergePlan& plan) const
 
     // The survivor of two statements holds the objects from both: after
     // `a p b` and `a p c` are merged, a single node states `a p b c`, which
-    // no invocation of fact() wrote (Zelph::may_hold_wider_statements).
-    if (Impl::is_hash(plan.from) || Impl::is_hash(plan.into)) _pImpl->_may_hold_wider_statements.store(true, std::memory_order_release);
+    // no invocation of fact() wrote, and its predicate is marked
+    // (Zelph::may_hold_wider_statements). An atom merged into a statement, a
+    // list term, or a set constant does not combine any objects: the atom
+    // transforms into the term, and each of its facts is rebuilt over it
+    // using the objects it previously held (merge_shape). Every node the
+    // merge moves transfers its mark to the node it moves to, as a fact with
+    // several objects whose predicate moves has the new node as its
+    // predicate.
+    if (plan.widens != 0) _pImpl->mark_wider_predicate(plan.widens);
+    if (_pImpl->_may_hold_wider_statements.load(std::memory_order_acquire) && !_pImpl->_wider_predicates_unknown.load(std::memory_order_acquire))
+    {
+        std::unique_lock lock(_pImpl->_wider_mtx);
+        for (const auto& [moved_from, moved_to] : plan.moved)
+            if (_pImpl->_wider_predicates.count(moved_from) != 0) _pImpl->add_wider_predicate_locked(moved_to);
+    }
 
     _pImpl->merge(plan.from, plan.into);
     _pImpl->fold_cluster_member(plan.from, plan.into, plan.from_state, plan.into_state);

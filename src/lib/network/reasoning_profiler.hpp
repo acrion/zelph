@@ -104,6 +104,19 @@ namespace zelph::network
         std::atomic<uint64_t> facts_scanned_sequential{0}; // how many fact nodes were iterated
         std::atomic<uint64_t> facts_scanned_parallel{0};
 
+        // What the candidate sets incur in terms of read cost, before any
+        // candidate is tried: the adjacency entries walked by a subject- or
+        // object-driven anchor (Zelph::collect_anchored_facts reads an
+        // anchor's whole adjacency, even when the predicate selects
+        // nothing), the entries a partial anchor's climb read, and the
+        // exact-triple probes that answered a condition where the relation,
+        // subject, and objects were all bound. scanned(seq) counts the
+        // candidates retained by the walk, hence a condition anchored at a
+        // large adjacency shows only here.
+        std::atomic<uint64_t> anchor_walked{0};
+        std::atomic<uint64_t> anchor_climbed{0};
+        std::atomic<uint64_t> exact_probes{0};
+
         std::atomic<uint64_t> get_fact_structures_calls{0};
         std::atomic<uint64_t> structures_total{0};
 
@@ -221,6 +234,9 @@ namespace zelph::network
             RZ(snapshot_facts_total);
             RZ(facts_scanned_sequential);
             RZ(facts_scanned_parallel);
+            RZ(anchor_walked);
+            RZ(anchor_climbed);
+            RZ(exact_probes);
             RZ(get_fact_structures_calls);
             RZ(structures_total);
             RZ(extract_calls);
@@ -322,6 +338,10 @@ namespace zelph::network
                 << " snapshot_facts=" << load(snapshot_facts_total)
                 << " scanned(seq)=" << load(facts_scanned_sequential)
                 << " scanned(par)=" << load(facts_scanned_parallel) << "\n";
+
+            oss << "  anchors: walked=" << load(anchor_walked)
+                << " climbed=" << load(anchor_climbed)
+                << " exact_probes=" << load(exact_probes) << "\n";
 
             oss << "  unify(): calls=" << load(unify_calls)
                 << " cycle=" << load(unify_cycle_hits)

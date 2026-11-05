@@ -589,6 +589,52 @@ TEST_CASE("wikidata import: the index after a .save/.load equals the one the imp
     remove_dump(dump);
 }
 
+// The importer writes a single object per fact, so the network it
+// constructs holds no fact with several objects, and its file records
+// this: following the import, after the cache the import wrote, and after
+// a save and a subsequent load, no predicate is marked, and `.stat` shows
+// no line regarding them. Every network released before the record loads
+// as potentially holding such facts for any predicate, since its file
+// provides no contrary indication, and a statement within a condition was
+// read through its atoms for each: arithmetic on a loaded network executed
+// roughly twelve times more slowly than in a fresh session.
+TEST_CASE("wikidata import: an import, its cache, a save and a load mark no predicate as holding facts with several objects")
+{
+    namespace fs     = std::filesystem;
+    const auto dump  = write_dump();
+    fs::path   cache = dump;
+    cache.replace_extension(".bin");
+    fs::remove(cache);
+    const fs::path saved = fs::temp_directory_path() / "zelph_wider_record_import_saved.bin";
+
+    const auto unmarked = [](zelph::io::OutputCollector& collector, const zelph::console::Interactive& interactive)
+    {
+        const auto record = interactive.graph()->wider_statements();
+        collector.clear();
+        interactive.process(".stat");
+        return !record.unknown && record.predicates == 0 && any_output_contains(collector, "Nodes: ")
+            && !any_output_contains(collector, "Facts with multiple objects");
+    };
+
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+    interactive.process(".load \"" + dump.string() + "\"");
+    REQUIRE(fs::exists(cache));
+    CHECK(unmarked(collector, interactive));
+    interactive.process(".save \"" + saved.string() + "\"");
+
+    interactive.process(".new");
+    interactive.process(".load \"" + cache.string() + "\"");
+    CHECK(unmarked(collector, interactive));
+
+    interactive.process(".new");
+    interactive.process(".load \"" + saved.string() + "\"");
+    CHECK(unmarked(collector, interactive));
+
+    fs::remove(saved);
+    remove_dump(dump);
+}
+
 // A predicate slice keeps the names of the nodes it retains. If it preserves
 // carriers linked to a label but omits the node that the label resolves to, the
 // file records the kept carrier ranked first as that node -- the one selected

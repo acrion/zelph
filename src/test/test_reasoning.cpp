@@ -3212,6 +3212,33 @@ TEST_CASE("grounding: a ground nested statement in a condition is stated by a fa
         } });
 }
 
+// A statement that the bindings denote may be absent while a fact containing
+// more objects within one of its parts states it. Under Y = u, the subject
+// of `((a p c) t Y) bad K` denotes `(a p c) t u`, which is not a fact,
+// whereas `(a p b c) t u` is, and it states it, just as `a p b c` states
+// `a p c`. The predicate of the absent statement, `t`, does not have a fact
+// with more objects, only `p` inside it does: a grounding that inquired
+// about `t` alone would fail the condition, and the rule would not fire. The
+// part could be the subject, the predicate, or an object of the absent
+// statement. The planner evaluates `Y kind v` first, so Y is bound when the
+// nested condition is grounded, whether in classic or in semi-naive
+// evaluation.
+TEST_CASE("grounding: a statement that a fact with more objects states through a part is not taken as missing")
+{
+    const auto fires = [](const std::string& rule, const std::string& facts)
+    {
+        run_both_modes([&](auto& collector, auto& interactive)
+                       {
+            process_lines(interactive, ".deductions off\n" + rule + "\na p b c\n" + facts + "\nu kind v");
+            collector.clear();
+            interactive.process("u ok K");
+            CHECK(collect_answers(collector) == std::vector<std::string>{"u ok k"}); });
+    };
+    SUBCASE("the subject") { fires("(Y kind v, ((a p c) t Y) bad K) => (Y ok K)", "((a p b c) t u) bad k"); }
+    SUBCASE("the predicate") { fires("(Y kind v, (Y (a p c) w) bad K) => (Y ok K)", "(u (a p b c) w) bad k"); }
+    SUBCASE("an object") { fires("(Y kind v, (Y t (a p c)) bad K) => (Y ok K)", "(u t (a p b c)) bad k"); }
+}
+
 TEST_CASE("grounding: fully bound nested pattern anchors on the exact fact node")
 {
     // Positive control for the cases above: when the exact single-object

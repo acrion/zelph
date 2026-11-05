@@ -359,10 +359,33 @@ namespace zelph::network
         bool may_hold_set_patterns() const;
         // Whether a fact involving multiple objects may be in the graph. A
         // statement contained within a condition is likewise stated by such
-        // a fact, where `(a p b c)` states `(a p b)`, thus, while this holds,
-        // grounding and anchoring do not take a statement to be matched
-        // exclusively by its own node (unification.cpp). One atomic load.
+        // a fact, where `(a p b c)` states `(a p b)`, thus, wherever its
+        // predicate might hold one, grounding and anchoring do not take a
+        // statement to be matched exclusively by its own node
+        // (may_match_wider_statement in unification.hpp). One atomic load.
         bool may_hold_wider_statements() const;
+        // Whether such a fact might exist with `predicate` serving as its
+        // predicate. The record is kept per predicate: a fact involving two
+        // objects, written once, leaves every condition associated with a
+        // different predicate to be read by its own node. Each predicate
+        // counts while the record remains unknown (wider_statements). One
+        // atomic load occurs when no predicate is marked.
+        bool may_hold_wider_statements(Node predicate) const;
+        // The record behind both, for `.stat`: `unknown` upon loading a
+        // file that carries no record, otherwise the number of predicates
+        // marked.
+        struct WiderStatements
+        {
+            bool        unknown{false};
+            std::size_t predicates{0};
+        };
+        WiderStatements wider_statements() const;
+        // Forgets the record, just as a file load lacking one does: from
+        // this point forward, every predicate is considered marked until the
+        // next load. A session reaches this state by loading a network saved
+        // by an engine that kept no record; it is the reading the engine had
+        // before the record's existence, against which the tests compare it.
+        void forget_wider_statement_record();
         // Whether `n`, encountered within a rule's text, is a collection that
         // the rule's own statement wrote -- a Skolem function symbol, which
         // gets substituted by its term during firing -- as opposed to a value
@@ -682,8 +705,9 @@ namespace zelph::network
         void              toggle_parallel() { _use_parallel = !_use_parallel; }
 
         // Anchor-based candidate lookups of the unification engine
-        // (subject/object-driven snapshots, grounded-subject anchoring,
-        // partial-pattern anchoring). Semantically neutral index shortcuts,
+        // (subject/object-driven snapshots, the exact probe of a condition
+        // bound throughout, grounded-subject anchoring, partial-pattern
+        // anchoring). Semantically neutral index shortcuts,
         // active by default in BOTH parallel and single-core evaluation --
         // deliberately decoupled from .parallel, which only controls thread
         // pool usage. The off switch provides an anchor-free naive reference
@@ -1437,6 +1461,10 @@ namespace zelph::network
             /// claims what it nests, just as the line of the rebuilt fact
             /// would (rehash_dependents).
             bool defines = false;
+            /// The predicate of the statement that two merged statements
+            /// become, which holds the objects of both (merge_shape); 0 for any
+            /// other merge, an atom merged into a term included.
+            Node widens = 0;
         };
         /// `survivor`, if different from 0, is the identifier that `into`
         /// moves to (merge_shape), planned as the first step.

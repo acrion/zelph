@@ -109,6 +109,7 @@ Node-of-Name Entries by language:
   en: 775631
 Languages: 2
 Rules: 0
+Facts with multiple objects: may exist for every predicate (not recorded)
 ------------------------
 ```
 

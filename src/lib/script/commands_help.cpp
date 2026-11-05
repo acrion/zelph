@@ -77,7 +77,7 @@ namespace zelph::console
             "  .delname <node|id> [lang]                 – Delete name in current language (or specified language)",
             "",
             "Exploring the Network",
-            "  .stat                                     – Show network statistics (nodes, RAM usage, name entries, languages, rules)",
+            "  .stat                                     – Show network statistics (nodes, RAM usage, name entries, languages, rules, facts with multiple objects)",
             "  .explain [<fact>] [depth]                 – Reconstruct why a fact holds (proof tree; no arg: last output, 0 = unlimited depth); alias: .why",
             "  .list <count>                             – List first N existing nodes (internal map order, with details)",
             "  .clist <count>                            – List first N nodes named in current language (sorted by ID if feasible)",
@@ -1009,7 +1009,14 @@ namespace zelph::console
                       "- Total entries in name-of-node mappings\n"
                       "- Total entries in node-of-name mappings\n"
                       "- Number of languages\n"
-                      "- Number of rules"},
+                      "- Number of rules\n"
+                      "- For how many predicates a fact with multiple objects may exist, shown\n"
+                      "  only when it may for one. A condition, or a statement inside one, whose\n"
+                      "  predicate is among them is also matched by a fact with more objects;\n"
+                      "  it is then read through its atoms rather than by one lookup, which\n"
+                      "  costs more. A network loaded from a file that does not record these\n"
+                      "  predicates, saved by an older engine, counts every predicate\n"
+                      "  (\"not recorded\") until the next load."},
 #ifndef __EMSCRIPTEN__
             {".stat-file", ".stat-file <file.bin>\n"
                            "Reads only the serialized zelph header from the given .bin file and prints\n"
@@ -1052,7 +1059,12 @@ namespace zelph::console
                       "imports (the per-statement epoch reset is deliberately a no-op\n"
                       "then), so \".prof\" after an import shows the totals for the whole\n"
                       "import. \".prof reset\" additionally zeroes the counters, starting\n"
-                      "a fresh measurement window -- use it between two phases."},
+                      "a fresh measurement window -- use it between two phases.\n"
+                      "The line \"anchors:\" counts what reading the candidates cost before\n"
+                      "any was tried: the adjacency entries walked at a bound subject or\n"
+                      "object (walked), the entries a partial anchor's climb read (climbed),\n"
+                      "and the conditions bound throughout that one lookup answered\n"
+                      "(exact_probes). scanned(seq) counts only the candidates a walk kept."},
 
             {".auto-run", ".auto-run\n"
                           "Toggles the automatic execution of the inference engine (.run) after every input.\n"
@@ -1122,10 +1134,11 @@ namespace zelph::console
 
             {".anchors", ".anchors [on|off]\n"
                          "Controls the unification engine's anchor-based candidate lookups:\n"
-                         "subject/object-driven snapshots, grounded-subject anchoring, and\n"
-                         "partial-pattern anchoring. The same switch controls the subject-predicate\n"
-                         "hint, which skips a candidate whose statement subject lacks the predicate\n"
-                         "of the pattern's subject before matching it.\n"
+                         "subject/object-driven snapshots, the exact probe that answers a condition\n"
+                         "bound throughout, grounded-subject anchoring, and partial-pattern\n"
+                         "anchoring. The same switch controls the subject-predicate hint, which\n"
+                         "skips a candidate whose statement subject lacks the predicate of the\n"
+                         "pattern's subject before matching it.\n"
                          "Without argument: shows the current state.\n"
                          "  on   – (default) conditions with a concrete anchor node scan only that\n"
                          "         node's adjacency instead of the whole relation extent. This is a\n"

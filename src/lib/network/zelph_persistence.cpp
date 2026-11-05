@@ -204,9 +204,9 @@ void Zelph::Impl::clear_loaded_state()
     _set_patterns.clear();
     _has_set_patterns.store(false, std::memory_order_release);
     // A file that has been loaded may include a fact involving multiple
-    // objects (Zelph::may_hold_wider_statements), unless its header says
-    // otherwise (loadSmallData).
-    _may_hold_wider_statements.store(true, std::memory_order_release);
+    // objects for any predicate (Zelph::may_hold_wider_statements), unless
+    // its header carries the record (loadSmallData).
+    reset_wider_predicates(true);
 
     std::unique_lock<std::shared_mutex> lock_opaque(_opaque_mtx);
     _opaque_predicates.clear();
@@ -231,14 +231,22 @@ void Zelph::Impl::loadSmallData(const ZelphImpl::Reader& impl)
     _last     = impl.getLast();
     _last_var = impl.getLastVar();
 
-    // The session that saved the network knew whether it held a fact
-    // involving multiple objects, and the file explicitly states this.
-    // Absent this knowledge, each load presumed such a fact, causing a
-    // statement inside a condition to be interpreted via facts that could
-    // state it with multiple objects: `.explain` of the documentation's
-    // polynomial identity performed tenfold the work of the session that
-    // saved the network and ran out of its budget.
-    if (impl.getSingleObjectFacts()) _may_hold_wider_statements.store(false, std::memory_order_release);
+    // The session that saved the network recorded the predicates for which
+    // it might hold a fact involving multiple objects, and the file
+    // preserves that record. Absent this knowledge, each load presumed such
+    // a fact for every predicate, causing a statement inside a condition to
+    // be interpreted via facts that could state it with multiple objects:
+    // `.explain` of the documentation's polynomial identity performed
+    // tenfold the work of the session that saved the network and ran out of
+    // its budget. A file lacking the record, written before its existence,
+    // continues to be read in this manner (clear_loaded_state).
+    if (impl.hasWiderStatementPredicates())
+    {
+        std::unordered_set<Node> marked;
+        for (const Node predicate : impl.getWiderStatementPredicates())
+            marked.insert(predicate);
+        reset_wider_predicates(false, marked);
+    }
 }
 #endif
 
@@ -1057,9 +1065,28 @@ void Zelph::Impl::saveToFile(const std::string& filename, const ankerl::unordere
     impl.setLastVar(_last_var);
     impl.setTemplateIds(_older_rule_literals.empty());
     impl.setNegationConditions(!_older_negations);
-    impl.setSingleObjectFacts(!_may_hold_wider_statements.load(std::memory_order_acquire));
 
     const bool filtering = keep != nullptr;
+
+    // The record of predicates that might hold a fact involving multiple
+    // objects (Zelph::may_hold_wider_statements). An unknown record is left
+    // out, and the load reads every predicate as marked, just as it would
+    // when reading a file from an engine that kept no record. A filtered save
+    // keeps the marks of the predicates it keeps: the predicate of each fact
+    // it writes is kept.
+    {
+        std::shared_lock lock_wider(_wider_mtx);
+        if (!_wider_predicates_unknown.load(std::memory_order_acquire))
+        {
+            std::vector<Node> marked;
+            for (const Node predicate : _wider_predicates)
+                if (kept(predicate)) marked.push_back(predicate);
+            std::sort(marked.begin(), marked.end());
+            auto record = impl.initWiderStatementPredicates(static_cast<::capnp::uint>(marked.size()));
+            for (size_t i = 0; i < marked.size(); ++i)
+                record.set(static_cast<::capnp::uint>(i), marked[i]);
+        }
+    }
 
     // A label whose name → node entry names a node the filter drops, while
     // the filter keeps other nodes carrying it, is written with the kept

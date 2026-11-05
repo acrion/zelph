@@ -118,7 +118,7 @@ Objects](#facts-with-several-objects)). This second probe is the one named excep
 `ace` calls `zelph/exists` only with `:exact` (invariant 7 of [Invariants](api.md#invariants)), and
 the source-rule test "ace work: the ace sources make no forbidden graph call" admits exactly that
 call. The engine does that wider match only while the graph may hold a fact with several objects (one
-was written, a statement or set constant was merged by name, or a network was loaded whose file does
+was written, two statements were merged by name, or a network was loaded whose file does
 not record that it holds none, as no file saved by an older engine does); otherwise the second probe
 is a hash lookup as well. When it does the wider match, its cost is bounded by the subject's facts with
 that predicate, never a scan of the graph; M3 times it on the published `-small` network, as a row of

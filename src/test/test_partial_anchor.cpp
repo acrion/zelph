@@ -30,13 +30,22 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include "network/reasoning.hpp"
 
 #include <algorithm>
+#include <cstdint>
 #include <filesystem>
+#include <fstream>
 #include <map>
 #include <set>
 #include <string>
 #include <vector>
 
 using namespace zelph::test;
+
+namespace zelph::test
+{
+    // Binary files located in older_networks/*.bin, compiled into this
+    // executable via embed_files.cmake.
+    const std::map<std::string, std::vector<unsigned char>>& older_networks();
+}
 
 // ---------------------------------------------------------------------------
 // Partial-pattern anchoring (unification.cpp): a condition whose structured
@@ -831,18 +840,28 @@ TEST_CASE("unification: after a load, a nested statement is answered through a f
     std::filesystem::remove(path);
 }
 
-// The session that saves a network knows whether it holds a fact involving
-// multiple objects, and the file explicitly indicates this. Each load
-// previously assumed such a fact, causing a statement inside a condition to
-// be processed via its atoms within a network that held none: `.explain` of
-// the documentation's polynomial identity performed tenfold the work of the
-// session that saved it and exceeded its budget (refer to test_explain.cpp).
-// A network that may hold such a fact maintains this reading following the
-// load, as demonstrated in the case above.
-TEST_CASE("unification: a load reads statements through facts with more objects only when the saved network may hold one")
+// The session that saves a network records the predicates for which it
+// might hold a fact involving multiple objects, and the file contains this
+// record. Each load previously assumed such a fact, causing a statement
+// inside a condition to be processed via its atoms within a network that
+// held none: `.explain` of the documentation's polynomial identity
+// performed tenfold the work of the session that saved it and exceeded its
+// budget (refer to test_explain.cpp). The record specifies predicates, so
+// after a load a fact with two objects of `p` leaves every condition over
+// `q` to be read by its own node, and `.stat` says how many predicates it
+// marks. A network that may hold such a fact maintains the wider reading
+// following the load, as demonstrated in the case above.
+TEST_CASE("unification: a load reads statements through facts with more objects only for the predicates the saved network marked")
 {
-    const std::string path             = (std::filesystem::temp_directory_path() / "zelph_test_single_object_facts.bin").string();
-    const auto        saved_and_loaded = [&](const std::string& lines)
+    const std::string path = (std::filesystem::temp_directory_path() / "zelph_test_wider_statement_record.bin").string();
+    struct Loaded
+    {
+        zelph::network::Zelph::WiderStatements record;
+        bool                                   p{false};
+        bool                                   q{false};
+        std::string                            stat; // the line of `.stat` concerning it, if any
+    };
+    const auto saved_and_loaded = [&](const std::string& lines)
     {
         {
             zelph::io::OutputCollector  collector;
@@ -853,16 +872,36 @@ TEST_CASE("unification: a load reads statements through facts with more objects 
         zelph::io::OutputCollector  collector;
         zelph::console::Interactive interactive(collector.sink());
         interactive.process(".load " + path);
-        return interactive.graph()->may_hold_wider_statements();
+        auto* const graph = interactive.graph();
+        Loaded      loaded{graph->wider_statements(),
+                           graph->may_hold_wider_statements(graph->get_node("p", graph->lang())),
+                           graph->may_hold_wider_statements(graph->get_node("q", graph->lang())),
+                           {}};
+        collector.clear();
+        interactive.process(".stat");
+        for (const auto& event : collector.events())
+            if (const auto at = event.text.find("Facts with multiple objects"); at != std::string::npos)
+                loaded.stat = event.text.substr(at, event.text.find('\n', at) - at);
+        return loaded;
     };
 
     SUBCASE("a network without one")
     {
-        CHECK_FALSE(saved_and_loaded("a p b\n(a p b) bad k"));
+        const Loaded loaded = saved_and_loaded("a p b\n(a p b) bad k\nx q y");
+        CHECK_FALSE(loaded.record.unknown);
+        CHECK(loaded.record.predicates == 0);
+        CHECK_FALSE(loaded.p);
+        CHECK_FALSE(loaded.q);
+        CHECK(loaded.stat.empty());
     }
     SUBCASE("a network with one")
     {
-        CHECK(saved_and_loaded("a p b c\n(a p b c) bad k"));
+        const Loaded loaded = saved_and_loaded("a p b c\n(a p b c) bad k\nx q y");
+        CHECK_FALSE(loaded.record.unknown);
+        CHECK(loaded.record.predicates == 1);
+        CHECK(loaded.p);
+        CHECK_FALSE(loaded.q);
+        CHECK(loaded.stat == "Facts with multiple objects: may exist for 1 predicate");
     }
     std::filesystem::remove(path);
 }
@@ -923,6 +962,384 @@ TEST_CASE("unification: after two statements merge, a nested statement is answer
             interactive.process(vanished + " bad Z");
             CHECK(collect_answers(collector) == std::vector<std::string>{vanished + " bad k"});
         } });
+}
+
+namespace
+{
+    // The identifier `.node` reports for a node: the path to the id through
+    // which a user assigns a name to a statement or a list term.
+    std::string node_id(zelph::io::OutputCollector& collector, const zelph::console::Interactive& interactive, const std::string& node)
+    {
+        collector.clear();
+        interactive.process(".node " + node);
+        const std::string marker = "Node ID: ";
+        for (const auto& event : collector.events())
+            if (const auto pos = event.text.find(marker); pos != std::string::npos)
+                return event.text.substr(pos + marker.size(), event.text.find_first_not_of("0123456789", pos + marker.size()) - pos - marker.size());
+        return {};
+    }
+
+    // Whether the record marks the predicate named `name` within the session's
+    // language.
+    bool marked(const zelph::console::Interactive& interactive, const std::string& name)
+    {
+        const auto* const graph = interactive.graph();
+        return graph->may_hold_wider_statements(graph->get_node(name, graph->lang()));
+    }
+} // namespace
+
+// A name merge applies a mark to a predicate solely when it combines the
+// objects of two statements: named alike, `a p b` and `a p c` coalesce into
+// a single node stating `a p b c`. Each merge involving a statement or a
+// set constant on either side marked the session previously, including the
+// head merge performed during an RDF list conversion, an atom merged into a
+// list term: 300 decimal comparisons took 2.4 s instead of 0.4 s
+// afterwards. An atom merged into a statement or a list term transforms
+// into that term, and each of its facts is rebuilt over the term using the
+// objects it previously held (Zelph::merge_shape), thus no fact gains an
+// additional object.
+TEST_CASE("unification: a name merge marks a predicate only where it combines the objects of two statements")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        const auto* const graph = interactive.graph();
+        interactive.process("hd q z1");
+        SUBCASE("an atom merged into a statement")
+        {
+            interactive.process("a p b");
+            interactive.process(".name " + node_id(collector, interactive, "a p b") + " term");
+            interactive.process(".name hd term");
+            CHECK(graph->wider_statements().predicates == 0);
+            collector.clear();
+            interactive.process("(a p b) q Z");
+            CHECK(collect_answers(collector) == std::vector<std::string>{"term q z1"});
+        }
+        SUBCASE("an atom merged into a list term")
+        {
+            interactive.process("cl0 is <u v>");
+            interactive.process(".name " + node_id(collector, interactive, "<u v>") + " term");
+            interactive.process(".name hd term");
+            CHECK(graph->wider_statements().predicates == 0);
+            collector.clear();
+            interactive.process("<u v> q Z");
+            CHECK(collect_answers(collector) == std::vector<std::string>{"term q z1"});
+        }
+        SUBCASE("two statements")
+        {
+            process_lines(interactive, "a p b\na p c");
+            const std::string first  = node_id(collector, interactive, "a p b");
+            const std::string second = node_id(collector, interactive, "a p c");
+            interactive.process(".name " + first + " both");
+            interactive.process(".name " + second + " both");
+            CHECK(graph->wider_statements().predicates == 1);
+            CHECK(marked(interactive, "p"));
+            CHECK_FALSE(marked(interactive, "q"));
+        }
+        CHECK_FALSE(graph->wider_statements().unknown); });
+}
+
+// What a merge transfers, it places its mark upon the node it relocates
+// to: given `a p b c` stated, `.name r p` merges the atom p into r, the
+// fact transforms into `a r b c`, and it states `(a r c)` beside
+// `(a r b)`. Left with the node that vanished, the mark failed to reach r,
+// and `(a p c) bad Z`, queried regarding the merged predicate by its name,
+// was read solely by the absent node `a r c` and answered nothing.
+TEST_CASE("unification: a merge hands the mark of a predicate on to the node it merges into")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, "a p b c\n(a p b c) bad k\nx r y");
+        REQUIRE(marked(interactive, "p"));
+        REQUIRE_FALSE(marked(interactive, "r"));
+        interactive.process(".name r p");
+        CHECK(marked(interactive, "p")); // the node r, now named p
+        collector.clear();
+        interactive.process("(a p c) bad Z");
+        CHECK(collect_answers(collector) == std::vector<std::string>{"(a p c) bad k"}); });
+}
+
+// The record answers without its lock while it holds at most four predicates,
+// and from its set beyond those (Zelph::may_hold_wider_statements). Six
+// predicates that each hold a fact with two objects are all marked, in the
+// session that wrote the facts and following a save and a load, and each
+// states a statement inside a condition via its fact; a predicate that holds a
+// fact with one object stays unmarked. A record that read only the first four
+// would ground `(a p5 c)` and `(a p6 c)` to themselves and answer nothing for
+// them.
+TEST_CASE("unification: the record marks the predicates of facts with two objects beyond the first four as well")
+{
+    const auto check = [](zelph::io::OutputCollector& collector, const zelph::console::Interactive& interactive)
+    {
+        for (int i = 1; i <= 6; ++i)
+        {
+            const std::string predicate = "p" + std::to_string(i);
+            CAPTURE(predicate);
+            CHECK(marked(interactive, predicate));
+            collector.clear();
+            interactive.process("(a " + predicate + " c) bad Z");
+            CHECK(collect_answers(collector) == std::vector<std::string>{"(a " + predicate + " c) bad k"});
+        }
+        CHECK_FALSE(marked(interactive, "q"));
+        CHECK(interactive.graph()->wider_statements().predicates == 6);
+    };
+    const std::string path = (std::filesystem::temp_directory_path() / "zelph_test_wider_record_six.bin").string();
+    {
+        zelph::io::OutputCollector  collector;
+        zelph::console::Interactive interactive(collector.sink());
+        std::string                 lines = "x q y";
+        for (int i = 1; i <= 6; ++i)
+            lines += "\na p" + std::to_string(i) + " b c\n(a p" + std::to_string(i) + " b c) bad k";
+        process_lines(interactive, lines);
+        check(collector, interactive);
+        interactive.process(".save " + path);
+    }
+    {
+        zelph::io::OutputCollector  collector;
+        zelph::console::Interactive interactive(collector.sink());
+        interactive.process(".load " + path);
+        check(collector, interactive);
+    }
+    std::filesystem::remove(path);
+}
+
+// A file created prior to the record's existence does not say which
+// predicates might hold a fact with more objects, and its load counts every
+// predicate, just as each prior load did; `.stat` confirms this. Saving
+// such a network again omits the record, so the next load reads it
+// identically. A user reaches this state by loading a file from an older
+// engine, such as the one in older_networks/, or any network published
+// before the record was established.
+TEST_CASE("unification: a file without the record is read as marking every predicate")
+{
+    const auto& networks = zelph::test::older_networks();
+    const auto  network  = networks.find("data_collections");
+    REQUIRE(network != networks.end());
+    const auto path    = std::filesystem::temp_directory_path() / "zelph_test_wider_record_older.bin";
+    const auto resaved = std::filesystem::temp_directory_path() / "zelph_test_wider_record_older_resaved.bin";
+    {
+        std::ofstream out(path, std::ios::binary | std::ios::trunc);
+        out.write(reinterpret_cast<const char*>(network->second.data()), static_cast<std::streamsize>(network->second.size()));
+    }
+    const auto stat_line = [](zelph::io::OutputCollector& collector, const zelph::console::Interactive& interactive)
+    {
+        collector.clear();
+        interactive.process(".stat");
+        for (const auto& event : collector.events())
+            if (const auto at = event.text.find("Facts with multiple objects"); at != std::string::npos)
+                return event.text.substr(at, event.text.find('\n', at) - at);
+        return std::string{};
+    };
+    {
+        zelph::io::OutputCollector  collector;
+        zelph::console::Interactive interactive(collector.sink());
+        interactive.process(".load " + path.generic_string());
+        CHECK(interactive.graph()->wider_statements().unknown);
+        CHECK(stat_line(collector, interactive) == "Facts with multiple objects: may exist for every predicate (not recorded)");
+        interactive.process(".save " + resaved.generic_string());
+    }
+    {
+        zelph::io::OutputCollector  collector;
+        zelph::console::Interactive interactive(collector.sink());
+        interactive.process(".load " + resaved.generic_string());
+        CHECK(interactive.graph()->wider_statements().unknown);
+    }
+    std::filesystem::remove(path);
+    std::filesystem::remove(resaved);
+}
+
+// The record against the reading it superseded, which treated every predicate
+// as holding facts with more objects -- the state left after loading a file
+// without the record (Zelph::forget_wider_statement_record) -- and against
+// the anchor-free reference, `.anchors off`. An atom merged into a statement
+// and another merged into a list term each bring a fact for a predicate `q`
+// that the term already holds a fact for, along with a statement regarding
+// each of those two facts: had a merge combined the two into a single fact
+// encompassing both objects and left `q` unmarked, the record would read the
+// statements about them via the single-object facts that no longer exist, and
+// yield fewer answers than the reading that counts every predicate. Neither
+// merge combines them, and neither marks a predicate. Facts involving two
+// objects of `s` come next, one also nested within a statement whose own
+// predicate `t` holds none, and a rule whose second condition, `X s n2`, is
+// bound throughout once the first condition, seeded with `m2 trig e` by
+// `.run-delta`, has bound X: a probe ignoring the mark of `s` would seek the
+// triple `m2 s n2` exclusively and overlook `m2 s n2 o2`, which states it.
+// The forgotten reading runs the same probe, so such a probe would likewise
+// miss `m2 ok e` within it; the anchor-free reference and the expected answer
+// confirm this. Seeded, because a `.run` starts with a classic pass, which
+// evaluates the rule with X unbound and fires it regardless; and not over
+// `m s n o`, since the statements derived about it assert `m s n` on its own
+// (a statement asserts the facts nested within it), which the probe detects.
+// Every query and every derivation yields identical results across all three
+// readings, even when derivations are made under the forgotten one, and after
+// a save and a load.
+TEST_CASE("unification: the record answers as the reading that counts every predicate after merges, facts with two objects and a load")
+{
+    const std::vector<std::string> queries = {"(a p b) q Z", "X q z1", "(a p B) q Z", "<u v> q Z", "(u cons Y) q Z", "((a p b) q z1) r W", "((a p b) q z2) r W", "((a p b) q Z) r W", "X r w1", "X r w2", "(<u v> q z3) r W", "(<u v> q Z) r W", "(m s n) bad Z", "(m s o) bad Z", "m s X", "(m s X) bad Z", "S bad k", "W seen V", "(m s n) seen K", "((m s n) t u) bad Z", "((m s X) t U) bad Z", "m2 ok Y"};
+    const auto                     answers = [&queries](zelph::io::OutputCollector& collector, const zelph::console::Interactive& interactive)
+    {
+        std::vector<std::vector<std::string>> all;
+        for (const std::string& query : queries)
+        {
+            collector.clear();
+            interactive.process(query);
+            auto found = collect_answers(collector);
+            std::sort(found.begin(), found.end());
+            all.push_back(found);
+        }
+        return all;
+    };
+    const auto build = [](zelph::io::OutputCollector& collector, const zelph::console::Interactive& interactive)
+    {
+        process_lines(interactive, "(X q Y) => (X seen Y)\n((A s B) bad K) => ((A s B) seen K)\n(X trig Y, X s n2) => (X ok Y)\n"
+                                   "hd q z1\n(hd q z1) r w1\na p b\n(a p b) q z2\n((a p b) q z2) r w2\n"
+                                   "hd2 q z3\n(hd2 q z3) r w3\ncl0 is <u v>\n<u v> q z4\n(<u v> q z4) r w4\n"
+                                   "m s n o\n(m s n o) bad k\n((m s n o) t u) bad k\nm2 s n2 o2");
+        interactive.process(".name " + node_id(collector, interactive, "a p b") + " term1");
+        interactive.process(".name hd term1");
+        interactive.process(".name " + node_id(collector, interactive, "<u v>") + " term2");
+        interactive.process(".name hd2 term2");
+        process_lines(interactive, ".semi-naive on\n.auto-run\nm2 trig e\n.run-delta"); // .auto-run serves as a toggle: off
+    };
+    const std::string path = (std::filesystem::temp_directory_path() / "zelph_test_wider_record_differential.bin").string();
+
+    std::vector<std::vector<std::string>> recorded;
+    {
+        zelph::io::OutputCollector  collector;
+        zelph::console::Interactive interactive(collector.sink());
+        build(collector, interactive);
+        REQUIRE(interactive.graph()->wider_statements().predicates == 1); // s
+        recorded = answers(collector, interactive);
+        interactive.process(".save " + path);
+        interactive.graph()->forget_wider_statement_record();
+        CHECK(answers(collector, interactive) == recorded);
+    }
+    for (std::size_t i = 0; i < queries.size(); ++i)
+    {
+        CAPTURE(queries[i]);
+        CHECK_FALSE(recorded[i].empty()); // each query pertains to something that holds
+    }
+    // Both facts regarding q remain separate following each merge, and so do
+    // the statements concerning them; the rule over `X s n2` was fired.
+    const auto answered = [&](const std::string& query)
+    { return recorded[static_cast<std::size_t>(std::find(queries.begin(), queries.end(), query) - queries.begin())]; };
+    CHECK(answered("(a p b) q Z").size() == 2);
+    CHECK(answered("((a p b) q Z) r W").size() == 2);
+    CHECK(answered("(<u v> q Z) r W").size() == 2);
+    CHECK(answered("m2 ok Y") == std::vector<std::string>{"m2 ok e"});
+    {
+        // The derivations, made under the reading that counts every predicate.
+        zelph::io::OutputCollector  collector;
+        zelph::console::Interactive interactive(collector.sink());
+        interactive.graph()->forget_wider_statement_record();
+        build(collector, interactive);
+        CHECK(answers(collector, interactive) == recorded);
+    }
+    {
+        // The anchor-free reference, which neither a probe nor an anchor
+        // reaches.
+        zelph::io::OutputCollector  collector;
+        zelph::console::Interactive interactive(collector.sink());
+        interactive.process(".anchors off");
+        build(collector, interactive);
+        CHECK(answers(collector, interactive) == recorded);
+    }
+    {
+        zelph::io::OutputCollector  collector;
+        zelph::console::Interactive interactive(collector.sink());
+        interactive.process(".load " + path);
+        CHECK(interactive.graph()->wider_statements().predicates == 1);
+        CHECK(answers(collector, interactive) == recorded);
+        interactive.graph()->forget_wider_statement_record();
+        CHECK(answers(collector, interactive) == recorded);
+    }
+    std::filesystem::remove(path);
+}
+
+// Once a predicate is marked, whether a statement may be matched by a fact
+// with more objects is determined through a walk across the statements
+// inside it (may_match_wider_statement), entering each of them exactly
+// once. A list of 5000 items corresponds to 5000 statements: more than the
+// walk can distinguish within its small buffer, and more than it keeps
+// between successive walks. Inquired about twice, and about a short list
+// in between, the conditions answer as if under the reading that counts
+// every predicate, which never proceeds beyond the first statement. Slow:
+// two sessions construct the list.
+TEST_CASE("unification: a condition over a list of many items answers alike once a predicate is marked" * doctest::test_suite("slow"))
+{
+    std::string items;
+    for (int i = 0; i < 5000; ++i)
+        items += (i == 0 ? "i" : " i") + std::to_string(i);
+    const std::string long_list = "<" + items + ">";
+    const auto        answers   = [&long_list](const bool forgotten)
+    {
+        zelph::io::OutputCollector  collector;
+        zelph::console::Interactive interactive(collector.sink());
+        if (forgotten) interactive.graph()->forget_wider_statement_record();
+        process_lines(interactive, ".deductions off\nzz p a b\n" + long_list + " q k\n<x y> q k2");
+        std::vector<std::vector<std::string>> found;
+        for (const std::string& query : {long_list + " q Z", std::string("<x y> q Z"), long_list + " q Z"})
+        {
+            collector.clear();
+            interactive.process(query);
+            found.push_back(collect_answers(collector));
+        }
+        return found;
+    };
+    const auto recorded = answers(false);
+    REQUIRE(recorded.size() == 3);
+    CHECK(recorded[0] == std::vector<std::string>{long_list + " q k"});
+    CHECK(recorded[1] == std::vector<std::string>{"<x y> q k2"});
+    CHECK(recorded[2] == recorded[0]);
+    CHECK(answers(true) == recorded);
+}
+
+// The probe and the record against the readings they superseded, within
+// the rule programs whose cost they decide: the stdlib's comparisons,
+// whose digit tests are bound throughout, and the polynomial stack, whose
+// conditions hold statements at every level. Each program responds
+// identically with the record, with the record forgotten -- every
+// predicate counted as holding facts with more objects, just as before the
+// record's existence, which likewise leaves no condition for the probe --
+// and devoid of anchors, the anchor-free reference. Slow: nine imports of
+// the arithmetic stack.
+TEST_CASE("unification: the stdlib's comparisons and the polynomial stack answer alike with the record, without it, and without anchors" * doctest::test_suite("slow"))
+{
+    const auto answers = [](const std::string& reading, const std::string& setup, const std::vector<std::string>& queries)
+    {
+        zelph::io::OutputCollector  collector;
+        zelph::console::Interactive interactive(collector.sink());
+        if (reading == "forgotten") interactive.graph()->forget_wider_statement_record();
+        if (reading == "no anchors") interactive.process(".anchors off");
+        process_lines(interactive, ".deductions off\n" + setup);
+        std::vector<std::vector<std::string>> all;
+        for (const std::string& query : queries)
+        {
+            collector.clear();
+            interactive.process(query);
+            auto found = collect_answers(collector);
+            std::sort(found.begin(), found.end());
+            all.push_back(found);
+        }
+        return all;
+    };
+    const auto check = [&](const std::string& setup, const std::vector<std::string>& queries)
+    {
+        const auto recorded = answers("recorded", setup, queries);
+        for (const auto& found : recorded)
+            CHECK_FALSE(found.empty());
+        CHECK(answers("forgotten", setup, queries) == recorded);
+        CHECK(answers("no anchors", setup, queries) == recorded);
+    };
+    const std::string              pairs    = "c0 is (&2408971 cmp &2334539)\nc1 is (&2334539 cmp &2408971)\nc2 is (&2408971 cmp &2408971)\n"
+                                              "c3 is (&19 cmp &190)\nc4 is (&190 cmp &109)\nc5 is (&0 cmp &1)";
+    const std::vector<std::string> verdicts = {"A < B", "A > B", "A == B", "(A cmp B) = V"};
+    SUBCASE("decimal comparisons") { check(".import decimal-arithmetic\n" + pairs, verdicts); }
+    SUBCASE("binary comparisons") { check(".import binary-arithmetic\n" + pairs, verdicts); }
+    SUBCASE("polynomial identities")
+    {
+        check(".import math\n<x y> ~ polyring\n(x + y) ≡ (y + x)\n$( (x+1)*(x-1) ) ≡ $( x^2 - 1 )\n$( (x+y)^2 ) ≡ $( x^2 + y^2 )",
+              {"(A ≡ B) = R"});
+    }
 }
 
 TEST_CASE("unification: .anchors off switches off the subject-predicate hint as well")
@@ -1016,4 +1433,110 @@ n1 bar p1
         collector.clear();
         interactive.process("m2 foo n1");
         CHECK(any_event_contains(collector, "optimized_snapshot=YES")); });
+}
+
+namespace
+{
+    // One counter from the `.prof` dump (counter mode, `.log -1`): `section`
+    // designates the line, `key` identifies the counter within it.
+    std::uint64_t prof_counter(zelph::io::OutputCollector& collector, const zelph::console::Interactive& interactive, const std::string& section, const std::string& key)
+    {
+        collector.clear();
+        interactive.process(".prof");
+        std::string prof;
+        for (const auto& event : collector.events())
+            prof += event.text + "\n";
+        const size_t start = prof.find(section);
+        REQUIRE(start != std::string::npos);
+        const size_t at = prof.find(key + "=", start);
+        REQUIRE(at != std::string::npos);
+        return std::stoull(prof.substr(at + key.size() + 1));
+    }
+
+    // 300 facts that hold `node` as their subject, or as their object: what
+    // fills the adjacency of a digit, which every list cell holding the
+    // digit names.
+    void fill_adjacency(const zelph::console::Interactive& interactive, const std::string& node, const bool as_subject)
+    {
+        interactive.process(as_subject ? R"js(%(for i 0 300 (zelph/fact ")js" + node + R"js(" "inlist" (string "c" i))))js"
+                                       : R"js(%(for i 0 300 (zelph/fact (string "c" i) "flag" ")js" + node + R"js(")))js");
+    }
+} // namespace
+
+// A condition in which the relation, subject, and objects are all bound was
+// read from the adjacency of its subject, which every fact naming the
+// subject fills: `A isdigit true` in the stdlib's comparison rules
+// (common-arithmetic.zph), with A bound to a digit, walked every list cell
+// holding that digit, so that each comparison expanded in tandem with the
+// numbers within the graph -- 4000 seven-digit comparisons took 20 s
+// instead of 3 s decimal, and 822 s instead of 10 s binary. It is answered
+// by a single exact probe, the candidate it identifies tried just like any
+// other. Whichever condition the planner takes first, the other is bound
+// throughout upon arrival, and the 300 facts naming `d` are never walked.
+TEST_CASE("unification: a condition bound throughout is answered by one exact probe")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, ".deductions off\nd isdigit true\nd trig e");
+        fill_adjacency(interactive, "d", true);
+        interactive.process(".log -1");
+        interactive.process(".prof reset");
+        collector.clear();
+        interactive.process("X trig e, X isdigit true");
+        const auto answers = collect_answers(collector);
+        REQUIRE(answers.size() == 1);
+        CHECK(answers.front().find("d trig e") != std::string::npos);
+        CHECK(answers.front().find("d isdigit true") != std::string::npos);
+        CHECK(prof_counter(collector, interactive, "anchors:", "exact_probes") == 1);
+        CHECK(prof_counter(collector, interactive, "anchors:", "walked") < 300);
+
+        // The probe is an anchor-based lookup, and `.anchors off`, the
+        // anchor-free reference, excludes it alongside the others.
+        interactive.process(".anchors off");
+        interactive.process(".prof reset");
+        collector.clear();
+        interactive.process("X trig e, X isdigit true");
+        const auto reference = collect_answers(collector);
+        REQUIRE(reference.size() == 1);
+        CHECK(reference.front().find("d isdigit true") != std::string::npos);
+        CHECK(prof_counter(collector, interactive, "anchors:", "exact_probes") == 0); });
+}
+
+// Where the probe cannot answer the condition, as a fact with two objects of
+// its relation might state it, the condition is read at the smaller of its
+// two bound ends: every fact it matches holds the subject as its subject and
+// the object among its objects, so either adjacency yields all of them. Read
+// at the subject alone, the 300 facts naming `d` were walked for each test.
+// The single fact that answers the digit test is such a fact,
+// `d isdigit true maybe`: a probe for the triple `d isdigit true`, executed
+// although its relation holds a fact with two objects, finds nothing, and the
+// rule does not fire. The rule is fired by its first condition, seeded with
+// `d trig e` via `.run-delta`, so X is bound before the digit test, as the
+// stdlib's comparison rules are evaluated. A `.run` starts with a classic
+// pass, and `.semi-naive check` adds classic passes, both of which evaluate
+// the rule with X unbound: one condition then reads the adjacency of `d` or
+// of `true` with a single end bound, regardless of the rule for two bound
+// ends.
+TEST_CASE("unification: a condition bound at both ends that no probe answers is read at the smaller adjacency")
+{
+    const auto session = [](const bool at_subject)
+    {
+        zelph::io::OutputCollector  collector;
+        zelph::console::Interactive interactive(collector.sink());
+        process_lines(interactive, ".semi-naive on\n.deductions off\n(X trig Y, X isdigit true) => (X ok Y)\nd isdigit true maybe");
+        fill_adjacency(interactive, at_subject ? "d" : "true", at_subject);
+        interactive.process(".auto-run"); // a toggle: off
+        interactive.process(".log -1");
+        interactive.process(".prof reset");
+        interactive.process("d trig e");
+        interactive.process(".run-delta");
+        const std::uint64_t walked = prof_counter(collector, interactive, "anchors:", "walked");
+        interactive.process(".log 0");
+        collector.clear();
+        interactive.process("d ok Y");
+        CHECK(collect_answers(collector) == std::vector<std::string>{"d ok e"});
+        return walked;
+    };
+    SUBCASE("the subject's adjacency is the large one") { CHECK(session(true) < 300); }
+    SUBCASE("the object's adjacency is the large one") { CHECK(session(false) < 300); }
 }
