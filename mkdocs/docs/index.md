@@ -44,7 +44,7 @@ For the reasoning behind all of this – deep unification, negation, inequality 
 
 ### Domain-agnostic by construction
 
-The engine knows nothing about any application domain. It provides unification, forward chaining, stratified negation and a hash-consed graph — no arithmetic, no ontology semantics, no vocabulary. Everything a domain needs is written as ordinary zelph rules in `.zph` scripts, which is why one engine serves very different users:
+The engine knows nothing about any application domain, apart from [a narrow exception for numbers](math/arithmetic.md#what-the-core-reads-of-a-number). It provides unification, forward chaining, stratified negation and a hash-consed graph — no arithmetic rules, no ontology semantics, no domain vocabulary. Everything a domain needs is written as ordinary zelph rules in `.zph` scripts, which is why one engine serves very different users:
 
 - **[Wikidata](wikidata.md)** — contradiction detection and constraint integration across the full knowledge graph, including [qualifier semantics](qualifiers.md) and [sharded partial loading](sharding.md) for graphs that do not fit in memory.
 - **Legal ontologies** — [SensibLaw](https://github.com/chboishabba/SensibLaw), part of the [ITIR-suite](https://github.com/chboishabba/ITIR-suite), uses zelph as a downstream reasoning engine: it structures source material with full provenance and exports bounded graph slices to reason over.

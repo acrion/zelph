@@ -652,13 +652,17 @@ namespace zelph
                         continue;
                     }
 
-                    JanetTable* const step = janet_table(11);
+                    JanetTable* const step = janet_table(12);
                     janet_table_put(step, janet_ckeywordv("fact"), zelph_wrap_node(p->fact));
                     janet_table_put(step, janet_ckeywordv("status"), status(p->status));
                     if (p->rule != 0) janet_table_put(step, janet_ckeywordv("rule"), zelph_wrap_node(p->rule));
                     janet_table_put(step, janet_ckeywordv("premises"), steps(p->premises));
                     janet_table_put(step, janet_ckeywordv("absent"), nodes(p->absent));
                     janet_table_put(step, janet_ckeywordv("walked"), nodes(p->walked));
+                    // Found solely on a step that carries out comparisons, just
+                    // as :rule appears only on a derived one: a step without
+                    // comparisons prints without the key.
+                    if (!p->compared.empty()) janet_table_put(step, janet_ckeywordv("compared"), nodes(p->compared));
                     Janet* const edges = janet_tuple_begin(static_cast<int32_t>(p->walk_edges.size()));
                     for (std::size_t i = 0; i < p->walk_edges.size(); ++i)
                         edges[i] = steps(p->walk_edges[i]);

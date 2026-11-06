@@ -352,6 +352,8 @@ uint64_t Reasoning::run_fixpoint_seminaive(bool silent, const std::vector<std::p
 
                     if (!Zelph::Impl::is_var(rel) && rel == core.Unequal)
                         continue; // guard: never a seed, binds no new variables
+                    if (comparison_relation(rel) != NumericRelation::none)
+                        continue; // a numeric comparison, identical in nature: it reads no fact that a delta could bring
 
                     // A composite predicate is stated by other composite
                     // predicates as well: a pattern by each statement it

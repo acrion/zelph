@@ -69,6 +69,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include "unification.hpp"
 
 #include <algorithm>
+#include <array>
 #include <functional>
 #include <limits>
 #include <memory>
@@ -133,19 +134,25 @@ namespace zelph::network
 
         struct Rule
         {
-            Node                     rule{0};
-            Node                     condition{0}; // the condition part: a single pattern, or the conjunction set
-            adjacency_set            consequences;
-            std::vector<Head>        heads;
-            std::vector<Node>        positive;
-            std::vector<Shape>       shapes;   // per positive condition
-            std::vector<PatternInfo> patterns; // per positive condition
-            std::vector<Node>        negative;
-            std::vector<PatternInfo> negative_patterns;
-            std::vector<Node>        guards;
-            std::vector<Node>        closures;
-            std::vector<Node>        negated_closures;
-            bool                     neural{false};
+            Node                         rule{0};
+            Node                         condition{0}; // the condition part: a single pattern, or the conjunction set
+            adjacency_set                consequences;
+            std::vector<Head>            heads;
+            std::vector<Node>            positive;
+            std::vector<Shape>           shapes;   // per positive condition
+            std::vector<PatternInfo>     patterns; // per positive condition
+            std::vector<Node>            negative;
+            std::vector<PatternInfo>     negative_patterns;
+            std::vector<Node>            guards;
+            std::vector<Node>            comparisons;          // numeric comparisons, `A zelph:lt B`
+            std::vector<NumericRelation> comparison_relations; // parallel to comparisons
+            std::vector<Node>            closures;
+            std::vector<Node>            negated_closures;
+            bool                         neural{false};
+            // A comparison that the forward pass refuses, under `¬` or with a
+            // variable that no condition binds: the rule never fires, thus it
+            // justifies nothing.
+            bool refused_comparison{false};
         };
 
         std::vector<Rule> rules;
@@ -184,10 +191,11 @@ namespace zelph::network
             std::size_t                               rule{std::numeric_limits<std::size_t>::max()};
             std::vector<std::pair<Node, std::size_t>> watched;
         };
-        std::vector<Source> read_from;
-        Node                nn_pred{0};
-        Node                closure_pred{0};
-        std::uint64_t       epoch{0};
+        std::vector<Source>                      read_from;
+        Node                                     nn_pred{0};
+        Node                                     closure_pred{0};
+        std::array<Node, numeric_relation_count> comparison_preds{}; // Reasoning::_comparison_preds, read for this list
+        std::uint64_t                            epoch{0};
 
         // The predicates some rule concludes; any of them, when a
         // consequence involves a variable predicate (see walk_premises).
@@ -234,6 +242,7 @@ namespace zelph::network
             Node                                    rule{0};
             Variables                               bindings;
             std::vector<Node>                       walked;
+            std::vector<Node>                       compared; // the comparisons that held
             std::vector<Node>                       absent;
             std::vector<Node>                       facts;                 // the premises the join discovered
             std::vector<std::shared_ptr<ProofNode>> premises;              // their proofs
@@ -267,13 +276,15 @@ namespace zelph::network
         // explain() returns.
         struct ExplainContext
         {
-            Zelph*           z{nullptr};           // mutable view for the Unification API; never used to write
-            const Reasoning* engine{nullptr};      // the identical engine, for existing_rule
-            Node             nn_pred{0};           // node named "nn" in lang "zelph" (approx conditions); 0 = inactive
-            Node             closure_pred{0};      // "closure" (path conditions); 0 = inactive
-            Node             closure_zero_plus{0}; // "zero-or-more" -- the reflexive variant
-            Node             root{0};
-            std::size_t      max_depth{0};
+            Zelph*                                   z{nullptr};           // mutable view for the Unification API; never used to write
+            const Reasoning*                         engine{nullptr};      // the identical engine, for existing_rule
+            Node                                     nn_pred{0};           // node named "nn" in lang "zelph" (approx conditions); 0 = inactive
+            Node                                     closure_pred{0};      // "closure" (path conditions); 0 = inactive
+            Node                                     closure_zero_plus{0}; // "zero-or-more" -- the reflexive variant
+            std::array<Node, numeric_relation_count> comparison_preds{};   // as ExplainRules::comparison_preds
+            NumberVocabulary                         numbers;              // with which the comparisons read numbers, one snapshot per explanation
+            Node                                     root{0};
+            std::size_t                              max_depth{0};
 
             std::span<const RuleInForce>    rules;
             std::unordered_map<Node, Entry> table;
@@ -414,18 +425,39 @@ namespace zelph::network
         // when every step tries a hundred thousand.
         constexpr std::size_t tries_per_unit = 4;
 
+        // Which comparison `predicate` names among the nodes `preds` holds;
+        // `none` if the predicate is any other.
+        NumericRelation relation_among(const std::array<Node, numeric_relation_count>& preds, const Node predicate)
+        {
+            if (predicate == 0) return NumericRelation::none;
+            for (std::size_t i = 0; i < numeric_relation_count; ++i)
+                if (preds[i] == predicate) return static_cast<NumericRelation>(i);
+            return NumericRelation::none;
+        }
+
+        // The comparisons that a rule's conditions hold, and whether a single
+        // one is subject to negation: one additional category for
+        // collect_conditions, which collects them together with the others.
+        struct Comparisons
+        {
+            const std::array<Node, numeric_relation_count>& preds;
+            std::vector<Node>&                              conditions;
+            std::vector<NumericRelation>&                   relations;
+            bool&                                           refused;
+        };
+
         // Break down a rule's condition part into positive conditions, NAF
-        // conditions, != guards, transitive path conditions (both plain
-        // and negated), and detect neural conditions. Apply the same
-        // detection mechanism used by Reasoning::evaluate: detect
-        // conjunction sets through (IsA Conjunction) along with PartOf
+        // conditions, != guards, numeric comparisons, transitive path
+        // conditions (both plain and negated), and detect neural conditions.
+        // Apply the same detection mechanism used by Reasoning::evaluate:
+        // detect conjunction sets through (IsA Conjunction) along with PartOf
         // membership, recognize a negation as the fact `((P) ~ negation)`
         // and keep the pattern P that is negated, and handle all other
         // cases based on the declared relation type of the condition.
         //
         // `parts`, when provided, gathers each node that the reading
         // examined.
-        void collect_conditions(Zelph* z, const Node nn_pred, const Node closure_pred, const Node part, std::vector<Node>& positive, std::vector<Node>& negative, std::vector<Node>& guards, std::vector<Node>& closures, std::vector<Node>& negated_closures, bool& neural, std::vector<Node>* parts = nullptr)
+        void collect_conditions(Zelph* z, const Node nn_pred, const Node closure_pred, const Node part, std::vector<Node>& positive, std::vector<Node>& negative, std::vector<Node>& guards, std::vector<Node>& closures, std::vector<Node>& negated_closures, bool& neural, const Comparisons& comparisons, std::vector<Node>* parts = nullptr)
         {
             if (parts != nullptr) parts->push_back(part);
             if (z->is_condition_set(part))
@@ -436,7 +468,7 @@ namespace zelph::network
                     adjacency_set objs;
                     const Node    element = z->parse_fact(rel, objs);
                     if (element && objs.count(part) == 1)
-                        collect_conditions(z, nn_pred, closure_pred, element, positive, negative, guards, closures, negated_closures, neural, parts);
+                        collect_conditions(z, nn_pred, closure_pred, element, positive, negative, guards, closures, negated_closures, neural, comparisons, parts);
                 }
                 return;
             }
@@ -450,6 +482,8 @@ namespace zelph::network
                 const adjacency_set negated_rels = z->filter(negated, z->core.IsA, z->core.RelationTypeCategory);
                 if (closure_pred != 0 && negated_rels.size() == 1 && *negated_rels.begin() == closure_pred)
                     negated_closures.push_back(negated);
+                else if (negated_rels.size() == 1 && relation_among(comparisons.preds, *negated_rels.begin()) != NumericRelation::none)
+                    comparisons.refused = true; // the forward pass refuses it, therefore it justifies nothing
                 else
                     negative.push_back(negated);
                 return;
@@ -478,6 +512,17 @@ namespace zelph::network
                 if (closure_pred != 0 && *rels.begin() == closure_pred)
                 {
                     closures.push_back(part);
+                    return;
+                }
+                // A comparison holds by a test, much like a guard, and
+                // does not require a fact to resolve to either: within the set of
+                // positive conditions, the join would search for a fact (&3
+                // zelph:lt &5) that need not be present, and would halt the
+                // derivation if it is not.
+                if (const NumericRelation relation = relation_among(comparisons.preds, *rels.begin()); relation != NumericRelation::none)
+                {
+                    comparisons.conditions.push_back(part);
+                    comparisons.relations.push_back(relation);
                     return;
                 }
             }
@@ -589,6 +634,22 @@ namespace zelph::network
 
             if (!Zelph::is_var(lhs) && !Zelph::is_var(rhs)) return lhs != rhs;
             return true; // an unbound side cannot witness a violation
+        }
+
+        // A numeric comparison within the context of the join's bindings: the test
+        // the forward pass made (Reasoning::evaluate_comparison), which reads its
+        // terms by value. It fails when a term remains open under the bindings. A
+        // rule whose comparison holds a variable not bound by any condition does
+        // not reach this point, even if the head binds that variable: the forward
+        // pass refuses such a rule, and reading it marks it (refused_comparison).
+        bool comparison_holds(ExplainContext& ctx, const Node condition, const NumericRelation relation, const Variables& bindings)
+        {
+            charge(ctx, 1);
+            const FactStructure structure = get_preferred_structure(ctx.z, condition, 3);
+            if (structure.subject == 0 || structure.objects.size() != 1) return false;
+
+            if (!ctx.numbers.has_digits()) ctx.engine->report_no_digit_alphabet();
+            return numeric_relation_holds(relation, compare_terms(*ctx.z, ctx.numbers, structure.subject, *structure.objects.begin(), bindings));
         }
 
         // Whether a node a condition resolved to holds as a premise, via the
@@ -1386,6 +1447,7 @@ namespace zelph::network
             proof.status   = ProofNode::Status::Derived;
             proof.rule     = c.rule;
             proof.walked   = c.walked;
+            proof.compared = c.compared;
             proof.absent   = c.absent;
             proof.bindings = c.bindings;
             proof.premises.assign(c.premises.begin(), c.premises.begin() + static_cast<std::ptrdiff_t>(std::min(c.shown, c.premises.size())));
@@ -1903,15 +1965,27 @@ namespace zelph::network
         }
 
         // Whether the rest of an instantiation holds after the join has
-        // assigned values to its variables: the != guards, the path
-        // conditions, and the negations. On success `c` carries the paths
-        // walked and the negated patterns found absent.
+        // assigned values to its variables: the != guards, the numeric
+        // comparisons, the path conditions, and the negations. A rule featuring
+        // a comparison that the forward pass rejects holds for no instantiation.
+        // On success `c` carries the comparisons made, the paths walked and the
+        // negated patterns found absent.
         bool rest_holds(ExplainContext& ctx, const RuleInForce& r, Candidate& c)
         {
             Zelph* const z = ctx.z;
 
+            if (r.refused_comparison) return false;
+
             for (const Node g : r.guards)
                 if (!guard_holds(z, g, r.rule, c.bindings)) return false;
+
+            // The comparisons following the join, just like the guards: it is
+            // the join that binds their terms.
+            for (std::size_t k = 0; k < r.comparisons.size(); ++k)
+            {
+                if (!comparison_holds(ctx, r.comparisons[k], r.comparison_relations[k], c.bindings)) return false;
+                c.compared.push_back(r.comparisons[k]);
+            }
 
             // Path conditions after the join, for the same reason the guards
             // are: the walk needs both ends ground, and it is the join that
@@ -2193,6 +2267,7 @@ namespace zelph::network
                 next.rule     = c.rule;
                 next.bindings = c.bindings;
                 next.walked   = c.walked;
+                next.compared = c.compared;
                 next.absent   = c.absent;
                 next.facts.assign(c.facts.begin(), c.facts.begin() + static_cast<std::ptrdiff_t>(c.shown));
                 next.shown    = c.shown;
@@ -3118,6 +3193,7 @@ namespace zelph::network
                     proof.premises.clear();
                     proof.walked.clear();
                     proof.walk_edges.clear();
+                    proof.compared.clear();
                     proof.absent.clear();
                     proof.bindings.clear();
                 }
@@ -3367,6 +3443,10 @@ namespace zelph::network
         const Node nn_pred      = get_node("nn", "zelph");
         const Node closure_pred = get_node("closure", "zelph");
 
+        std::array<Node, numeric_relation_count> comparison_preds{};
+        for (std::size_t i = 0; i < numeric_relation_count; ++i)
+            comparison_preds[i] = get_node(numeric_relation_names[i], "zelph", true);
+
         // Rules are the facts where the predicate is core.Causes; the
         // subject corresponds to the condition segment, and the objects
         // represent the consequence templates. The identical rules as the
@@ -3382,7 +3462,7 @@ namespace zelph::network
         const auto          edges     = [&](const Node n)
         { return left_count(n) + right_count(n); };
         const std::uint64_t epoch      = graph_epoch();
-        const bool          comparable = _explain_rules != nullptr && _explain_rules->nn_pred == nn_pred && _explain_rules->closure_pred == closure_pred && _explain_rules->epoch == epoch;
+        const bool          comparable = _explain_rules != nullptr && _explain_rules->nn_pred == nn_pred && _explain_rules->closure_pred == closure_pred && _explain_rules->comparison_preds == comparison_preds && _explain_rules->epoch == epoch;
         const auto          same       = [&](const Node n, const std::size_t count)
         { return edges(n) == count && !touched_by_removal(n); };
         const auto unchanged = [&](const ExplainRules::Source& source)
@@ -3417,10 +3497,11 @@ namespace zelph::network
                 for (const auto& source : _explain_rules->read_from)
                     before.emplace(source.node, &source);
 
-            auto fresh          = std::make_shared<ExplainRules>();
-            fresh->nn_pred      = nn_pred;
-            fresh->closure_pred = closure_pred;
-            fresh->epoch        = epoch;
+            auto fresh              = std::make_shared<ExplainRules>();
+            fresh->nn_pred          = nn_pred;
+            fresh->closure_pred     = closure_pred;
+            fresh->comparison_preds = comparison_preds;
+            fresh->epoch            = epoch;
             for (const Node rule : read_from)
             {
                 ExplainRules::Source& source = fresh->read_from.emplace_back();
@@ -3465,7 +3546,32 @@ namespace zelph::network
                     if (plain) head.predicate = predicate;
                 }
                 std::vector<Node> parts;
-                collect_conditions(self, nn_pred, closure_pred, r.condition, r.positive, r.negative, r.guards, r.closures, r.negated_closures, r.neural, &parts);
+                collect_conditions(self, nn_pred, closure_pred, r.condition, r.positive, r.negative, r.guards, r.closures, r.negated_closures, r.neural, Comparisons{comparison_preds, r.comparisons, r.comparison_relations, r.refused_comparison}, &parts);
+                // A comparison involving a variable not bound by any condition
+                // is rejected during the forward pass, regardless of the
+                // binding, so the rule derived nothing. Here, the head would
+                // bind that variable before the test runs, allowing the test to
+                // succeed. The members of a set pattern are bound through
+                // pairing, and the planner also accounts for them in its
+                // counting (Reasoning::optimize_order).
+                if (!r.comparisons.empty() && !r.refused_comparison)
+                {
+                    std::unordered_set<Node> bound;
+                    std::vector<Node>        history;
+                    for (const Node condition : r.positive)
+                    {
+                        collect_variables(self, condition, bound, 0, history);
+                        collect_set_pattern_variables(self, condition, bound);
+                    }
+                    for (const Node condition : r.closures)
+                        collect_variables(self, condition, bound, 0, history);
+
+                    std::unordered_set<Node> compared;
+                    for (const Node condition : r.comparisons)
+                        collect_variables(self, condition, compared, 0, history);
+                    r.refused_comparison = std::any_of(compared.begin(), compared.end(), [&bound](const Node variable)
+                                                       { return bound.count(variable) == 0; });
+                }
                 for (const Node part : parts)
                     source.watched.emplace_back(part, edges(part));
                 for (const Node condition : r.negative)
@@ -3529,6 +3635,8 @@ namespace zelph::network
             ctx.nn_pred           = nn_pred;
             ctx.closure_pred      = closure_pred;
             ctx.closure_zero_plus = closure_zero_plus;
+            ctx.comparison_preds  = rules->comparison_preds;
+            ctx.numbers           = number_vocabulary();
             ctx.root              = fact;
             ctx.max_depth         = depth_limit;
             ctx.rules             = rules->rules;
@@ -3644,6 +3752,8 @@ namespace zelph::network
         ctx.nn_pred           = rules->nn_pred;
         ctx.closure_pred      = rules->closure_pred;
         ctx.closure_zero_plus = get_node("zero-or-more", "zelph");
+        ctx.comparison_preds  = rules->comparison_preds;
+        ctx.numbers           = number_vocabulary();
         ctx.root              = fact;
         ctx.rules             = rules->rules;
         ctx.in_force          = rules.get();

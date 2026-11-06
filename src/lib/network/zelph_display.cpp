@@ -67,6 +67,29 @@ std::shared_ptr<const std::unordered_map<Node, uint32_t>> Zelph::number_digit_va
     return _number_digits;
 }
 
+void Zelph::set_number_signs(const Node relation, const Node positive, const Node negative)
+{
+    const bool clearing = relation == 0 && positive == 0 && negative == 0;
+    if (!clearing)
+    {
+        if (relation == 0 || positive == 0 || negative == 0)
+            throw std::invalid_argument("set_number_signs: the sign relation and both signs are required (or none to disable)");
+        if (positive == negative || relation == positive || relation == negative)
+            throw std::invalid_argument("set_number_signs: the sign relation and the two signs must be three different nodes");
+    }
+
+    std::unique_lock lock(_smtx_number_digits);
+    _number_sign_relation = relation;
+    _number_positive      = positive;
+    _number_negative      = negative;
+}
+
+NumberVocabulary Zelph::number_vocabulary() const
+{
+    std::shared_lock lock(_smtx_number_digits);
+    return {_number_digits, _number_sign_relation, _number_positive, _number_negative};
+}
+
 std::shared_ptr<const DisplayTables> Zelph::display_tables() const
 {
     std::shared_lock lock(_smtx_display_tables);
@@ -217,7 +240,52 @@ void Zelph::forget_display_registrations() const
     {
         std::unique_lock lock(_smtx_number_digits);
         _number_digits.reset();
+        _number_sign_relation = 0;
+        _number_positive      = 0;
+        _number_negative      = 0;
     }
     std::unique_lock lock(_smtx_verbose_selffact_preds);
     _verbose_selffact_preds.clear();
+}
+
+// A digit or sign that has been registered may become the node removed during a
+// name merge, and the registrations name their nodes by id. If left unchanged,
+// the comparison conditions read every number built on that node as none, and
+// the &-display prints it as a plain list, while the `cmp` rules, which the
+// merge rehashes, continue to respond. Consequently, the registration shifts to
+// the node to which the merge relocated it. When a digit is merged into another
+// digit, it remains in the table under its old key: the surviving digit retains
+// its value, and the table's size, which defines the base, remains unchanged.
+void Zelph::follow_number_registrations(const std::unordered_map<Node, Node>& moved) const
+{
+    const auto moved_to = [&moved](Node n)
+    {
+        for (std::size_t hops = 0; hops < moved.size(); ++hops)
+        {
+            const auto it = moved.find(n);
+            if (it == moved.end()) break;
+            n = it->second;
+        }
+        return n;
+    };
+
+    std::unique_lock lock(_smtx_number_digits);
+    if (_number_digits)
+    {
+        // On write, copies are made: number_vocabulary and number_digit_values
+        // have issued snapshots of the table that remain unchanged.
+        std::shared_ptr<std::unordered_map<Node, uint32_t>> table;
+        for (const auto& [digit, value] : *_number_digits)
+        {
+            const Node to = moved_to(digit);
+            if (to == digit || (table ? *table : *_number_digits).count(to) != 0) continue;
+            if (!table) table = std::make_shared<std::unordered_map<Node, uint32_t>>(*_number_digits);
+            table->erase(digit);
+            table->emplace(to, value);
+        }
+        if (table) _number_digits = std::move(table);
+    }
+    _number_sign_relation = moved_to(_number_sign_relation);
+    _number_positive      = moved_to(_number_positive);
+    _number_negative      = moved_to(_number_negative);
 }

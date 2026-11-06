@@ -521,6 +521,7 @@ namespace zelph
         // --- Implemented in janet_api_display.cpp ---
 
         static Janet janet_cfun_zelph_set_number_digits(int32_t argc, Janet* argv);
+        static Janet janet_cfun_zelph_set_number_signs(int32_t argc, Janet* argv);
         static Janet janet_cfun_zelph_register_display_scheme(int32_t argc, Janet* argv);
         static Janet janet_cfun_zelph_set_infix_display(int32_t argc, Janet* argv);
         static Janet janet_cfun_zelph_set_application_display(int32_t argc, Janet* argv);

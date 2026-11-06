@@ -105,7 +105,7 @@ void Reasoning::evaluate(RulePos rule, ReasoningContext& ctx, int depth)
     {
         // A negated condition IS the fact `((P) ~ negation)` (see
         // Zelph::negation_operand), and it is unwrapped before anything else
-        // reads it: the three guards listed below and the leaf branch all
+        // reads it: the four guards listed below and the leaf branch all
         // work on the pattern P, alongside the polarity associated with it.
         // Each guard returns from here, so a polarity read solely within the
         // leaf branch would not reach them -- this is why `¬(guard)` once
@@ -143,6 +143,17 @@ void Reasoning::evaluate(RulePos rule, ReasoningContext& ctx, int depth)
             {
                 evaluate_closure(condition, rule, ctx, depth, is_negated);
                 return;
+            }
+
+            // --- Numeric comparison (A zelph:lt B, ...) ---
+            // The predicate identifies it as well; see reasoning_compare.cpp.
+            if (_comparison_any && guard_rels.size() == 1)
+            {
+                if (const NumericRelation relation = comparison_relation(*guard_rels.begin()); relation != NumericRelation::none)
+                {
+                    evaluate_comparison(condition, relation, rule, ctx, depth, is_negated);
+                    return;
+                }
             }
 
             if (guard_rels.size() == 1 && *guard_rels.begin() == core.Unequal)

@@ -1081,7 +1081,7 @@ its own condition.
 
 An inner rule is a rule, so a [rule generator](rule-generators.md) writing `(P lifts Q) => ((X P Y, ¬(X Q Y)) => (X flagged Y))` is untouched by this: the `¬` there stands at the top of the inner rule’s own condition.
 
-**What `¬` may be applied to among the guards.** Three conditions are not fact lookups but procedures the engine runs: the inequality guard `!=`, the [neural condition](neural.md) `≈`, and the [path condition](#transitive-path-conditions) `⁺` / `∗`. Two of them read under `¬` and one does not.
+**What `¬` may be applied to among the guards.** Four kinds of condition are not fact lookups but procedures the engine runs: the inequality guard `!=`, the [numeric comparisons](#numeric-comparisons) such as `zelph:lt`, the [neural condition](neural.md) `≈`, and the [path condition](#transitive-path-conditions) `⁺` / `∗`. Two of them read under `¬` and two do not.
 
 `¬(C P⁺ T)` and `¬≈net(S P O)` are tests: the first succeeds when there is no path, the second when the net does not confirm the fact. Both need every term bound, because a negation binds nothing, and both say so when a term is open.
 
@@ -1098,6 +1098,8 @@ zelph> a prop v1
 Error: ¬ cannot be applied to "!=" -- write the same variable on both sides to
 require two terms to be equal.
 ```
+
+`¬(A zelph:lt B)` is rejected similarly, naming the complementary relation to write in its place (see [Numeric Comparisons](#numeric-comparisons)).
 
 #### Stratified Evaluation
 
@@ -1360,6 +1362,158 @@ zelph> (A prop X, ¬(A ~ several)) => (X ~ sole)
 
 Observe the sequence: **facts precede rules**. Evaluation of negation occurs per run based on the current state of the facts, and a derived fact is never revoked – given only `a prop v1` in the graph, the second rule derives `v1 ~ sole`, and the subsequent arrival of `a prop v2` cannot undo this.
 
+### Numeric Comparisons
+
+A rule may compare two numbers without relying on the [arithmetic rules](math/arithmetic.md) for it. The statement `A zelph:lt B` holds if `A` is less than `B`, and five related operations function similarly: `zelph:le` (less than or equal), `zelph:gt`, `zelph:ge`, `zelph:eq` (numerically equal), and `zelph:ne` (numerically unequal). Much like `!=`, a comparison serves as a test between two terms that have already been bound by the other conditions, and the engine answers it internally: no fact is looked up, stored or derived for it. Written as a statement, a comparison behaves as a standard fact, just as `a != b` does: the line `&3 zelph:lt &5` asserts one, a rule concluding `A zelph:lt &2000` derives such facts, and a query asserts its ground comparison, `&7 zelph:lt &6`, within `X born A, &7 zelph:lt &6`, just as it would any ground fact not inside a condition operator (see [Conditions in Queries](queries.md#conditions-in-queries)). No comparison condition reads such a fact: a comparison is settled by comparing, and thus that query yields no answer.
+
+```
+zelph> .import decimal-arithmetic
+zelph+> alice born &1950
+zelph> bob born &1960
+zelph> carol born &1960
+zelph> (X born A, Y born B, A zelph:lt B) => (X "born before" Y)
+((A zelph:lt B), (Y born B), (X born A)) => (X "born before" Y)
+(alice "born before" bob) ⇐ {(&1950 zelph:lt &1960) (bob born &1960) (alice born &1950)}
+(alice "born before" carol) ⇐ {(&1950 zelph:lt &1960) (carol born &1960) (alice born &1950)}
+zelph> .explain alice "born before" bob
+alice "born before" bob
+   ├─ alice born &1950  [axiom]
+   ├─ bob born &1960  [axiom]
+   └─ &1950 zelph:lt &1960  [compared]
+zelph> X born A, A zelph:ge &1955
+A zelph:ge &1955, X born A
+Answer: &1960 zelph:ge &1955, bob born &1960
+Answer: &1960 zelph:ge &1955, carol born &1960
+```
+
+The deduction line names the comparison under its bindings, much like it names a `!=` guard. `.explain` marks it `[compared]` instead of `[axiom]`, because it does not read a fact: the engine performed the comparison between the two numbers.
+
+**What a number is.** All numbers are ordered according to their values, establishing a total order across numbers. Numbers are the numerals from the loaded arithmetic module, cons lists of the digits it registers – the alphabet employed by the `&`-display – so in base 10 `<007>` equals `&7`, and `nil`, the empty list reached upon completing every digit recursion, equals `&0`. That registration, which a name merge hands to the surviving node, constitutes the entirety of what comparison knows about digits: after `(zelph/set-number-digits [])`, which turns the display off, no number remains to compare, whereas `cmp`, being rules, still provides responses. Once [`integer-arithmetic`](math/integers.md) is imported, signed integers are also considered numbers: `(neg zint N)` denotes the negative of `N`, and the operand form `(pos zint N)` is equivalent to `N`. Any other term – an atom, a list holding a letter, a statement – fails to satisfy any relation, including `zelph:ne`, and raises no error, since a data check operates on whatever the graph holds. A cell or a signed term comprising several objects is not a number either, even if the display prints it as a literal: it lacks a single value.
+
+A term may also be a structure whose variables are bound by the other conditions. It is read by value under the bindings, meaning no fact needs to exist for it, and none is created: with `A` bound to `&3`, `(neg zint A) zelph:lt &0` holds regardless of whether the graph holds `(neg zint &3)`. `!=` differs in this regard, as it asks whether two terms represent the same node, thus a structured term refers to a node in that context.
+
+```
+zelph> .import decimal-arithmetic
+zelph+> .import integer-arithmetic
+zelph> a v &3
+zelph> b v alice
+zelph> (X v A, (neg zint A) zelph:lt &0) => (X "below zero when negated" yes)
+(((neg zint A) zelph:lt &0), (X v A)) => (X "below zero when negated" yes)
+(a "below zero when negated" yes) ⇐ {((neg zint &3) zelph:lt &0) (a v &3)}
+zelph> .explain a "below zero when negated" yes
+a "below zero when negated" yes
+   ├─ a v &3  [axiom]
+   └─ (neg zint &3) zelph:lt &0  [compared]
+```
+
+A `.load` that replaces the graph forgets the digits and the signs. The rules it introduces remain active and `cmp` continues to respond, yet every comparison holds for nothing until the module is [imported again](modules.md#rules-say-themselves-only-once). To prevent a data check from interpreting this as "no violations", the first comparison assessed during a run that prints explicitly states this, once; a quiet run leaves the notice to the next run that prints. The identical notice appears in a session lacking an arithmetic module and following `(zelph/set-number-digits [])`. Import the same modules, starting with the substrate: with only the substrate back, a signed term remains not a number, and `integer-arithmetic` alone brings the default substrate, whose digits do not read a decimal network. Neither condition triggers a notice, since an alphabet is registered; numbers printing as digit lists, such as `<0 5 9 1>` for `&1950`, indicate the second state.
+
+```
+zelph> .import decimal-arithmetic
+zelph+> .auto-run
+Auto-run is now disabled.
+zelph+-> (X born A, A zelph:lt &1900) => (X early yes)
+((A zelph:lt &1900), (X born A)) => (X early yes)
+zelph+-> a born &1800
+zelph+-> .save check.bin
+...
+zelph+-> .load check.bin
+...
+zelph+-> .run
+...
+Numeric comparison: no digit alphabet is registered, so every comparison stays
+silent. Import an arithmetic module such as decimal-arithmetic (after a .load,
+the modules the network was built with, substrate first), or register digits
+with zelph/set-number-digits.
+...
+zelph-> X early yes
+zelph-> .import decimal-arithmetic
+zelph-> .run
+...
+zelph+-> X early yes
+Answer: a early yes
+```
+
+**How it relates to `cmp`.** In every instance where the standard library’s `cmp` derives a verdict for two terms, the comparison gives the identical outcome; a property test holds the two together on seeded random pairs of up to 30 digits, both signed and unsigned, across all three arithmetic modules. `cmp` is partial in cases where the comparison is not: the [façade](math/integers.md#the-uniform-operator-facade) of `integer-arithmetic` routes a natural against `(pos zint N)` nowhere, nor `nil` against a signed term, nor a signed term when its magnitude is `nil`. For such pairs, `cmp` derives nothing, and the comparison establishes an order by value, just as it does for all other cases.
+
+```
+zelph> .import decimal-arithmetic
+zelph+> .import integer-arithmetic
+zelph> a value <007>
+zelph> b value &7
+zelph> c value (neg zint &5)
+zelph> d value nil
+zelph> e value alice
+zelph> f value (pos zint &7)
+zelph> (X value A, Y value B, A zelph:eq B, X != Y) => (X "same value as" Y)
+((X != Y), (X value A), (A zelph:eq B), (Y value B)) => (X "same value as" Y)
+(f "same value as" a) ⇐ {(f != a) (f value (pos zint &7)) ((pos zint &7) zelph:eq <007>) (a value <007>)}
+(f "same value as" b) ⇐ {(f != b) (f value (pos zint &7)) ((pos zint &7) zelph:eq &7) (b value &7)}
+(b "same value as" f) ⇐ {(b != f) (b value &7) (&7 zelph:eq (pos zint &7)) (f value (pos zint &7))}
+(b "same value as" a) ⇐ {(b != a) (b value &7) (&7 zelph:eq <007>) (a value <007>)}
+(a "same value as" f) ⇐ {(a != f) (a value <007>) (<007> zelph:eq (pos zint &7)) (f value (pos zint &7))}
+(a "same value as" b) ⇐ {(a != b) (a value <007>) (<007> zelph:eq &7) (b value &7)}
+zelph> (X value A, A zelph:lt &0) => (X ~ negative)
+((A zelph:lt &0), (X value A)) => (X ~ negative)
+(c ~ negative) ⇐ {((neg zint &5) zelph:lt &0) (c value (neg zint &5))}
+```
+
+**`cmp` or a comparison.** `cmp` makes each comparison into a computation whose result the graph keeps: one `cmp` fact for every pair; up to sixteen derived facts for a pair of seven-digit decimals, fewer once the graph has compared its upper digits, and roughly three times that in binary; along with relational facts like `&30 > &20` that meta-rules read ("`>` is transitive") and `.explain` follows down to the digit tables. A comparison condition derives nothing beyond the rule’s own conclusion. It is the shape for a data check across multiple pairs, which serves only to filter, and wherever `cmp` derives a verdict, both give the identical one. [What the Core Reads of a Number](math/arithmetic.md#what-the-core-reads-of-a-number) explains why the engine answers this one question itself, and why the statements regarding the mathematical stack, which relies on none of these conditions, remain valid.
+
+**Scheduling.** A comparison executes following the conditions that bind its terms, irrespective of its position within the rule, within the tier of `!=`. In contrast to `!=`, it requires no further waiting: the plan positions it after every condition capable of binding a term, and if a term remains unbound, it stays unbound across all bindings, thus causing the rule to be rejected, once. A comparison under `¬` is likewise rejected, as is `¬(X != Y)`; for two numbers, its negation corresponds to the complementary relation – `zelph:ge` for `zelph:lt`, `zelph:gt` for `zelph:le`, `zelph:ne` for `zelph:eq`, and the other way round – and the negation would only include terms that are not numbers.
+
+```
+zelph> .import decimal-arithmetic
+zelph+> alice born &1950
+zelph> bob born &1960
+zelph> (X born A, Y born B, ¬(A zelph:lt B)) => (X "not born before" Y)
+(¬(A zelph:lt B), (Y born B), (X born A)) => (X "not born before" Y)
+Error: ¬ cannot be applied to "zelph:lt" -- write "zelph:ge" instead, which holds
+for two numbers exactly when "zelph:lt" does not. A term that is no number
+satisfies neither.
+zelph> (X born A, A zelph:lt B) => (X "born before" B)
+((A zelph:lt B), (X born A)) => (X "born before" B)
+Error: "zelph:lt" compares two bound terms and binds neither -- no condition binds
+"B". Bind it with a positive condition.
+```
+
+**The names** are nodes within the language `zelph`, the default language of a session, and form part of the engine’s vocabulary, alongside `closure`: none of them is present before being named, and none can be given to another node or taken from its own. When operating under a different `.lang`, `zelph:lt` functions as a regular name in that language, and the condition acts as a standard pattern, matching only facts stated under that name. To write a comparison in that context, first assign the node a name in that language using `.name zelph:lt <lang> <name>` while under `.lang zelph`:
+
+```
+zelph> .import decimal-arithmetic
+zelph+> .name zelph:lt de kleiner
+Node 'zelph:lt' ('zelph') / 'kleiner' ('de') does not exist yet in either language => created it.
+zelph+> .lang de
+de+> Q1 Einwohner &1500
+de> Q2 Einwohner &2700
+de> (X Einwohner A, Y Einwohner B, A kleiner B) => (X "weniger Einwohner als" Y)
+((X Einwohner A), (Y Einwohner B), (A kleiner B)) => (X "weniger Einwohner als" Y)
+(Q1 "weniger Einwohner als" Q2) ⇐ {(Q1 Einwohner &1500) (Q2 Einwohner &2700) (&1500 kleiner &2700)}
+de> .explain Q1 "weniger Einwohner als" Q2
+Q1 "weniger Einwohner als" Q2
+   ├─ Q1 Einwohner &1500  [axiom]
+   ├─ Q2 Einwohner &2700  [axiom]
+   └─ &1500 kleiner &2700  [compared]
+```
+
+A name in `wikidata` functions similarly, but alters the display in other contexts: following `.name zelph:lt wikidata lt`, the condition prints as `"lt - zelph:lt"` under `.lang zelph`, and as `"lt - kleiner"` under a language where the node is named `kleiner`, neither of which can be read back. The node can also be reached without a name of its own in that language, via Janet, using `zelph/resolve` and the [unquote](janet.md#referencing-janet-variables-in-zelph-unquote):
+
+```
+zelph> .import decimal-arithmetic
+zelph+> .lang wikidata
+wikidata+> %(def lt (zelph/resolve "zelph:lt" "zelph"))
+<zelph/node zelph:lt>
+wikidata> Q1 P1082 &1500
+wikidata> Q2 P1082 &2700
+wikidata> (X P1082 A, Y P1082 B, A ,lt B) => (X "less populous than" Y)
+((X P1082 A), (Y P1082 B), (A zelph:lt B)) => (X "less populous than" Y)
+(Q1 "less populous than" Q2) ⇐ {(Q1 P1082 &1500) (Q2 P1082 &2700) (&1500 zelph:lt &2700)}
+```
+
+Along this route, the echo prints the condition with the node’s name, `zelph:lt`, which reads back as that specific node only under `.lang zelph`.
+
+Under a different language, a signed number is expressed via `zelph/int` or `zelph/fact` with nodes resolved in `zelph`, since a typed `(neg zint N)` there is a term within that language, which is not a number despite printing identically.
+
 ### Fresh Variables: Generative Rules
 
 Variables that appear **only in the consequence** of a rule are treated as fresh: the engine generates new anonymous nodes for them during inference.
@@ -1476,6 +1630,8 @@ Readers familiar with Answer Set Programming (ASP) or well-founded semantics wil
 The `!=` operator corresponds to `dif/2` in Prolog or disequality constraints in CLP(FD).
 It is a guard, not a fact pattern.
 
+The [numeric comparisons](#numeric-comparisons), `A zelph:lt B` and its counterparts, function as guards in the same manner: they correspond to the built-in comparison operations in Datalog, or to Prolog’s `</2` when both arguments are bound. Prolog raises an instantiation error when an argument is unbound, and zelph refuses the rule.
+
 ### Disjunction
 
 zelph currently supports conjunction but not explicit disjunction in rule conditions.
@@ -1526,7 +1682,7 @@ declaration ([`zelph/no-selffact-sugar`](janet.md), the same philosophy as
 
 Numbers in zelph are not opaque primitives.
 They are **cons-lists of digit nodes** — topological structures within the graph, built from the same `cons` and `nil` predicates used for any list.
-Arithmetic is not hard-coded; it is defined by inference rules that transform these structures.
+The C++ core [derives no arithmetic result](math/arithmetic.md#what-the-core-reads-of-a-number): inference rules derive them by transforming these structures.
 
 This architecture has a remarkable consequence: _calculating_ numbers and _reasoning about_ numbers happen in the same system.
 If a knowledge base (e.g. Wikidata) records that 13 is a prime number, that semantic fact is directly accessible wherever the list `<13>` appears in a computation.
@@ -1565,7 +1721,7 @@ object of the sum coincide there, so it is printed with the
 [self-fact prefix](concepts.md#the-self-fact-prefix) as `(:+ <1>) = <2>`, which
 re-enters as the same fact.
 
-The key point: `followed-by` is a user-defined relation. zelph has no arithmetic kernel. The rule works because the graph contains the corresponding facts.
+The key point: `followed-by` is a user-defined relation. No arithmetic kernel derives anything in this context ([what the core reads of a number](math/arithmetic.md#what-the-core-reads-of-a-number) remains a distinct issue). The rule works because the graph contains the corresponding facts.
 
 ### Rule-based Multi-digit Addition
 
@@ -1709,6 +1865,8 @@ Computed order and declared knowledge feed the same inference engine.
 
 Additionally, the outcome is exposed under = for uniform result queries: (A cmp B) = X answers gt/lt/eq.
 
+A rule that requires only the order, without treating the comparison as a fact, may delegate it to the engine: `A zelph:lt B` gives the verdict `cmp` derives and derives nothing (see [Numeric Comparisons](#numeric-comparisons)).
+
 **Subtraction** (`N - M`) mirrors addition exactly, with borrow (`bi`/`bo`)
 instead of carry. It is deliberately a **partial function** on the naturals:
 if `M > N`, the borrow chain reaches the base case with borrow-in 1, for
@@ -1758,7 +1916,7 @@ Division and remainder complete the four operations; see [Semantic Arithmetic](m
 
 ### Number Literals
 
-Cons-lists are a general-purpose structure — numbers are merely one _use_ of them, and zelph deliberately does not hard-code any numeric representation. Which base is used, or whether digits are decimal characters at all, is decided entirely by the loaded rule scripts. The parser, however, offers two pieces of syntax sugar that make the numeric use case pleasant without constraining it:
+Cons-lists are a general-purpose structure — numbers are merely one _use_ of them, and zelph deliberately prescribes no numeric representation. Which base is used, or whether digits are decimal characters at all, is decided entirely by the loaded rule scripts. The parser, however, offers two pieces of syntax sugar that make the numeric use case pleasant without constraining it:
 
 1. **Inverting angle brackets.** Compact lists like `<123>` reverse their characters before cons construction, so the least significant digit becomes the outermost cell — the natural orientation for right-to-left arithmetic rules (see [Angle Brackets: Lists](concepts.md#angle-brackets-lists)).
 
@@ -1775,7 +1933,9 @@ Cons-lists are a general-purpose structure — numbers are merely one _use_ of t
    for their respective internal lists `<5>` and `<101>`. Any other cons list
    -- including lists of single-character nodes that are not registered digits
    -- keeps the generic `<...>` display, so cons lists remain general-purpose.
-   An empty array disables the feature.
+   The [numeric comparisons](#numeric-comparisons) read numbers using the same
+   alphabet. An empty array turns off the feature, and leaves them without
+   numbers as well.
 
 This split keeps the philosophy intact: the _representation_ of numbers lives in scripts and rules, while the _convenience_ of familiar decimal input lives in the parser — decoupled through one redefinable function.
 

@@ -83,7 +83,7 @@ The registry is session state and is deliberately **not** part of a `.save`
 file — see [Rules Say Themselves Only Once](#rules-say-themselves-only-once)
 for why re-importing a module after `.load` is both necessary and free.
 
-When a load supersedes a network, it also purges the registry: the network being replaced carries with it whatever a module had stored inside it – its rules and facts – and the display registrations of its Janet code, which refer to nodes within that network. Consequently, the subsequent `.import` of that module triggers its execution once again, causing the module to re-register its keywords, display schemes, and digit alphabet; its Janet definitions are merely re-established. A module that loads a network itself maintains its own entry, since its lines after the load execute on the loaded network.
+When a load supersedes a network, it also purges the registry: the network being replaced carries with it whatever a module had stored inside it – its rules and facts – and the display registrations of its Janet code, which refer to nodes within that network. Consequently, the subsequent `.import` of that module triggers its execution once again, causing the module to re-register its keywords, display schemes, digit alphabet and signed form; its Janet definitions are merely re-established. A module that loads a network itself maintains its own entry, since its lines after the load execute on the loaded network.
 
 ### Rules Say Themselves Only Once
 
@@ -98,11 +98,11 @@ reasoner reads — set membership, the conjunction tag, and each condition's
 subject, predicate and objects, including any negated condition — so two
 rules that survive the check are guaranteed to behave differently.
 
-This matters most in a place where it is easy to miss. Using `.load` swaps the current graph for the stored version, which retains a module’s rules but omits its Janet side (`zelph/number`, digit alphabets, display schemes); thus, resuming work on a saved arithmetic network in a new session means re-importing the module:
+This matters most in a place where it is easy to miss. Using `.load` swaps the current graph for the stored version, which retains a module’s rules but omits its Janet side (`zelph/number`, digit alphabets and signed forms, display schemes); thus, resuming work on a saved arithmetic network in a new session means re-importing the module:
 
 ```
 .load math.bin
-.import math          # brings back &-literals -- and adds no second rule set
+.import math          # brings back &-literals and numeric comparisons -- and adds no second rule set
 ```
 
 Without rule identity that sequence doubled every rule in the file.

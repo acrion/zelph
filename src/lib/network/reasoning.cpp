@@ -72,9 +72,11 @@ Reasoning::Reasoning(const io::OutputHandler& output)
 // negation records, including those from check mode, would report the defeat
 // of a conclusion the loaded graph had never drawn; and the list
 // zelph/defeated returns, the compiled nets, the nets and conditions already
-// reported, and the rules explain() read would all point to the old graph. The
-// settings remain unchanged, with .negation-records included. _nn_pred and its
-// siblings are re-consulted at the start of each run and need nothing here.
+// reported, and the rules explain() read would all point to the old graph. A
+// load also takes the digit alphabet away, requiring the notice about a missing
+// one to be repeated. The settings remain unchanged, with .negation-records
+// included. _nn_pred and its siblings are re-consulted at the start of each run
+// and need nothing here.
 void Reasoning::forget_graph_state()
 {
     _input_captured.clear();
@@ -96,6 +98,7 @@ void Reasoning::forget_graph_state()
     _nn_cache.clear();
     _nn_reported.clear();
     _refused_conditions.clear();
+    _no_digit_alphabet_reported = false;
     _explain_rules.reset();
     // The noted `=>` facts would refer to the nodes from the loaded file,
     // which the caller did not produce (note_fact_rule).
@@ -429,7 +432,8 @@ bool Reasoning::matches_a_fact(const Node element)
     const Node element_predicate = parse_relation(element);
     return element_predicate != core.Unequal
         && (_nn_pred == 0 || element_predicate != _nn_pred)
-        && (_closure_pred == 0 || element_predicate != _closure_pred);
+        && (_closure_pred == 0 || element_predicate != _closure_pred)
+        && comparison_relation(element_predicate) == NumericRelation::none;
 }
 
 // Describes a fact that a firing derived, during a quiet run initiated via
@@ -695,6 +699,11 @@ void Reasoning::run(const bool print_deductions, const bool export_derivations, 
 
     if (!silent)
         diagnostic("Starting reasoning with " + std::to_string(_pool->count()) + " worker threads.");
+
+    // Once per run, for each evaluation strategy listed below: a run
+    // creates no name, hence no comparison node emerges during its
+    // duration (see refresh_comparison_predicates).
+    refresh_comparison_predicates();
 
     uint64_t                    seminaive_violations = 0;
     std::vector<NegationRecord> negations_lost;
@@ -1069,6 +1078,12 @@ void Reasoning::apply_rule(const Node& rule, Node condition)
     _refuted_pred      = get_node(refuted_fact_name(), "zelph");
     _closure_one_plus  = get_node("one-or-more", "zelph");
     _closure_zero_plus = get_node("zero-or-more", "zelph");
+
+    // A query is evaluated outside every run, and its individual line might
+    // be the initial one to name a comparison; a rule is applied within a
+    // run, which read them at the moment it began, so its applications incur
+    // no lookup cost.
+    if (rule == 0) refresh_comparison_predicates();
 
     if (should_log(1))
     {
@@ -1751,6 +1766,22 @@ std::shared_ptr<std::vector<Node>> Reasoning::optimize_order(const adjacency_set
             // (negation at -1000 is always last, != at -500 is second-to-last).
             if (rels_for_score.size() == 1 && *rels_for_score.begin() == core.Unequal)
                 score -= 500;
+
+            // A numeric comparison functions as a guard too and operates at
+            // the same tier -- once the plan has bound both of its terms. It
+            // involves no deferred reading: when evaluated with a term open,
+            // it finds nothing to compare and rejects the operation
+            // (reasoning_compare.cpp). Thus, while a term remains open, it is
+            // positioned behind every condition that might still bind it,
+            // including the neural ones (-800) and a path condition not yet
+            // executable (-700), and placed ahead of the negations (-1000),
+            // which bind nothing.
+            if (_comparison_any && rels_for_score.size() == 1 && comparison_relation(*rels_for_score.begin()) != NumericRelation::none)
+            {
+                const bool both_bound = subject != 0 && objects.size() == 1
+                                     && is_bound_term(subject, simulated_vars) && is_bound_term(*objects.begin(), simulated_vars);
+                score -= both_bound ? 500 : 900;
+            }
 
             // Neural conditions want maximal bindings and are comparatively
             // expensive: evaluate after != (-500), before negation (-1000).

@@ -1161,7 +1161,7 @@ K1-P1 and K1-P2 have one cause – whether a `=>` fact is in force is read off i
 
 ### DEC-VOCAB – the engine's own vocabulary {#dec-vocab}
 
-**Decision.** `refuted`, `opaque`, `rule pattern`, `closure`, `nn`, `nn-layers`, `one-or-more`, `zero-or-more` and `wikidata:labels-v2` (in `zelph`) belong to no cluster: created first inside one, they and their relation-type declaration stay after its drop. They cannot be renamed, given away or merged. A declaration `P ~ opaque` written inside a scratch cluster still goes with it.
+**Decision.** `refuted`, `opaque`, `rule pattern`, `closure`, `nn`, `nn-layers`, `one-or-more`, `zero-or-more`, `wikidata:labels-v2` and the [numeric comparisons](../logic.md#numeric-comparisons) `zelph:lt`, `zelph:le`, `zelph:gt`, `zelph:ge`, `zelph:eq` and `zelph:ne` (in `zelph`) belong to no cluster: created first inside one, they and their relation-type declaration stay after its drop. They cannot be renamed, given away or merged. A declaration `P ~ opaque` written inside a scratch cluster still goes with it.
 
 **Why.** A dry run or a question may be the first to create such a node; dropping it would remove a node that later facts refer to. For the front end, its memo of `opaque` stays valid across a question's drop.
 

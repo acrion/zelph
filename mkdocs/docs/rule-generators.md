@@ -165,6 +165,7 @@ When a generator fires, the rule it writes is rebuilt under the bindings of that
 | a condition set | rebuilt as a set of its own, ensuring the new rule possesses its own conjunction |
 | a negated condition | rebuilt just as any other condition, and still negated: the condition is the fact `((P) ~ negation)`, thus the negation is rebuilt together with its pattern |
 | a `!=` guard | rebuilt in the same manner as any other condition |
+| a [numeric comparison](logic.md#numeric-comparisons) such as `A zelph:gt T` | reconstructed in identical fashion to any other condition, with the bound term substituted |
 | `!` as the consequence | rebuilt, enabling a generator to introduce a contradiction check |
 | a container, `{...}` or `@{...}` | rebuilt with its substituted members; a collection becomes one of the new rule’s own, the one a consequence writes **into** included |
 

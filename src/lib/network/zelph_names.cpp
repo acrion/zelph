@@ -340,6 +340,7 @@ void Zelph::carry_out_name_merge_locked(const MergePlan& plan) const
 void Zelph::finish_name_merge(const MergePlan& plan) const
 {
     rehash_dependents(plan);
+    follow_number_registrations(plan.moved);
     if (_pImpl->_on_merge) _pImpl->_on_merge(plan.moved);
 }
 

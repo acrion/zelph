@@ -613,6 +613,8 @@ Zelph::Vocabulary Zelph::engine_vocabulary(const std::string& name, const std::s
     if (lang != "zelph") return Vocabulary::none;
     for (const char* const predicate : {"closure", "nn", "nn-layers"})
         if (name == predicate) return Vocabulary::predicate;
+    // The numeric comparison conditions (numeric_order.hpp).
+    if (numeric_relation_named(name) != NumericRelation::none) return Vocabulary::predicate;
     for (const char* const node : {kRefutedFactName, kOpaqueName, rule_pattern_name, "one-or-more", "zero-or-more"})
         if (name == node) return Vocabulary::node;
     return name == wikidata_labels_marker_name() ? Vocabulary::node : Vocabulary::none;

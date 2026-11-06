@@ -75,6 +75,8 @@ Comparison additionally derives the relational facts `<`, `>`, `==` — the
 ("`>` is transitive") therefore spans ℕ and ℤ without knowing that either
 exists.
 
+The engine’s [numeric comparison conditions](../logic.md#numeric-comparisons) read the integers in this representation, which the module registers via `zelph/set-number-signs`, and order them by value: `(neg zint N)` denotes the negative counterpart of `N`, and the operand form `(pos zint N)` equals `N`. For the pairs the [façade](#the-uniform-operator-facade) compares – two zint terms, or a natural numeral paired with a negative integer, in either order – that is the verdict delivered by `cmp`. The conditions also order the pairs the façade routes nowhere, such as a natural number against `(pos zint N)`, for which `cmp` derives nothing.
+
 ## How partiality composes
 
 The design worth studying is mixed-sign addition. Both candidate

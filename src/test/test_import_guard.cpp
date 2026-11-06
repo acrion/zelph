@@ -338,11 +338,12 @@ alpha ~ beta
 
 // When a module is loaded, it registers additional elements beyond its
 // rules -- a block keyword, an inline keyword, a display scheme along with
-// its operators, a digit alphabet, and verbose self-fact predicates --
-// which are re-registered upon a subsequent import after a load. No
-// component of these may be denied during the second registration: display
-// registrations, which name nodes by their id, are discarded with the
-// load, and any keyword re-registered supersedes its prior handler.
+// its operators, a digit alphabet, the form of a signed number, and verbose
+// self-fact predicates -- which are re-registered upon a subsequent import
+// after a load. No component of these may be denied during the second
+// registration: display registrations, which name nodes by their id, are
+// discarded with the load, and any keyword re-registered supersedes its
+// prior handler.
 TEST_CASE("import: a module imported again after a load registers what it registered before")
 {
     zelph::io::OutputCollector  collector;
@@ -361,6 +362,23 @@ TEST_CASE("import: a module imported again after a load registers what it regist
         interactive.process("(&17 / &5) = X");
         interactive.run(true, false, false);
         CHECK(any_output_contains(collector, "((&17 / &5) = &3)"));
+    }
+    SUBCASE("integer-arithmetic: the form of a signed number, which the comparison conditions read")
+    {
+        // The registration names its three nodes by id, just as the
+        // digit alphabet does, and the load discards both along with
+        // the graph they were part of.
+        interactive.process(".import decimal-arithmetic");
+        interactive.process(".import integer-arithmetic");
+        interactive.process(".load \"" + network.string() + "\"");
+        CHECK_NOTHROW(interactive.process(".import decimal-arithmetic"));
+        CHECK_NOTHROW(interactive.process(".import integer-arithmetic"));
+
+        collector.clear();
+        interactive.process("s1 v (neg zint &5)");
+        interactive.process("(X v A, A zelph:lt &0) => (X negative yes)");
+        interactive.run(true, false, false);
+        CHECK(any_output_contains(collector, "(s1 negative yes)"));
     }
     SUBCASE("math-syntax: a display scheme, its operators, an inline keyword")
     {

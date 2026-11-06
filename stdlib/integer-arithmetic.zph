@@ -466,3 +466,13 @@
 ((neg zint A) cmp (B cons S), (B cons S) isnumeral true,
  (neg zint A) zoperand (pos zint &0), &0 == (B cons S))
 => ((neg zint A) == (B cons S))
+
+# ---------------------------------------------------------------------------
+# Registration: the engine's numeric comparison conditions (A zelph:lt B and
+# its kin, as detailed in logic.md) read a signed operand in the form above
+# and order it by value, which is cmp's verdict wherever cmp gives one. The
+# line stands after the rules, when pos, neg, and zint are already established:
+# prior to that, it would create pos and neg before the rules and renumber
+# every node following them.
+# ---------------------------------------------------------------------------
+%(zelph/set-number-signs "zint" "pos" "neg")

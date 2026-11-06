@@ -65,7 +65,7 @@ Combine for intersections.
 
 ## Conditions in Queries
 
-A query consists of a condition list that undergoes evaluation just once. Every condition that a rule’s condition list accepts carries the same significance within a query, and the outcomes correspond to the bindings established by those conditions: [negation as failure](logic.md#negation-as-failure) `¬`, the [inequality guard](logic.md#inequality-constraints) `!=`, [path conditions](logic.md#transitive-path-conditions) `⁺` and `∗`, and [neural conditions](neural.md#neural-rule-conditions) `≈`. Continuing with the geography graph:
+A query consists of a condition list that undergoes evaluation just once. Every condition that a rule’s condition list accepts carries the same significance within a query, and the outcomes correspond to the bindings established by those conditions: [negation as failure](logic.md#negation-as-failure) `¬`, the [inequality guard](logic.md#inequality-constraints) `!=`, the [numeric comparisons](logic.md#numeric-comparisons) `zelph:lt`, `zelph:le`, `zelph:gt`, `zelph:ge`, `zelph:eq` and `zelph:ne`, [path conditions](logic.md#transitive-path-conditions) `⁺` and `∗`, and [neural conditions](neural.md#neural-rule-conditions) `≈`. Continuing with the geography graph:
 
 ```
 zelph> X "is capital of" Y, ¬(Y "is located in" Asia)

@@ -29,6 +29,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include "fact_structure_types.hpp"
 #include "io/output.hpp"
 #include "network.hpp"
+#include "numeric_order.hpp"
 
 #include <zelph_export.h>
 
@@ -742,6 +743,20 @@ namespace zelph::network
         // general-purpose. See stdlib/decimal-arithmetic.zph.
         void                                                      set_number_digits(const std::vector<Node>& digits_ascending);
         std::shared_ptr<const std::unordered_map<Node, uint32_t>> number_digit_values() const;
+
+        // --- Signed numbers (registered sign vocabulary) ---
+        // A module that writes signed integers registers their form: the
+        // fact (S R M), R the sign relation, S the positive or the negative
+        // sign, M a numeral from the registered digit alphabet, or nil, which
+        // reads as zero. The numeric comparison conditions read it
+        // (numeric_order.hpp). All three 0 clears it. A load that replaces the
+        // graph forgets it along with the digits. See
+        // stdlib/integer-arithmetic.zph.
+        void set_number_signs(Node relation, Node positive, Node negative);
+
+        // The digits and the signs as they stand, one snapshot under one
+        // lock: what numeric_order.hpp reads when interpreting numbers.
+        NumberVocabulary number_vocabulary() const;
 
         // Register or update a display scheme; returns its index, which
         // set_infix_display consumes. Schemes are matched by name.
@@ -1643,8 +1658,13 @@ namespace zelph::network
         mutable std::atomic<uint64_t>                  _tvars_walks{0};
         mutable std::atomic<uint64_t>                  _rules_fingerprinted{0};
         // The display registrations are mutable since a load, which is
-        // declared as const, forgets them (forget_display_registrations).
+        // declared as const, forgets them (forget_display_registrations), and
+        // a name merge, also const, hands the digits and the signs onward
+        // (follow_number_registrations).
         mutable std::shared_ptr<const std::unordered_map<Node, uint32_t>> _number_digits;
+        mutable Node                                                      _number_sign_relation{0}; // guarded by _smtx_number_digits, as are the two entries that follow
+        mutable Node                                                      _number_positive{0};
+        mutable Node                                                      _number_negative{0};
         mutable std::shared_mutex                                         _smtx_number_digits;
         mutable std::shared_ptr<const DisplayTables>                      _display_tables;
         mutable std::shared_mutex                                         _smtx_display_tables;
@@ -1738,10 +1758,14 @@ namespace zelph::network
         // (_set_patterns); both removal paths call it.
         void forget_set_patterns(const adjacency_set& gone) const;
 
-        // Drop the scheme tables, the digit alphabet, and the
-        // verbose self-fact predicates, all of which identify nodes
-        // through their unique identifiers.
+        // Drop the scheme tables, the digit alphabet, the form of signed
+        // numbers, and the verbose self-fact predicates, all of which identify
+        // nodes through their unique identifiers.
         void forget_display_registrations() const;
+
+        // Hand the registered digits and signs to the nodes that the
+        // name merge moved them to (finish_name_merge).
+        void follow_number_registrations(const std::unordered_map<Node, Node>& moved) const;
 
         // The ground facts a construction brought into existence, reached
         // from `pending`: the walk underlying mark_rule_parts and

@@ -30,7 +30,7 @@ These nodes are the "axioms" of zelph's graph. For example, `~` is defined as an
 
 A defining characteristic of zelph is its [homoiconicity](https://en.wikipedia.org/wiki/Homoiconicity): logic (code) and facts (data) share the exact same representation.
 Rules are not separate scripts; they are topological structures within the graph.
-Math is not hard-coded; numbers are cons-lists of digit nodes that interact with semantic entities through the same rule mechanism.
+The C++ core [derives no mathematical result](math/arithmetic.md#what-the-core-reads-of-a-number); numbers are cons-lists of digit nodes that interact with semantic entities through the same rule mechanism.
 
 This means the graph doesn't just _describe_ knowledge; it _structures the execution_ of logic.
 For a detailed exploration of this concept and its implications for computation, see [Logic and Computation](logic.md).

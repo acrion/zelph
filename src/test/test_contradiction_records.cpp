@@ -464,6 +464,33 @@ yellow ~ dark
         CHECK(contradiction_lines(collector) == 0); });
 }
 
+// A numeric comparison functions as a guard in the same sense: the engine
+// compared two numbers, and no fact asserts this action. When looked up as a
+// member, `(&2031 zelph:gt &2020)` would yield no result and leave the record
+// unnamed; when instantiated, it would assert a comparison that nobody made.
+// The record is the fact that was matched.
+TEST_CASE("contradiction record: a numeric comparison is not turned into a fact")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process(".import decimal-arithmetic");
+        process_lines(interactive, R"(
+zed born &2031
+(X born A, A zelph:gt &2020) => !
+)");
+        CHECK(contradiction_lines(collector) == 1);
+
+        const std::vector<std::string> records = recorded_contradictions(collector, interactive);
+        REQUIRE(records.size() == 1);
+        CHECK(records.front().find("zed born &2031") != std::string::npos);
+        CHECK(records.front().find("zelph:gt") == std::string::npos);
+        CHECK(janet_value(collector, interactive, R"((zelph/mentioned (zelph/number "2031") "zelph:gt" (zelph/number "2020")))") == "false");
+
+        collector.clear();
+        interactive.process("harmless rel statement");
+        CHECK(contradiction_lines(collector) == 0); });
+}
+
 TEST_CASE("contradiction record: a negated condition contributes nothing and breaks nothing")
 {
     run_both_modes([](auto& collector, auto& interactive)

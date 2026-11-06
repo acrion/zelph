@@ -542,7 +542,7 @@ namespace zelph::console
 
                 const network::ProofNode* const p        = e.p;
                 const std::size_t               premises = p->premises.size();
-                const std::size_t               total    = premises + p->walked.size() + p->absent.size();
+                const std::size_t               total    = premises + p->walked.size() + p->compared.size() + p->absent.size();
                 if (e.next < premises)
                 {
                     const std::size_t               k       = e.next++;
@@ -591,6 +591,23 @@ namespace zelph::console
                         open.push_back({nullptr, std::move(shown), e.indent + (last ? "   " : "│  "), e.level + 1, 0, false, false});
                     continue;
                 }
+                if (e.next < premises + p->walked.size() + p->compared.size())
+                {
+                    // The engine performed a numeric comparison. [compared] and
+                    // not [axiom], for the reason a walk is [closure]: no fact
+                    // is read for it. The stored node is the rule's pattern, and
+                    // the bindings establish the two numbers that were compared.
+                    const network::Node comparison = p->compared[e.next - premises - p->walked.size()];
+                    const bool          last       = ++e.next == total;
+                    if (!dry)
+                    {
+                        std::string cline;
+                        zelph::string::node_to_string(_n, cline, _n->lang(), comparison, 3, p->bindings);
+                        cline = zelph::string::unmark_identifiers(cline);
+                        out += e.indent + (last ? "└─ " : "├─ ") + cline + "  [compared]\n";
+                    }
+                    continue;
+                }
                 if (e.next < total)
                 {
                     // The stored node represents the pattern that the rule
@@ -599,7 +616,7 @@ namespace zelph::console
                     // into the premise that is actually checked,
                     // "¬(&7 hasdivisor D)". D stays a variable on purpose --
                     // it is what "for no D" quantifies over.
-                    const network::Node neg  = p->absent[e.next - premises - p->walked.size()];
+                    const network::Node neg  = p->absent[e.next - premises - p->walked.size() - p->compared.size()];
                     const bool          last = ++e.next == total;
                     if (!dry)
                     {

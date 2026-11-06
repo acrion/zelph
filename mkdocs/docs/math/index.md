@@ -8,7 +8,7 @@ C++ core, not even syntactic sugar for it.
 That sounds like a disqualification. It is the opposite, and this section
 exists to show why.
 
-## The core knows no mathematics — so you can watch it being built
+## The mathematics is not in the core — so you can watch it being built
 
 In a conventional CAS, `expand((1+x)*(1-x))` is answered by code someone
 wrote for exactly that purpose. You can read that code, but you cannot
@@ -29,11 +29,12 @@ about:
 | Compiler | `topoly` | symbolic term → canonical polynomial |
 | Front end | `math`, `math-syntax` | `<x y> ~ polyring` and `$( … )` infix notation |
 
-
 None of that is privileged. `+` is a node in the graph, exactly like
 `is capital of`. A rule about polynomial coefficients and a rule about
 Wikidata's `P361` are matched by the same unifier in the same fixpoint
 loop.
+
+What the C++ core does read of a number, and the reason none of these layers uses its comparison conditions, is explained under [What the Core Reads of a Number](arithmetic.md#what-the-core-reads-of-a-number).
 
 ## Three lines
 

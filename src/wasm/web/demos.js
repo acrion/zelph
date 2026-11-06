@@ -41,7 +41,7 @@ export const DEMO_GROUPS = [
         id: "1.1",
         label: "Load arithmetic",
         command: ".import binary-arithmetic",
-        info: `Loads the arithmetic rule module. There is no arithmetic code in zelph's engine: digits are ordinary graph nodes, numbers are cons-lists of digits, and addition, subtraction, multiplication and division are defined entirely by inference rules &mdash; here on top of 52 hand-written digit-table facts (the truth tables of a full adder, a full subtractor, a one-bit multiplier with carry and a digit comparison), computing internally in base 2 while reading and writing decimal. Full documentation: <a href="https://acrion.github.io/zelph/math/arithmetic/" target="_blank">zelph/arithmetic</a>`,
+        info: `Loads the arithmetic rule module. zelph's engine derives no arithmetic result: digits are ordinary graph nodes, numbers are cons-lists of digits, and addition, subtraction, multiplication and division are defined entirely by inference rules &mdash; here on top of 52 hand-written digit-table facts (the truth tables of a full adder, a full subtractor, a one-bit multiplier with carry and a digit comparison), computing internally in base 2 while reading and writing decimal. Full documentation: <a href="https://acrion.github.io/zelph/math/arithmetic/" target="_blank">zelph/arithmetic</a>`,
       },
       {
         id: "1.2",

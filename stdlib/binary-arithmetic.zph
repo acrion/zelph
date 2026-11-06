@@ -84,7 +84,8 @@
 
 # Register the binary digit alphabet (ascending order of value):
 # node_to_string then displays these cons lists as decimal &-literals,
-# inverting the &-input conversion above. Display only.
+# inverting the &-input conversion above, and the engine's numeric
+# comparison conditions read them as numbers.
 (zelph/set-number-digits ["0" "1"])
 
 # Exclude the module's term-forming operators from the self-fact display

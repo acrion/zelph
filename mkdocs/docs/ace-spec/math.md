@@ -280,7 +280,7 @@ normative and the wording is illustrative: it is data in `ace/messages`.
   resolves every math-stack node with an explicit `"zelph"` anyway. A native arithmetic statement typed
   under `.lang en` names `en` nodes and computes nothing.
 - **After a load.** A replacing load takes the math stack with the graph and clears the digit alphabet,
-  a display registration, so a typed `&12` then prints as a digit list `<0 0 1 1>`; Janet's
+  so a typed `&12` then prints as a digit list `<0 0 1 1>`; Janet's
   `zelph/number` and the hook table survive. Arithmetic is `[ace/needs-math]` after the load, and
   `.import ace-math` runs `.import math` again (418 rules again; the node count depends on the loaded
   graph). Within one graph a second `.import ace-math` is skipped
@@ -1280,8 +1280,10 @@ Rules for the answer lines:
 
 ## Formulas in Rules
 
-A comparison in a condition cannot simply be a condition of the rule, because zelph's mathematics
-computes only what is requested (invariant 6). So `ace` writes two rules for one: a **seed** that
+A comparison within a condition of an ACE rule operates on terms that might still need to be
+evaluated, and zelph’s mathematics computes only what is explicitly requested (invariant 6); the
+engine’s [numeric comparisons](../logic.md#numeric-comparisons) read numbers and evaluate nothing.
+So `ace` writes two rules for one: a **seed** that
 requests the verdict for every binding of the rule's other conditions, and the main rule, which tests
 the verdict. A comparison in a consequence becomes a denial.
 

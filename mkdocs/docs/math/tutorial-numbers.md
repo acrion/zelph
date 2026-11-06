@@ -4,7 +4,8 @@
 
 The previous tutorial proved polynomial identities without once asking what
 a number *is* in zelph. This one goes underneath. The answer is unusual and
-it matters: there is no integer type in the engine, no arithmetic in C++,
+it matters: there is no integer type in the engine, no
+[arithmetic result derived in C++](arithmetic.md#what-the-core-reads-of-a-number),
 and — in one of the three substrates — no arithmetic table either. Just one
 logic gate.
 
@@ -32,7 +33,7 @@ zelph> %(print (zelph/car (zelph/cdr (zelph/number "42"))))
 
 `&42` is the list `2 cons (4 cons nil)`. The `2` and the `4` are ordinary
 nodes named `"2"` and `"4"` — the same kind of node as `Berlin`. They carry
-no numeric meaning; what makes them digits is a table of facts about them,
+no numeric meaning; to the rules, what makes them digits is a table of facts about them,
 and what makes the list a number is a set of rules that recurse over it.
 
 Least-significant first is not arbitrary: it is the orientation in which

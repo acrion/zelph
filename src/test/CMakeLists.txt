@@ -72,6 +72,7 @@ add_executable(zelph_tests
     test_neural.cpp
     test_node_display.cpp
     test_numbers.cpp
+    test_numeric_compare.cpp
     test_intervals.cpp
     test_contradiction_records.cpp
     test_ontology.cpp

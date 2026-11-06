@@ -38,6 +38,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include <ankerl/unordered_dense.h>
 #include <zelph_export.h>
 
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <map>
@@ -268,6 +269,12 @@ namespace zelph::network
         // point at. `bindings` turns the pattern into the path that was
         // actually tested.
         std::vector<Node> walked;
+
+        // Numeric comparisons (`A zelph:lt B`), verified NOW by comparing the
+        // two numbers provided by the bindings: the rule's PATTERN again, since
+        // what makes the premise hold is the engine's test, and no fact states
+        // it.
+        std::vector<Node> compared;
 
         // Per path condition in `walked`, the facts its walk steps over that a
         // rule establishes, along with their proofs. These serve as premises
@@ -798,7 +805,7 @@ namespace zelph::network
             Node              rule{0};
             std::vector<Node> conditions; // plain positive conditions
             std::vector<Node> negated;    // the patterns the negated conditions negate
-            std::vector<Node> guards;     // `!=` conditions
+            std::vector<Node> guards;     // `!=` conditions and numeric comparisons
             std::vector<Node> paths;      // path conditions, as the tag fact that carries the closure
             std::vector<Node> neural;     // `≈` conditions
             std::vector<Node> heads;      // the consequences, core `!` for a denial
@@ -931,6 +938,10 @@ namespace zelph::network
         Node build_rule(Node pattern, const Variables& variables, int depth, Node parent, bool& created, const Recipe* recipe, bool& kept);
 
     public:
+        // States once that a comparison failed to locate a digit alphabet for
+        // reading numbers (reasoning_compare.cpp).
+        void report_no_digit_alphabet() const;
+
         // The rule build_rule returns for `pattern` under `variables`, found
         // without any construction, or 0 if it is absent from the graph or
         // merely mentioned there. The read-only twin of build_rule,
@@ -1054,6 +1065,29 @@ namespace zelph::network
         void             evaluate_closure(Node condition, const RulePos& rule, ReasoningContext& ctx, int depth, bool negated);
         void             proceed_after_condition(const RulePos& rule, ReasoningContext& ctx, int depth, std::shared_ptr<Variables> vars, std::shared_ptr<Variables> uneqs, double confidence);
 
+        // --- Implemented in reasoning_compare.cpp ---
+        void evaluate_comparison(Node condition, NumericRelation relation, const RulePos& rule, ReasoningContext& ctx, int depth, bool negated);
+
+        // Reads the nodes of the six comparison names anew (see
+        // _comparison_preds), without creating any. Called where the closure
+        // and neural tags are read anew: at the start of a run, for each
+        // query, and before reading the rules for their levels.
+        void refresh_comparison_predicates();
+
+        // Which comparison a condition's predicate names; `none` for every
+        // other predicate, and for all of them as long as no comparison name
+        // has a node -- the one test the hot paths make while the feature
+        // remains inactive. `none` for 0 as well, which callers pass for a
+        // condition without one relation, and which every comparison still
+        // without a node holds.
+        NumericRelation comparison_relation(const Node predicate) const
+        {
+            if (!_comparison_any || predicate == 0) return NumericRelation::none;
+            for (std::size_t i = 0; i < numeric_relation_count; ++i)
+                if (_comparison_preds[i] == predicate) return static_cast<NumericRelation>(i);
+            return NumericRelation::none;
+        }
+
         // --- Implemented in reasoning_strata.cpp ---
 
         // What a single rule generates and what it examines, in terms of
@@ -1088,7 +1122,7 @@ namespace zelph::network
             std::unordered_set<Node> joined_vars;   // each variable within a plain positive condition or a consequence
             std::vector<Node>        paths;         // the path patterns associated with positive path conditions
             std::vector<Node>        plain_conds;   // the conditions read through facts, by node
-            std::vector<Node>        guard_conds;   // `!=` guards
+            std::vector<Node>        guard_conds;   // `!=` guards and numeric comparisons
             std::vector<Node>        path_conds;    // parallel to paths: the tag facts themselves
             std::vector<Node>        neural_conds;  // `≈` conditions
             bool                     produces_any{false};
@@ -1375,6 +1409,18 @@ namespace zelph::network
         Node                                       _closure_zero_plus{0}; // "zero-or-more" (P∗)
         std::map<Node, std::unique_ptr<NeuralNet>> _nn_cache;             // compiled nets, cleared per epoch
 
+        // --- Numeric comparison conditions (A zelph:lt B, ...) ---
+        // The nodes named "zelph:lt" ... "zelph:ne" in language zelph,
+        // indexed by NumericRelation, 0 for a name no node carries; none of
+        // them exists before a rule or a statement names it, so a session
+        // that never performs comparisons contains none. As with the closure
+        // tags, never core nodes. `_comparison_any` is false when all six
+        // are 0, and it is the sole thing evaluate, optimize_order, the
+        // seed classification, and the level analysis test before a
+        // comparison comes into existence.
+        std::array<Node, numeric_relation_count> _comparison_preds{};
+        bool                                     _comparison_any{false};
+
         // Which nets have already been reported as unusable. NOT cleared with
         // the cache: that happens once per input line, and a rule consulting
         // a misspelled net would then repeat its warning for every line of an
@@ -1388,6 +1434,10 @@ namespace zelph::network
         // ten identical lines for a three-fact network, and one per binding on
         // anything real.
         std::set<Node> _refused_conditions;
+
+        // Whether a comparison has previously indicated that it did not locate
+        // a digit alphabet. Identical lifetime and identical reason.
+        mutable bool _no_digit_alphabet_reported{false};
 
         bool _seminaive{true};
         bool _seminaive_check{false};

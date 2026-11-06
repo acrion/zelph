@@ -77,6 +77,40 @@ namespace zelph
         return janet_wrap_nil(); // unreachable
     }
 
+    // Register how a module writes a signed integer, (S R M): the sign
+    // relation R and the two signs, in that sequence. Similar to the digit
+    // alphabet, it states a representation the engine does not interpret on
+    // its own; the numeric comparison conditions read it
+    // (network/numeric_order.hpp).
+    Janet ScriptEngine::Impl::janet_cfun_zelph_set_number_signs(int32_t argc, Janet* argv)
+    {
+        if (argc != 0 && argc != 3)
+            janet_panicf("zelph/set-number-signs: expected the sign relation and the positive and the negative sign, or no argument to clear, got %d argument(s)", argc);
+        if (!s_instance) return janet_wrap_nil();
+        require_main_thread("zelph/set-number-signs");
+        if (s_instance->_log_janet_functions) s_instance->log_janet_call("zelph/set-number-signs", argc, argv, true);
+
+        network::Node parts[3] = {0, 0, 0};
+        for (int32_t i = 0; i < argc; ++i)
+        {
+            parts[i] = s_instance->resolve_janet_arg(argv[i]);
+            if (!parts[i]) janet_panicf("zelph/set-number-signs: argument %d could not be resolved", i);
+        }
+
+        std::string err;
+        try
+        {
+            s_instance->_n->set_number_signs(parts[0], parts[1], parts[2]);
+            return janet_wrap_nil();
+        }
+        catch (const std::exception& e)
+        {
+            err = e.what();
+        }
+        janet_panicf("zelph/set-number-signs: %s", err.c_str());
+        return janet_wrap_nil(); // unreachable
+    }
+
     // Register a display scheme: the delimiters a script uses to enclose its
     // own notation, its numeral prefix, and the identifier grammar of its
     // leaves. C++ stores these verbatim -- it never parses the scheme's

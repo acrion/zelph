@@ -46,7 +46,7 @@ The same pages appear on [zelph.org](https://zelph.org/), alongside the Wikidata
 
 ## Mathematics from the axioms up
 
-Since the C++ core contains no arithmetic, the entire mathematical stack in `stdlib/` is implemented via zelph rules – digits, numerals, integers, polynomials, symbolic differentiation. [Six tutorials](https://acrion.github.io/zelph/math/) progress from proving an identity to a full [refutation of the Jacobian conjecture](https://acrion.github.io/zelph/math/tutorial-jacobian/) – the July-2026 Alpöge/Fable counterexample, verified over the integers using rules exclusively. Each example on those pages was executed against the actual binary and its real output pasted in.
+Since the C++ core [derives no arithmetic](https://acrion.github.io/zelph/math/arithmetic/#what-the-core-reads-of-a-number), the entire mathematical stack in `stdlib/` is implemented via zelph rules – digits, numerals, integers, polynomials, symbolic differentiation. [Six tutorials](https://acrion.github.io/zelph/math/) progress from proving an identity to a full [refutation of the Jacobian conjecture](https://acrion.github.io/zelph/math/tutorial-jacobian/) – the July-2026 Alpöge/Fable counterexample, verified over the integers using rules exclusively. Each example on those pages was executed against the actual binary and its real output pasted in.
 
 ## Funding and Collaboration
 

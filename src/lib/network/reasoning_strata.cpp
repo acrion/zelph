@@ -222,7 +222,8 @@ void Reasoning::read_footprint(const Node condition, RuleFootprint& f)
         return;
     }
 
-    if (rel == core.Unequal) // a guard compares, it reads no fact
+    // A guard compares, it reads no fact -- `!=`, and a numeric comparison.
+    if (rel == core.Unequal || comparison_relation(rel) != NumericRelation::none)
     {
         f.guard_conds.push_back(condition);
         return;
@@ -365,11 +366,12 @@ Reasoning::NegationLevels Reasoning::strata()
 
 std::vector<Reasoning::ListedRule> Reasoning::rules_in_force()
 {
-    // The footprint reads the two predicates a run queries upon
-    // initiation, and in their absence, a `≈` or a path condition would
+    // The footprint reads the predicates a run queries upon initiation,
+    // and in their absence, a `≈`, a path condition, or a comparison would
     // read as a plain one.
     _nn_pred      = get_node("nn", "zelph");
     _closure_pred = get_node("closure", "zelph");
+    refresh_comparison_predicates();
 
     const adjacency_set listed = get_rules();
     std::vector<Node>   rules(listed.begin(), listed.end());
@@ -412,6 +414,7 @@ Reasoning::NegationLevels Reasoning::negation_levels(const std::vector<Node>& ru
     // which occurs after the schedule has been built.
     _nn_pred      = get_node("nn", "zelph");
     _closure_pred = get_node("closure", "zelph");
+    refresh_comparison_predicates();
 
     // --- What each rule reads and creates ---------------------------------
     for (std::size_t i = 0; i < n; ++i)

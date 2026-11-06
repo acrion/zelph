@@ -1456,7 +1456,15 @@ void zelph::string::node_to_string(const network::Zelph* const z, std::string& r
     {
         const network::Node rel_node = resolve_var(fact_predicate());
         const std::string   rel_name = z->get_formatted_name(rel_node, lang);
-        if (string::selffact_sugar_safe(rel_name) && !z->selffact_sugar_suppressed(rel_node))
+        // A numeric comparison of a number against itself, `&5 zelph:eq &5`,
+        // constitutes a coincidence of value and no marker, just as
+        // `&5 == &5` does, which arithmetic modules register verbose
+        // (zelph/no-selffact-sugar). The engine's comparisons lack a module
+        // responsible for this. Determined by the node, via its name within
+        // `zelph`: a name it holds in a different language refers to the
+        // identical comparison.
+        if (string::selffact_sugar_safe(rel_name) && !z->selffact_sugar_suppressed(rel_node)
+            && network::numeric_relation_named(z->get_name(rel_node, "zelph", false)) == network::NumericRelation::none)
         {
             self_fact_sugar = true;
             self_fact_pred  = rel_name;
