@@ -253,9 +253,9 @@ that silences that too will debug the next failure blind.
 
 `zelph_set_parallel` is a throughput/latency choice and not a semantic one: the derived facts
 are the same either way. Parallelism pays on a large graph and costs on a small one, where
-dispatch dominates the scan it replaces. A caller reasoning about many small fact bases in a
-loop is the case that wants it off - and it was reachable from the REPL as `.parallel` long
-before a C caller could touch it.
+dispatch dominates the scan it replaces. A caller performing reasoning across numerous small
+fact bases in a loop is precisely the case that wants it off – and the REPL reaches the
+identical switch as `.parallel`.
 
 ## Rust
 

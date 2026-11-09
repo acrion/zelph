@@ -20,7 +20,7 @@ If you are new to neural networks, this is the minimal vocabulary needed for thi
 
 On the inside, zelph maintains weights within a sparse side table that is indexed by a hash derived from a directed node pair. A **raw weighted edge** constitutes precisely such an entry, and nothing beyond: in contrast to a standard edge, it does not occupy a position in the graph’s adjacency (refer to the section below). Nodes and edges that lack any weight cost **nothing** – the neural substrate introduces no additional memory burden for the millions of nodes present in, for instance, a Wikidata import.
 
-This weight store is _shared_ with an older zelph concept: **fact probabilities**. The probability associated with a fact has always been stored on the edge connecting the fact node to its predicate node (within the range `[0, 1]`, absent entry = 1). Synapse weights utilize the identical store for neuron-to-neuron connections, but without the range constraint. In essence, fact probabilities are a _constrained view_ of the general weight store – this unification enables a network's confidence to directly serve as a deduced fact's probability, eliminating the need for a conversion phase.
+This weight store is _shared_ with another zelph concept: **fact probabilities**. The probability linked to a fact resides on the edge connecting the fact node to its predicate node (within the range `[0, 1]`, absent entry = 1). Synapse weights utilize the identical store for neuron-to-neuron connections, but without the range constraint. In essence, fact probabilities are a _constrained view_ of the general weight store – this unification enables a network's confidence to directly serve as a deduced fact's probability, eliminating the need for a conversion phase.
 
 Synapses are stored exclusively in this weight table, keyed by the
 directed node pair. Creating a synapse inserts **nothing** into the
@@ -323,7 +323,7 @@ The present implementation serves as a deliberate foundation, not a complete mac
 
 ## Appendix: Complete Session Log
 
-The following is a complete session log of `stdlib/examples/neural/nn-wikidata-demo.zph` executing against `wikidata-20260309-all-pruned-small.bin`: from loading the dump through training, both `≈` rules firing during `.run`, and the verification block reading confidences back from the graph. It was captured using zelph 1.0.0, except for the second line of the `.deductions` banner, which subsequent releases introduce and which is shown here. It was generated non-interactively, which is how any transcript here is made reproducible:
+The following is a complete session log of `stdlib/examples/neural/nn-wikidata-demo.zph` executing against `wikidata-20260309-all-pruned-small.bin`: from loading the dump through training, both `≈` rules firing during `.run`, and the verification block reading confidences back from the graph. It was generated non-interactively, which is how any transcript here is made reproducible:
 
 ```text
 .deductions all
@@ -338,7 +338,7 @@ The following is a complete session log of `stdlib/examples/neural/nn-wikidata-d
 > anchors only to statements of the session, and the demo is loaded as a module
 > with `.import`, which adds no anchors (see `.help .deductions` and
 > [Scripts and Modules](modules.md)). Without that initial line the identical
-> run holds back all 142 derivations and says so with a `+` in the prompt.
+> run holds back all 141 derivations and says so with a `+` in the prompt.
 >
 > The training is seeded, so the counts and the loss come out identical on
 > every run and on every machine – that is what makes the figures quotable. The
@@ -348,12 +348,13 @@ The following is a complete session log of `stdlib/examples/neural/nn-wikidata-d
 
 ```text
 $ zelph < demo.zph
-zelph 1.0.0
--- REPL mode - type .help for commands, .quit to exit --
+zelph 1.1.0
+-- REPL mode - type .help for commands, e.g. '.help .deductions' to change what is shown --
 
 zelph> Deduction printing mode: all
   Every derivation is printed.
-zelph> Auto-run has been disabled due to loading a large dataset.
+zelph> Auto-run has been disabled, as every .load disables it: inference after each
+input line can be slow on a loaded network. Use .auto-run to enable it again.
 Loading network from generic file /home/stefan/zelph/wikidata-20260309-all-pruned-small.bin...
 Loading: left chunks=27, right chunks=27, nameOfNode chunks=13, nodeOfName chunks=13
 ...........................
@@ -362,10 +363,10 @@ Loading: left chunks=27, right chunks=27, nameOfNode chunks=13, nodeOfName chunk
 .............
 String pool size after load: 11423140
 Network loaded.
- Time needed for loading/importing: 0h0m26.413s
--- 26.413 s --
-zelph-> wikidata-> Importing file /media/stefan/data/Documents/git/my-projects/acrion/zelph2/build-release/bin/stdlib/nn.zph...
-wikidata-> Importing file /media/stefan/data/Documents/git/my-projects/acrion/zelph2/build-release/bin/stdlib/examples/neural/nn-wikidata-demo.zph...
+ Time needed for loading/importing: 0h0m46.977s
+-- 46.977 s --
+zelph-> wikidata-> Importing file /media/stefan/data/Documents/git/my-projects/acrion/zelph-rdf/build-release/bin/stdlib/nn.zph...
+wikidata-> Importing file /media/stefan/data/Documents/git/my-projects/acrion/zelph-rdf/build-release/bin/stdlib/examples/neural/nn-wikidata-demo.zph...
 Active cluster: nn-demo
 Starting reasoning with 24 worker threads.
 countries found: 144
@@ -526,22 +527,23 @@ Q12536 (Abbasid Caliphate):
 Reasoning complete. Total unification matches processed: 1074. Total contradictions found: 0.
 Reasoning summary: 1074 matches processed, 0 contradictions found.
 Parallel unifications activated for 0 distinct fixed relations.
-Reasoning complete in 0h0m0.234s – 1074 matches processed, 0 contradictions found.
+Reasoning complete in 0h0m0.139s – 1074 matches processed, 0 contradictions found.
 Ready.
--- 330 ms --
+-- 204 ms --
 P30-verified facts: 99
   Q203493 (Kingdom of Romania) -> Q46  conf=1.000
-  Q193152 (Great Moravia) -> Q46  conf=1.000
-  Q189988 (Central African Empire) -> Q15  conf=0.986
   Q7313 (Yuan dynasty) -> Q48  conf=0.981
+  Q8733 (Q8733) -> Q48  conf=0.982
   Q107258515 (Pahlavi Iran) -> Q48  conf=0.999
+  Q193152 (Great Moravia) -> Q46  conf=1.000
 P30-candidate facts: 42
   Q85804030 (Sultanate of Tarim) -> Q46  conf=0.527
   Q134302030 (Fetu kingdom) -> Q46  conf=0.527
-  Q977566 (sub-Roman Britain) -> Q46  conf=0.527
   Q5362837 (Emirate of Jabal Shammar) -> Q46  conf=0.527
   Q332005 (Principality of Achaea) -> Q46  conf=0.527
+  Q113411770 (Grand Duchy of Yaroslavl) -> Q46  conf=0.527
 Q183 not in the country set of this dump (pruning artifact); skipping Q183 checks
+wikidata->
 ```
 
 ## Hidden-layer activation

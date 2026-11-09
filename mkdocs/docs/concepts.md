@@ -429,7 +429,7 @@ b p k
 
 The container a rule writes *into* is not built per binding: `Y in @{X}` conveys information about that container, and each fact derived by the rule names its single term (refer to [Collections](#collections)). A collection literal in **predicate** position is built per binding just like any other: `(X p Y) => (X @{b} Y)` with `a p c` and `d p e` derives `a @{b} c` and `d @{b} e` across two relations that print alike. Insert a named relation, or the set constant `{b}`, when only one relation is meant.
 
-A network saved by a prior version of zelph loads in the state it was stored, yet the collections within its rules are treated as data here, because that earlier zelph stored them just as it stored data: a firing names the rule’s own collection, the identical node for each binding. This is precisely how the older zelph handled a collection the rule writes to and a literal that has nothing to substitute. A literal grounded by a binding, like `@{Y}` above, it built for each binding as a set constant; here, the literal is included in the data with its variable. A rule re-typed here becomes a second rule beside the loaded one, since its literal now functions as a template. Saved by an older zelph after `a p b` and the rule, the example above proceeds as follows:
+A network file can store the collections inside its rules just as it stores data. A `.save` of a network built from typed rules does not produce such a file; a re-save of one maintains this state, and the load’s note marks it. Such a network loads in the state it was saved, with the collections within its rules treated as data: a firing names the rule’s own collection, the same node for every binding. A literal grounded by a binding, such as `@{Y}` above, is incorporated into the data along with its variable. A rule re-typed within this network becomes a second rule beside the loaded one, since the typed literal functions as a template. With such a file, holding `a p b` and the rule, the example above proceeds as follows:
 
 ```
 zelph> .load liked.bin
@@ -447,7 +447,7 @@ Answer: a likes {b}
 Answer: a likes @{Y}
 ```
 
-The older zelph derived `c likes {d}`, and `a likes {b}` is the fact it saved. In such a network, a generator writes its rules identically, using its own variable: following `then go m`, `(G go H) => ((X p H) => (X likes @{H}))` writes `(X p m) => (X likes @{H})`. Rebuild such a network from its scripts prior to conducting reasoning on it. The load prints a note requesting this action, except when a rule’s collection contains only what the rule’s own statement writes into it, as `@{Y}` does in `(X reported Y) => (Y in @{Y})`; in such cases, the rule derives as before.
+`a likes {b}` is the fact the file holds, and a rebuild from the scripts derives `c likes {d}`. In such a network, a generator writes its rules identically, using its own variable: following `then go m`, `(G go H) => ((X p H) => (X likes @{H}))` writes `(X p m) => (X likes @{H})`. Rebuild such a network from its scripts prior to conducting reasoning on it. The load prints a note requesting this action, unless a rule’s collection contains only what the rule’s own statement writes into it, as `@{Y}` does in `(X reported Y) => (Y in @{Y})`; in such cases, the rule’s derivations are not affected.
 
 #### Topology
 

@@ -78,13 +78,13 @@ This loads the entire network into memory. Afterwards, you can execute queries, 
 
 Tip: if you work with the full JSON file, zelph automatically creates a `.bin` cache file during the first import to speed up future runs.
 
-The header of a `.bin` file records the predicates for which the network might hold a fact involving several objects ([Facts with Multiple Objects](logic.md#facts-with-multiple-objects)), and the load restores that record. A rule condition, or a statement within one, whose predicate falls within that set is matched through its atoms as well, because a fact with more objects states it too, and this incurs a higher cost than the single lookup otherwise employed. The Wikidata importer writes one object per fact, so a network it constructs records none. A file saved by an older engine carries no record, and its network is read as potentially holding such facts for every predicate until the next load; `.stat` then shows the line `Facts with multiple objects: may exist for every predicate (not recorded)`, and saving the network again using a current engine does not alter this, as the engine remains unaware of which predicates hold such facts.
+The header of a `.bin` file records the predicates for which the network might hold a fact involving several objects ([Facts with Multiple Objects](logic.md#facts-with-multiple-objects)), and the load restores that record. A rule condition, or a statement within one, whose predicate falls within that set is matched through its atoms as well, because a fact with more objects states it too, and this incurs a higher cost than the single lookup otherwise employed. The Wikidata importer writes one object per fact, so a network it constructs records none. A file lacking such a record causes the network to be read as possibly containing such facts for every predicate until the next load; `.stat` then shows the line `Facts with multiple objects: may exist for every predicate (not recorded)`, and saving the network again does not alter this state, as the engine does not know which predicates hold such facts.
 
 The files above carry direct triples only, with one exception. A network **featuring the statement and qualifier layer** – what disjointness analysis reads – is what `wikidata-20260309-all-P11260.bin` is: the full dump combined with the _list item_ qualifiers of the _disjoint union of_ statements; see [Wikidata Qualifiers](qualifiers.md). Any other qualifier set is constructed using the `.wikidata-qualifiers` command from the JSON dump, and a published variant for it is a matter of asking: open an issue on [GitHub](https://github.com/acrion/zelph/issues).
 
 ## Partial Loading
 
-Since version 0.9.6, zelph supports **partial loading** of `.bin` files. Instead of materialising the entire network into RAM, you can selectively load individual chunks, significantly reducing memory usage and load time. This is especially useful for inspecting or querying large networks on machines that cannot hold the full graph in memory, or for external tools that need targeted access to specific parts of the graph without loading the whole dataset.
+zelph supports **partial loading** of `.bin` files. Instead of materialising the entire network into RAM, you can selectively load individual chunks, significantly reducing memory usage and load time. This is especially useful for inspecting or querying large networks on machines that cannot hold the full graph in memory, or for external tools that need targeted access to specific parts of the graph without loading the whole dataset.
 
 A partial load produces a **read-only, incomplete graph view**. Node and name lookups, adjacency inspection (`.out`, `.in`, `.node`), and statistics (`.stat`) work normally. Operations that require the full graph — inference (`.run`), pruning, cleanup, and destructive edits — are blocked while partial mode is active.
 
@@ -371,7 +371,7 @@ Three consequences worth knowing:
 * **It is bound to the file it sits adjacent to.** A closure derived from one
   network fails to represent another, so the sidecar is only applicable to the
   `.bin` whose name it appends.
-* **A version bump silently discards old sidecars.** The format version was incremented to 2 on 3 August 2026 and to 3 on 13 October 2026, at which point a predicate’s own declaration `P ~ ->` ceased to be interpreted as a pair of its index; files produced by an earlier version are ignored and rebuilt rather than being misinterpreted.
+* **A version bump silently discards old sidecars.** The format version is presently 3, under which a predicate’s own declaration `P ~ ->` is not considered a pair of its index; a file from any different version is ignored and rebuilt instead of being misinterpreted.
 
 ## Generation of the Pruned Files
 

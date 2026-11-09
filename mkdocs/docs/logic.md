@@ -1952,7 +1952,7 @@ This allows for concise, generic rules. In traditional logic programming, the sa
 
 ### Neural Rule Conditions
 
-Since version 0.9.7, rule conditions can also consult a **neural network** living inside the same graph, via the `≈` operator — verifying facts against a learned model (guard mode) or generating candidate bindings above a confidence threshold (generator mode), with the confidence flowing into the deduced fact's probability. This neuro-symbolic capability has its own page: [Neural Networks in the Graph](neural.md).
+Rule conditions may additionally access a **neural network** residing within the same graph, using the `≈` operator – verifying facts against a learned model (guard mode) or generating candidate bindings exceeding a confidence threshold (generator mode), with the confidence flowing into the probability of the inferred fact. This neuro-symbolic capability has its own page: [Neural Networks in the Graph](neural.md).
 
 ### Transitive Path Conditions
 
@@ -2048,7 +2048,7 @@ The record is a fact in the graph, and it says what a contradiction says: the se
 
 That is also why a contradiction is announced once rather than on every later run. A set constant is identified by its members, so the same contradiction always yields the same node, and the next run finds it already there – the same way a derived fact stays quiet the second time because the graph holds it. Details, including the switch that turns the record off, are on the [overview page](rules.md#exporting-derivations) and in `.help .contradiction-records`.
 
-The record stands as the engine’s own account of the contradiction, not a declaration made by anyone: it answers no query and matches no rule condition, nor do the memberships within its set. A refutation you compose yourself functions as a statement and continues to answer as previously:
+The record stands as the engine’s own account of the contradiction, not a declaration made by anyone: it answers no query and matches no rule condition, nor do the memberships within its set. A refutation you compose yourself functions as a statement and responds to queries:
 
 ```
 zelph> (X p Y, X q Y) => !

@@ -125,7 +125,7 @@ Since the substrate can be swapped out, the *identical* symbolic layer operates 
 
 ## Honest scope
 
-zelph is not in competition with Singular or Macaulay2 regarding Gröbner bases, and it lacks real or complex numbers, quotient fields, or side conditions applied to identities. What it provides is a complete, inspectable sequence from a Boolean gate to a multivariate polynomial identity, all within a single uniform formalism, where each stage is accessible via `.explain` – and with sufficient speed to serve as a working tool rather than merely a proof of concept. The [Jacobian tutorial](tutorial-jacobian.md) verifies a July-2026 counterexample to a sixty-year-old conjecture, over ℤ, in less than one second.
+zelph is not in competition with Singular or Macaulay2 regarding Gröbner bases, and it lacks real or complex numbers, quotient fields, or side conditions applied to identities. What it provides is a complete, inspectable sequence from a Boolean gate to a multivariate polynomial identity, all within a single uniform formalism, where each stage is accessible via `.explain` – and with sufficient speed to serve as a working tool rather than merely a proof of concept. The [Jacobian tutorial](tutorial-jacobian.md) verifies a July-2026 counterexample to a 1939 conjecture, over ℤ, in under a second.
 
 ## Where to go next
 

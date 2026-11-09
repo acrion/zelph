@@ -105,7 +105,7 @@ This matters most in a place where it is easy to miss. Using `.load` swaps the c
 .import math          # brings back &-literals and numeric comparisons -- and adds no second rule set
 ```
 
-Without rule identity that sequence doubled every rule in the file.
+Without rule identity, that sequence would double every rule in the file.
 
 One boundary: the check operates on `=>` statements that have been parsed, encompassing `.import` and the REPL interface, yet excludes [`zelph/rule`](janet.md), `zelph/rule*`, or `zelph/build-rule` – a Janet program building rules dynamically determines its own output, and zelph does not second-guess it. A rule whose text holds a collection literal (`@{...}`, or `{...}` in a term position) is recognised like any other: the collections within a rule’s text are compared by their members, not by their nodes.
 

@@ -119,17 +119,18 @@ Every evaluation phase that takes longer than 1 ms then prints a line with its d
 
 ## Complete Example Session
 
-The following session was captured using zelph 0.9.7 and appears exactly as it was output, with the exception of the loader’s progress dots, which are abbreviated; zelph 1.1.0 prints a distinct start-up message and, following `.import sparql`, includes an additional line (`SPARQL subset loaded. …`). It runs one of the disjointness-culprit queries from [Doğan & Patel-Schneider (2024)](https://arxiv.org/abs/2410.13707) — find all classes that are subclasses of both _profession_ (Q215627) and _organization_ (Q43229), reporting only the topmost culprits. It was run on the **full** database, where the query completes in a time comparable to the same query on [QLever](https://qlever.dev/wikidata). Note the adjacency index being built on the first run and reused on the second.
+The following session abbreviates the loader’s progress dots. It runs one of the disjointness-culprit queries from [Doğan & Patel-Schneider (2024)](https://arxiv.org/abs/2410.13707) – find all classes that are subclasses of both _profession_ (Q215627) and _organization_ (Q43229), reporting only the topmost culprits. It was run on the **full** database, where the query completes in a time comparable to the same query on [QLever](https://qlever.dev/wikidata). Note the adjacency index being built on the first run and reused on the second.
 
 The identical query identifies 81 culprits in the [pruned](binaries.md) database, whose `P279` index spans 1,114,757 edges rather than 5,166,316 – and on the `P279` slice cut from it, which amounts to a few hundred megabytes and needs 0.6 GiB of memory. That is the way to reproduce this without 256 GB of RAM; [The Wikidata Class Hierarchy](class-hierarchy.md) walks through it.
 
 ```
 ❯ build-release/bin/zelph
-zelph 0.9.7
--- REPL mode - type .help for commands, .quit to exit --
+zelph 1.1.0
+-- REPL mode - type .help for commands, e.g. '.help .deductions' to change what is shown --
 
 zelph> .load /home/stefan/zelph/wikidata-20260309-all.bin
-Auto-run has been disabled due to loading a large dataset.
+Auto-run has been disabled, as every .load disables it: inference after each
+input line can be slow on a loaded network. Use .auto-run to enable it again.
 Number of nodes prior import: 15
 Loading network from /home/stefan/zelph/wikidata-20260309-all.bin...
 Loading: left chunks=984, right chunks=984, nameOfNode chunks=204, nodeOfName chunks=204
@@ -151,9 +152,11 @@ Node-of-Name Entries by language:
   en: 83261799
 Languages: 2
 Rules: 0
+Facts with multiple objects: may exist for every predicate (not recorded)
 ------------------------
 zelph-> .import sparql
 Importing file /media/stefan/data/Documents/git/my-projects/acrion/zelph/build-release/bin/stdlib/sparql.zph...
+SPARQL subset loaded. Type 'sparql', paste your query, finish with an empty line.
 -- 23 ms --
 zelph-> %(set sparql-profile true)
 true

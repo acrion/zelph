@@ -27,7 +27,7 @@ This fundamental similarity enables zelph to:
 
 This structural compatibility makes zelph well suited to analysing and enriching Wikidata’s knowledge graph while maintaining its semantic integrity.
 
-Since version 0.9.6, this extends to Wikidata's **statement layer**: qualifiers can be imported as reified statement structures and queried natively or via [SPARQL](sparql.md) — see [Wikidata Qualifiers](qualifiers.md).
+This extends to Wikidata’s **statement layer**: qualifiers may be imported as reified statement structures and queried natively or through [SPARQL](sparql.md) – refer to [Wikidata Qualifiers](qualifiers.md).
 
 If you came here for the class hierarchy specifically — disjointness violations, which `P279` statement to change, and doing it without a 210 GB machine — start at [Working on the Wikidata Class Hierarchy](class-hierarchy.md).
 
@@ -48,7 +48,7 @@ The exact memory requirement depends on the Wikidata dump, the enabled rules, an
 Running inference on Wikidata data is computationally intensive but highly optimised:
 
 - **Parallel processing:** both data import and the unification/reasoning engine are multi-threaded and can utilise all available CPU cores.
-- **Performance:** the figure quoted here used to be "approximately 2.5 hours for a complete inference pass on the full dataset". That measurement was taken in December 2025, on a different dump and a different engine, and it has not been repeated since; it is withdrawn rather than restated, because a timing whose file and version are unknown cannot be checked. What is current, and measured on the published 2026-03-09 artifacts: six contradiction rules across three violation families run together over `wikidata-20260309-all-pruned-small.bin` (26.5 million nodes) in under a minute, and the class-hierarchy queries of [Working on the Wikidata Class Hierarchy](class-hierarchy.md) answer in milliseconds to seconds. A pass over the full network is a different order of magnitude and depends strongly on available RAM and on the rules applied.
+- **Performance:** measured on the published 2026-03-09 artifacts, six contradiction rules spanning three violation families run together over `wikidata-20260309-all-pruned-small.bin` (26.5 million nodes) in less than a minute, while the class-hierarchy queries detailed in [Working on the Wikidata Class Hierarchy](class-hierarchy.md) answer in milliseconds to seconds. A pass over the full network is a different order of magnitude and depends strongly on available RAM and on the rules applied.
 - **Workflow:** users can run targeted scripts to find specific classes of contradictions. [Working on the Wikidata Class Hierarchy](class-hierarchy.md) walks through one such session end to end, and [Wikidata Qualifiers](qualifiers.md) covers the qualifier-aware variants.
 
 ## Wikidata Integration Script
@@ -224,7 +224,7 @@ A cache that terminates prematurely following its header – due to a full disk,
 
 You can download various zelph `.bin` files directly from [Hugging Face](https://huggingface.co/datasets/acrion/zelph).
 
-Every entity imported bears two names: its identifier (`Q5`, `P279`) in the `wikidata` language and its English label in the `en` language. An entity missing an English label is named using its `mul` label, the one Wikidata keeps for a term consistent across all languages; Douglas Adams (Q42) possesses solely this one. The dump writes labels with JSON escapes (`B\u00fcdner`), which the import process decodes, resulting in the node being named `Büdner` and searchable under that name. A `.bin` file written by a zelph version prior to 1.0.0 retains the undecoded form; re-import the dump if you need the labels themselves rather than just the IDs.
+Every entity imported bears two names: its identifier (`Q5`, `P279`) in the `wikidata` language and its English label in the `en` language. An entity missing an English label is named using its `mul` label, the one Wikidata keeps for a term consistent across all languages; Douglas Adams (Q42) possesses solely this one. The dump writes labels with JSON escapes (`B\u00fcdner`), which the import process decodes, resulting in the node being named `Büdner` and searchable under that name. A `.bin` file whose labels show the escapes retains the undecoded form; re-import the dump if you need the labels themselves rather than just the IDs.
 
 ### Labels that several entities share
 
@@ -250,9 +250,9 @@ Answer: "Q709369 - man" "P31 - instance of" "Q7397 - software"
 
 The term "man" resolved to Q8441, which lacks any "instance of" statement; after the prune removed Q8441, the resolution shifts to Q709369.
 
-A slice adheres to the identical sequence. Upon `.save-predicates` leaving behind the entity a label resolves to while preserving other entities that carry the label, the file records the first one among them, ensuring the label resolves within the slice precisely as it would following a prune. A file that records no entity for such a label – a slice or a pruned network written by an older engine – gets the first carrier assigned upon loading, and the load outputs a message indicating how many labels received this assignment; `.save` subsequently stores these assignments.
+A slice adheres to the identical sequence. Upon `.save-predicates` leaving behind the entity a label resolves to while preserving other entities that carry the label, the file records the first one among them, ensuring the label resolves within the slice precisely as it would following a prune. A slice or a pruned network that lacks any recorded entity for such a label gets the first carrier upon loading, and the load outputs a message indicating how many labels received this assignment; `.save` then stores these assignments.
 
-The import writes a node titled `wikidata:labels-v2` within the `zelph` language to indicate how its labels were allocated. `.cleanup` retains this node even though no references point to it, and `.save-predicates` takes it into the slice. A network lacking this node was imported by an older version of zelph: in that case, a shared label is assigned to whichever entity the import processed last, leaving the other entities with that label without an English name, and an entity whose sole label resides under `mul` possesses no English name either.
+The import writes a node titled `wikidata:labels-v2` within the `zelph` language to indicate how its labels were allocated. `.cleanup` retains this node even though no references point to it, and `.save-predicates` takes it into the slice. In a network lacking this node, a shared label is assigned to whichever entity the import processed last, resulting in the other entities holding that label being left without an English name, and an entity whose sole label lies beneath `mul` likewise lacks an English name.
 
 ### Advanced Commands
 

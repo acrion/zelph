@@ -332,9 +332,9 @@ In `focus` and in `off` it is the sentence:
 Note: 130 deductions were hidden.
 ```
 
-The notice is printed on the same channel as the deduction lines it accounts for. That matters for a recorded transcript: redirecting only standard output used to keep the incomplete derivation and drop the sentence saying it was incomplete, so a log a year later could not be told from a complete one. For the same reason it carries the run’s total rather than the count since the last printed line – a reader comparing a paper against a log has one number to compare, not several to find and add.
+The notice is printed on the same channel as the deduction lines it accounts for. This is significant for a recorded transcript: redirecting only standard output keeps the sentence indicating an incomplete derivation adjacent to the incomplete derivation, allowing a log from a year later to be told from a complete one. For the same reason it carries the run’s total rather than the count since the last printed line – a reader comparing a paper against a log has one number to compare, not several to find and add.
 
-What the notice does not do is explain the mode. It is only ever read in a mode you chose, and telling you after every answer how to reach the mode you are already in is what made the default worth changing. The explanation belongs where the choice is made, so `.deductions` gives it there.
+What the notice does not do is explain the mode. It is exclusively read within a mode you have already selected, so indicating after each response how to reach the mode you are already in would add nothing. The explanation belongs where the choice is made, so `.deductions` gives it there.
 
 A deduction written to a file by `.run-export` is not withheld and is not counted: the caller asked for a file, not for lines.
 

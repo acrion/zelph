@@ -24,15 +24,13 @@ WARNING: 'examples/english' added 239 node(s) to a partial view.
   disabled for this session because the graph no longer matches its file.
 ```
 
-Nothing is undone — the addition is as legitimate as a typed statement, which was always allowed — but the two consequences are worth knowing, and the second one is otherwise invisible.
+Nothing is undone – the addition is just as legitimate as a typed statement, which is likewise permitted – yet both consequences merit attention, and the second one remains otherwise invisible.
 
 This warning is **not** a failure, and it does not affect the exit status: what
 it accompanies is an operation zelph carried out as asked. The warning that
 does fail a run is the one in [Scripts and Modules](modules.md#interchangeable-implementations-provides)
 — there your request was declined, so the session that follows is not the one
 you asked for.
-
-Partial loading has been available since version 0.9.6.
 
 ## On-Disk Chunk Structure
 
@@ -47,7 +45,7 @@ A `.bin` file is a sequence of [Cap'n Proto](https://capnproto.org/) packed mess
 
 Each section is split into chunks of up to 1,000,000 entries.
 
-A network storing [node annotations](janet.md#node-annotations) includes a fifth section following `nodeOfName`, `annotations`, containing one entry for each node and key pair. A file lacking annotations contains no such section, and `.stat-file` and `.index-file` report the section only when present, thus reflecting prior behaviour for all files that do not include it. A partial load and a manifest skip reading it, the shard emitter carries only the four sections listed above, and an engine older than the section stops after those four and loads the file without its annotations.
+A network storing [node annotations](janet.md#node-annotations) includes a fifth section following `nodeOfName`, `annotations`, containing one entry for each node and key pair. A file devoid of annotations omits this section entirely, and `.stat-file` and `.index-file` report the section only when it exists. A partial load and a manifest skip reading it, the shard emitter carries only the four sections listed above, and an engine that lacks knowledge of the section stops after those four and loads the file without its annotations.
 
 The two name sections are grouped by language and sorted within it: `nameOfNode` by node ID, `nodeOfName` by the name string. Their chunk boundaries are therefore key ranges, and a chunk can be located by its key.
 

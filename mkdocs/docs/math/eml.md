@@ -70,7 +70,7 @@ Answer: (:simplify ((ln of x) eml (exp of y))) = (x - y)
 
 Not verified through numerical means, nor taken for granted – *derived*, through a chain of ordinary deductions processed by the identical fixpoint engine responsible for reasoning over Wikidata. zelph keeps no record of this chain: `.explain` rebuilds it from the graph later (refer to [Looking at the proof](tutorial-identities.md#looking-at-the-proof)).
 
-**A single request.** Rewriting takes place in a single pass: the outcome of a rewrite is not re-evaluated within the same request. A definition does not function as a rewrite. Its right-hand side is marked as a new term and simplified bottom-up, just like any other term, thereby attaining its normal form in the same request as the `eml` term. Up to version 1.0.1, which encoded identities as rewrite rules, e = eml(1, 1) stopped at `(exp of &1)` and needed a second request, and eml(ln x, 1) stopped at `(exp of (ln of x))`. Both now return fully resolved outcomes in a single request:
+**A single request.** Rewriting takes place in a single pass: the outcome of a rewrite is not re-evaluated within the same request. A definition does not function as a rewrite. Its right-hand side is marked as a new term and simplified bottom-up, just like any other term, thereby attaining its normal form in the same request as the `eml` term. Both e = eml(1, 1) and eml(ln x, 1) therefore return fully resolved outcomes in one single request:
 
 ```
 zelph+> ? :simplify ((ln of x) eml &1)
@@ -94,7 +94,7 @@ Answer: (:simplify (e - e)) = &0
 
 `simp` stays single-valued. [`symbolic-core`](symbolic.md) states this as the rule `(T simp A, T simp B, A != B) => !`, which reports a second answer as a contradiction by naming both answers, and every one of the 36 `eml` trees with depth no greater than two, constructed from 1 and x, simplifies to exactly one answer.
 
-**Cost.** A request demands greater effort than it did with the rewrite rules in version 1.0.1: every `eml` level builds its right-hand side as a new term and marks the normal forms of its operands anew.
+**Cost.** A request requires more work than it would with rewrite rules: each `eml` level builds its right-hand side as a new term and marks the normal forms of its operands anew.
 
 ## The compiler
 

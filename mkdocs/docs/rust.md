@@ -45,7 +45,7 @@ fn main() {
 
 ## The build
 
-`zelph-sys` builds zelph on each `cargo build` instead of simply detecting its presence. A stale library is the failure this project has already paid for once: it quietly invalidates every measurement made relative to it and nothing in the output conveys this.
+`zelph-sys` builds zelph on each `cargo build` instead of simply detecting its presence. A stale library is the failure this prevents: it quietly invalidates each measurement based on it and nothing in the output conveys this.
 
 | variable | effect |
 | --- | --- |
@@ -81,6 +81,6 @@ Three items operate in CI, and the third exists because the first two cannot rea
 
 - `cargo test` across the workspace – the safe API from outside the crate, plus one test in `zelph-sys` that calls the generated declarations, which is what proves that bindgen, the header and the library still agree;
 - `cargo doc` with warnings treated as errors, so a broken link in the documentation fails the build;
-- `rust/downstream-check` – a crate that is deliberately **not** a workspace member. It depends on `zelph` by path the way an outside project does, produces a binary, and is run. A binary that links but cannot find its shared library at startup is exactly what a build-only check misses, and that contract used to be exercised only when a separate project was built.
+- `rust/downstream-check` – a crate that is deliberately **not** a workspace member. It depends on `zelph` by path the way an outside project does, produces a binary, and is run. A binary that links successfully but fails to locate its shared library during startup is exactly what a build-only check misses.
 
 The library is also compiled with hidden symbol visibility, so what it offers matches what a Windows DLL offers. Everything the C ABI declares is fully exported; the Rust test suite runs against that setting.
