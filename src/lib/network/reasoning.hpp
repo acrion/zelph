@@ -70,10 +70,9 @@ namespace zelph::network
 
     struct ReasoningContext
     {
-        Node                 current_condition{0};
-        std::vector<RulePos> next;
-        adjacency_set        rule_deductions;
-        Node                 rule{0}; // the `=>` node a contradiction names; 0 for a query
+        Node          current_condition{0};
+        adjacency_set rule_deductions;
+        Node          rule{0}; // the `=>` node a contradiction names; 0 for a query
     };
 
     // --- Free helper functions (implemented in reasoning.cpp) ---
@@ -581,9 +580,9 @@ namespace zelph::network
         // export asks for the elements. A single-condition rule has no set,
         // and then this is that one condition.
         std::vector<std::string> render_premises(Node condition, const Variables& variables, Node parent) const;
-        // The elements of a condition set, located in the manner that
-        // render_premises locates them; empty for a single condition
-        // outside a set.
+        // The elements of a condition set, a set among them read through to
+        // its own elements; empty when there is a single condition outside
+        // a set.
         std::vector<Node> condition_elements(Node condition) const;
         // Whether the condition of a rule qualifies as one that matches a
         // fact: not a negation, a `!=` guard, an `≈`, or a path condition.
@@ -848,7 +847,7 @@ namespace zelph::network
 
         // --- Implemented in reasoning_evaluate.cpp ---
 
-        void evaluate(RulePos rule, ReasoningContext& ctx, int depth);
+        void evaluate(RulePos rule, const ReasoningContext& ctx, int depth);
         bool is_negated_condition(Node condition, int depth);
         void refuse_condition(Node condition, const std::string& message);
         bool condition_contains_negation(Node condition, int depth);
@@ -883,7 +882,7 @@ namespace zelph::network
 
         // --- Implemented in reasoning_deduce.cpp ---
 
-        void deduce(const Variables& variables, Node parent, const int depth, ReasoningContext& ctx, double confidence);
+        void deduce(const Variables& variables, Node parent, const int depth, const ReasoningContext& ctx, double confidence);
         bool consequences_already_exist(const Variables&                condition_bindings,
                                         const std::unordered_set<Node>& fresh_vars,
                                         const adjacency_set&            deductions,
@@ -1061,12 +1060,12 @@ namespace zelph::network
         // --- Implemented in reasoning_neural.cpp ---
         const NeuralNet* compiled_net(Node net_node, int depth);
         void             report_unusable_net(Node net_node, const std::string& why);
-        void             evaluate_neural(Node condition, const RulePos& rule, ReasoningContext& ctx, int depth, bool negated);
-        void             evaluate_closure(Node condition, const RulePos& rule, ReasoningContext& ctx, int depth, bool negated);
-        void             proceed_after_condition(const RulePos& rule, ReasoningContext& ctx, int depth, std::shared_ptr<Variables> vars, std::shared_ptr<Variables> uneqs, double confidence);
+        void             evaluate_neural(Node condition, const RulePos& rule, const ReasoningContext& ctx, int depth, bool negated);
+        void             evaluate_closure(Node condition, const RulePos& rule, const ReasoningContext& ctx, int depth, bool negated);
+        void             proceed_after_condition(const RulePos& rule, const ReasoningContext& ctx, int depth, std::shared_ptr<Variables> vars, std::shared_ptr<Variables> uneqs, double confidence);
 
         // --- Implemented in reasoning_compare.cpp ---
-        void evaluate_comparison(Node condition, NumericRelation relation, const RulePos& rule, ReasoningContext& ctx, int depth, bool negated);
+        void evaluate_comparison(Node condition, NumericRelation relation, const RulePos& rule, const ReasoningContext& ctx, int depth, bool negated);
 
         // Reads the nodes of the six comparison names anew (see
         // _comparison_preds), without creating any. Called where the closure

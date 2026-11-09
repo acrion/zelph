@@ -993,6 +993,148 @@ b v &5
         CHECK_FALSE(any_event_contains(collector, "Error")); });
 }
 
+// A comparison within a set among the conditions stands in the single plan of
+// the rule. The set formerly ran first and alone, so that A lacked a value here
+// even though `X v A` binds it, and the rule was rejected due to a term that is
+// not open.
+TEST_CASE("numeric comparison: in a nested set with its term bound outside the set")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process(".import decimal-arithmetic");
+        process_lines(interactive, R"(
+a v &7
+b v &20
+c v &3
+(X v A, (A zelph:gt &5, A zelph:lt &9)) => (X in-range yes)
+)");
+        CHECK_FALSE(any_event_contains(collector, "Error"));
+
+        collector.clear();
+        interactive.process("X in-range yes");
+        CHECK(collect_answers(collector) == std::vector<std::string>{"a in-range yes"});
+
+        collector.clear();
+        interactive.process(".explain a in-range yes");
+        CHECK(any_output_contains(collector, "a v &7  [axiom]"));
+        CHECK(any_output_contains(collector, "&7 zelph:gt &5  [compared]"));
+        CHECK(any_output_contains(collector, "&7 zelph:lt &9  [compared]")); });
+}
+
+// The comparison occurring outside the set, its terms bound within: rejected at
+// the first match, once, and then skipped, so `(a less d)` and the other false
+// facts followed with nothing compared.
+TEST_CASE("numeric comparison: outside a nested set with its terms bound inside the set")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process(".import decimal-arithmetic");
+        process_lines(interactive, R"(
+a v &9
+b v &5
+c v &7
+d w &4
+e w &6
+(A zelph:lt B, (X v A, Y w B)) => (X less Y)
+)");
+        CHECK_FALSE(any_event_contains(collector, "Error"));
+
+        collector.clear();
+        interactive.process("X less Y");
+        CHECK(collect_answers(collector) == std::vector<std::string>{"b less e"});
+
+        collector.clear();
+        interactive.process(".explain b less e");
+        CHECK(any_output_contains(collector, "&5 zelph:lt &6  [compared]"));
+        CHECK(any_output_contains(collector, "b v &5  [axiom]"));
+        CHECK(any_output_contains(collector, "e w &6  [axiom]")); });
+}
+
+// Each set holds the condition that binds a term in the other set's comparison, so
+// no sequential order of the two sets allows either to run entirely before the
+// other: only a single plan across all their conditions is possible. Executing the
+// sets one by one, the rule was rejected due to a term bound by the other set: no
+// condition binds "B".
+TEST_CASE("numeric comparison: in two nested sets that need each other's bindings")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process(".import decimal-arithmetic");
+        process_lines(interactive, R"(
+a v &9
+b v &3
+c w &5
+d w &1
+((X v A, A zelph:gt B), (Y w B, B zelph:lt A)) => (X above Y)
+)");
+        CHECK_FALSE(any_event_contains(collector, "Error"));
+
+        collector.clear();
+        interactive.process("X above Y");
+        std::vector<std::string> answers = collect_answers(collector);
+        std::sort(answers.begin(), answers.end());
+        CHECK(answers == std::vector<std::string>{"a above c", "a above d", "b above d"});
+
+        collector.clear();
+        interactive.process(".explain b above d");
+        CHECK(any_output_contains(collector, "&3 zelph:gt &1  [compared]"));
+        CHECK(any_output_contains(collector, "&1 zelph:lt &3  [compared]")); });
+}
+
+// One plan does not make an open term bound. B resides within the set and
+// nowhere beyond, and the refusal names it. A, which `X v A` binds, is the
+// entity it designated during the time the set operated independently, serving
+// as the left side of the initial comparison within it.
+TEST_CASE("numeric comparison: a term no condition binds is refused and named from inside a nested set too")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process(".import decimal-arithmetic");
+        process_lines(interactive, R"(
+a v &7
+b v &3
+)");
+        collector.clear();
+        interactive.process("(X v A, (A zelph:gt B, A zelph:lt &9)) => (X in-range yes)");
+        CHECK(count_outputs_containing(collector, "no condition binds \"B\"") == 1);
+        CHECK_FALSE(any_output_contains(collector, "no condition binds \"A\""));
+        CHECK_FALSE(any_output_contains(collector, "in-range yes) ⇐")); });
+}
+
+// The query and the filter within `.prune-nodes` are condition lists, and they
+// read the set in the same manner as the rule does. Both were refused for A, which
+// `X v A` binds, and the filter subsequently pruned nothing.
+TEST_CASE("numeric comparison: in a nested set of a query and of a .prune-nodes filter")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process(".import decimal-arithmetic");
+        process_lines(interactive, R"(
+a v &7
+b v &20
+)");
+        SUBCASE("a query")
+        {
+            collector.clear();
+            interactive.process("X v A, (A zelph:gt &5, A zelph:lt &9)");
+            const std::vector<std::string> answers = collect_answers(collector);
+            REQUIRE(answers.size() == 1);
+            CHECK(answers.front().find("a v &7") != std::string::npos);
+            CHECK_FALSE(any_event_contains(collector, "Error"));
+        }
+        SUBCASE("a filter")
+        {
+            collector.clear();
+            interactive.process(".prune-nodes X (X v A, (A zelph:gt &5, A zelph:lt &9))");
+            CHECK(any_output_contains(collector, "and 1 nodes"));
+            CHECK_FALSE(any_event_contains(collector, "Error"));
+
+            collector.clear();
+            interactive.process("S v O");
+            CHECK(collect_answers(collector) == std::vector<std::string>{"b v &20"});
+        } });
+}
+
 // No condition binds B. `!=` would remember such a guard for a later
 // condition to resolve, resulting in no match by the end; a comparison
 // retains nothing, as the plan positions it after every condition that might

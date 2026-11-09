@@ -96,6 +96,49 @@ TEST_CASE("run-export: a deduction becomes one record with separated premises")
         CHECK(lines[0].find("\"names\":{\"zelph\":\"c\"}") != std::string::npos); });
 }
 
+// A set within a rule's conditions serves as text of the rule and is not a premise.
+// It emerged as a single `{...}` premise beside the outer facts, requiring a consumer
+// to take the braces apart, which is what the separated premises exist to spare it.
+TEST_CASE("run-export: a set among the conditions gives its members as premises")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        (void)collector;
+        const std::filesystem::path out =
+            std::filesystem::temp_directory_path() / "zelph_test_export_nested_set.jsonl";
+        std::filesystem::remove(out);
+
+        // Auto-run would derive the consequence before .run-export exists.
+        interactive.process(".auto-run");
+        interactive.process("(X v A, (X w B, X u C)) => (X h C)");
+        interactive.process("a v n1");
+        interactive.process("a w n2");
+        interactive.process("a u n3");
+        interactive.process(".run-export " + out.string());
+
+        REQUIRE(std::filesystem::exists(out));
+        const auto lines = lines_of(out);
+        std::filesystem::remove(out);
+
+        REQUIRE(lines.size() == 1);
+        const std::string premises = lines[0].substr(lines[0].find("\"premises\":"));
+
+        // Three premises, two separators positioned between them, each naming its own
+        // predicate.
+        std::size_t separators = 0;
+        for (auto at = premises.find("],["); at != std::string::npos; at = premises.find("],[", at + 1))
+            ++separators;
+        CHECK(separators == 2);
+        CHECK(premises.find("\"names\":{\"zelph\":\"v\"}") != std::string::npos);
+        CHECK(premises.find("\"names\":{\"zelph\":\"w\"}") != std::string::npos);
+        CHECK(premises.find("\"names\":{\"zelph\":\"u\"}") != std::string::npos);
+        // The premises within the set are the facts that matched, with their objects
+        // bound.
+        CHECK(premises.find("\"names\":{\"zelph\":\"n1\"}") != std::string::npos);
+        CHECK(premises.find("\"names\":{\"zelph\":\"n2\"}") != std::string::npos);
+        CHECK(premises.find("\"names\":{\"zelph\":\"n3\"}") != std::string::npos); });
+}
+
 TEST_CASE("run-export: the conclusions of a run are stable, and with .parallel off the whole file repeats")
 {
     // Across the chain a..g, the fact (a before g) can be derived from

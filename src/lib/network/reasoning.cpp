@@ -410,11 +410,20 @@ std::string Reasoning::contradiction_symbol() const
     return string::mark_identifier(get_formatted_name(core.Contradiction, _lang));
 }
 
-// The members of the condition set, found the way render_premises finds
-// them -- and the way node_to_string finds them when it prints "{...}".
+// The members of the condition set, identified in the manner that
+// node_to_string finds them when it prints "{...}". A set among them gives way
+// to its own members, just as it does in Reasoning::evaluate: what a firing
+// satisfied is the conditions, and a set, which is text of the rule, would name
+// no fact.
 std::vector<Node> Reasoning::condition_elements(const Node condition) const
 {
+    // A statement is the one condition it is, whatever is written about it,
+    // as it is to the evaluator (Zelph::condition_set_members): a member
+    // written to it via `in` is no fact the firing satisfied.
+    if (predicate_of(condition) != 0) return {};
+
     std::vector<Node> members;
+    adjacency_set     read_through;
     for (const Node rel : get_right(condition))
     {
         if (parse_relation(rel) != core.PartOf) continue;
@@ -422,7 +431,12 @@ std::vector<Node> Reasoning::condition_elements(const Node condition) const
         const Node    element = parse_fact(rel, objs, 0);
         if (element == 0 || objs.count(condition) != 1) continue;
         members.push_back(element);
+        read_through.insert(element);
     }
+
+    std::unordered_set<Node> sets{condition};
+    flatten_condition_sets(read_through, sets);
+    if (sets.size() > 1) members.assign(read_through.begin(), read_through.end());
     return members;
 }
 
@@ -481,15 +495,8 @@ std::vector<std::string> Reasoning::render_premises(const Node condition, const 
     std::vector<std::string>       out;
     const string::PremiseRendering premises;
 
-    // Elements of the conjunction set, found the same way node_to_string
-    // finds them when it prints "{...}".
-    for (const Node rel : get_right(condition))
+    for (const Node element : condition_elements(condition))
     {
-        if (parse_relation(rel) != core.PartOf) continue;
-        adjacency_set objs;
-        const Node    element = parse_fact(rel, objs, 0);
-        if (element == 0 || objs.count(condition) != 1) continue;
-
         std::string rendered;
         string::node_to_string(this, rendered, _lang, element, 3, variables, condition);
         out.push_back(std::move(rendered));
@@ -1106,7 +1113,6 @@ void Reasoning::apply_rule(const Node& rule, Node condition)
     if (condition && condition != core.Causes)
     {
         ctx.current_condition = condition;
-        ctx.next.clear();
 
         // Create initial vector with single condition
         auto conditions = std::make_shared<std::vector<Node>>();

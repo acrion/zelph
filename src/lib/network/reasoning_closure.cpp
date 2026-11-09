@@ -51,7 +51,7 @@ using namespace zelph::network;
 // the dispatch in Reasoning::evaluate returns here before the leaf branch that
 // otherwise handles negation. A negated path condition is a TEST -- "C does
 // not reach T" -- and never a generator, because a negation may not bind.
-void Reasoning::evaluate_closure(const Node condition, const RulePos& rule, ReasoningContext& ctx, const int depth, const bool negated)
+void Reasoning::evaluate_closure(const Node condition, const RulePos& rule, const ReasoningContext& ctx, const int depth, const bool negated)
 {
     // The tag fact: subject is the one-step pattern, the single object says
     // which closure is meant.

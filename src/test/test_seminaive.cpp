@@ -29,6 +29,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #include "network/reasoning.hpp"
 
+#include <cstdint>
 #include <filesystem>
 
 using namespace zelph::test;
@@ -479,6 +480,120 @@ TEST_CASE("semi-naive: a rule over a composite predicate is seeded by what a lat
         collector.clear();
         interactive.process(query);
         CHECK(collect_answers(collector) == std::vector<std::string>{answer}); });
+}
+
+namespace
+{
+    struct SeedCounts
+    {
+        std::uint64_t            rules_applied{0};
+        std::uint64_t            seeds{0};
+        std::vector<std::string> answers;
+    };
+
+    // The `.prof` counters of a session that holds `facts` and `rule`, gains
+    // `arrivals` after an initial run and takes them up through `.run-delta`,
+    // and what `X h A` responds with thereafter.
+    SeedCounts seed_counts(const std::string& facts, const std::string& rule, const std::string& arrivals, const bool single_core)
+    {
+        zelph::io::OutputCollector  collector;
+        zelph::console::Interactive interactive(collector.sink());
+        if (single_core) interactive.process(".parallel");
+        process_lines(interactive, ".semi-naive on\n.auto-run\n.log -1\n" + facts + "\n" + rule + "\n.run\n" + arrivals + "\n.run-delta");
+
+        collector.clear();
+        interactive.process(".prof");
+        std::string prof;
+        for (const auto& event : collector.events())
+            prof += event.text + "\n";
+        const auto counter = [&prof](const std::string& key)
+        {
+            const size_t at = prof.find(" " + key + "=");
+            REQUIRE(at != std::string::npos);
+            return std::stoull(prof.substr(at + key.size() + 2));
+        };
+
+        SeedCounts counts;
+        counts.rules_applied = counter("rules_applied");
+        counts.seeds         = counter("seminaive_seeds");
+
+        collector.clear();
+        interactive.process("X h A");
+        counts.answers = collect_answers(collector);
+        return counts;
+    }
+} // namespace
+
+// A set among a rule's conditions means what its members signify when expressed in a
+// flattened form, and a seeded run indexes the rule according to those members,
+// interpreted as Reasoning::evaluate reads them. Indexed by the set's immediate
+// members instead, the rule had a member that names no predicate for seeding, and it
+// took a classic pass in every iteration of every run:
+// `rules_applied=3 seminaive_seeds=0` for each nested shape below, whereas its flat
+// twin takes fewer passes. A negated member and a path condition are read as the
+// flat twin's are: the rule is seeded at its negation level, and through its
+// remaining conditions, performing a classic pass in an iteration where the newly
+// introduced facts extend the predicate the path walks. The outcome remains
+// identical regardless of approach, so the counters are what show the path a firing
+// took. They are read under `.semi-naive on`: check mode adds a classic pass of its
+// own to every run.
+TEST_CASE("semi-naive: a rule with a set among its conditions is seeded as its flat twin is")
+{
+    std::string nested;
+    std::string flat;
+    std::string facts    = "a v k\nn w q\nq t r";
+    std::string arrivals = "a u n";
+    // Whether the arrivals seed the rule: a new edge within the predicate a path
+    // walks grants it a classic pass instead.
+    bool seeded = true;
+    SUBCASE("a set beside a condition")
+    {
+        nested = "(X v A, (X u K, K w M)) => (X h A)";
+        flat   = "(X v A, X u K, K w M) => (X h A)";
+    }
+    SUBCASE("a set within a set")
+    {
+        nested = "(X v A, (X u K, (K w M, M t T))) => (X h A)";
+        flat   = "(X v A, X u K, K w M, M t T) => (X h A)";
+    }
+    SUBCASE("two sets side by side")
+    {
+        nested = "((X v A, X u K), (K w M, M t T)) => (X h A)";
+        flat   = "(X v A, X u K, K w M, M t T) => (X h A)";
+    }
+    SUBCASE("a negated member, which blocks one of two instances")
+    {
+        nested   = "(X v A, (X u K, ¬(K bad yes))) => (X h A)";
+        flat     = "(X v A, X u K, ¬(K bad yes)) => (X h A)";
+        facts    = "a v k\nb v j\nm bad yes";
+        arrivals = "a u n\nb u m";
+    }
+    SUBCASE("a path condition, with the seed arriving last")
+    {
+        nested = "(X v A, (X u K, K w⁺ M)) => (X h A)";
+        flat   = "(X v A, X u K, K w⁺ M) => (X h A)";
+        facts  = "a v k\nn w q\nq w r";
+    }
+    SUBCASE("a path condition, with the walked edge arriving last")
+    {
+        nested   = "(X v A, (X u K, K w⁺ M)) => (X h A)";
+        flat     = "(X v A, X u K, K w⁺ M) => (X h A)";
+        facts    = "a v k\na u n";
+        arrivals = "n w q";
+        seeded   = false;
+    }
+
+    for (const bool single_core : {false, true})
+    {
+        INFO(std::string(single_core ? "single-core" : "parallel"));
+        const SeedCounts of_nested = seed_counts(facts, nested, arrivals, single_core);
+        const SeedCounts of_flat   = seed_counts(facts, flat, arrivals, single_core);
+        CHECK((of_flat.seeds > 0) == seeded);
+        CHECK(of_nested.seeds == of_flat.seeds);
+        CHECK(of_nested.rules_applied == of_flat.rules_applied);
+        CHECK(of_nested.answers == std::vector<std::string>{"a h k"});
+        CHECK(of_flat.answers == std::vector<std::string>{"a h k"});
+    }
 }
 
 TEST_CASE("fact structures: same-predicate parent must not masquerade as subject")

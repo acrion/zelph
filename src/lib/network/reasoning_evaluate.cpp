@@ -33,7 +33,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 using namespace zelph::network;
 
-void Reasoning::evaluate(RulePos rule, ReasoningContext& ctx, int depth)
+void Reasoning::evaluate(RulePos rule, const ReasoningContext& ctx, int depth)
 {
     if (logging_active())
     {
@@ -51,8 +51,14 @@ void Reasoning::evaluate(RulePos rule, ReasoningContext& ctx, int depth)
     // A condition may be a CONTAINER holding the conditions rather than one
     // statement -- tagged `~ conjunction`, or holding a single member, where
     // no tag can change what it means. See Zelph::condition_set_members.
+    //
+    // Asked exclusively of a condition by itself within its plan, which is
+    // where a rule's conditions start: the branch below reads every set among
+    // them into a single plan, so the members of a plan are statements, and
+    // what a firing writes about a statement does not make it a set
+    // (Zelph::condition_set_members).
     adjacency_set container_members;
-    const bool    is_conjunction = condition_set_members(condition, container_members);
+    const bool    is_conjunction = rule.conditions->size() == 1 && condition_set_members(condition, container_members);
 
     if (is_conjunction)
     {
@@ -64,25 +70,24 @@ void Reasoning::evaluate(RulePos rule, ReasoningContext& ctx, int depth)
 
         // The members were read by condition_set_members above: elements are
         // the SUBJECTS of PartOf facts pointing at the container.
-        const adjacency_set& sub_conditions = container_members;
+        adjacency_set& sub_conditions = container_members;
+
+        // Construct the exclusion set: the conjunction set nodes and all their
+        // element nodes belong to the rule topology and must not be matched as
+        // data facts by the Unification engine. A set among the members means
+        // what its individual members signify when positioned alongside the
+        // others, so they join this plan: one plan sees every condition, and a
+        // guard or a comparison runs behind whatever binds its terms, in
+        // whichever set that stands.
+        auto excluded = std::make_shared<std::unordered_set<Node>>();
+        excluded->insert(condition); // The conjunction set node
+        flatten_condition_sets(sub_conditions, *excluded);
 
         if (!sub_conditions.empty())
         {
             // Optimization: Sort conditions to evaluate most constrained ones first
             auto sorted_conditions = optimize_order(sub_conditions, *rule.variables, depth);
 
-            // Push next alternative (sibling of current Conjunction-node logic) to stack if applicable
-            RulePos next_branch(rule);
-            if (++next_branch.index < next_branch.conditions->size())
-            {
-                ctx.next.push_back(next_branch);
-            }
-
-            // Build exclusion set: the conjunction set node and all its
-            // element nodes are part of the rule topology and must not
-            // be matched as data facts by the Unification engine.
-            auto excluded = std::make_shared<std::unordered_set<Node>>();
-            excluded->insert(condition); // The conjunction set node
             for (Node elem : sub_conditions)
             {
                 excluded->insert(elem); // Each condition pattern node
@@ -232,21 +237,11 @@ void Reasoning::evaluate(RulePos rule, ReasoningContext& ctx, int depth)
                 {
                     if (next_index < rule.conditions->size())
                     {
-                        RulePos next              = rule;
-                        next.variables            = vars;
-                        next.unequals             = uneqs;
-                        next.index                = next_index;
-                        ReasoningContext ctx_copy = ctx;
-                        evaluate(next, ctx_copy, depth + 1);
-                    }
-                    else if (!ctx.next.empty())
-                    {
-                        RulePos next   = ctx.next.back();
+                        RulePos next   = rule;
                         next.variables = vars;
                         next.unequals  = uneqs;
-                        ctx.next.pop_back();
-                        ReasoningContext ctx_copy = ctx;
-                        evaluate(next, ctx_copy, depth + 1);
+                        next.index     = next_index;
+                        evaluate(next, ctx, depth + 1);
                     }
                     else
                     {
@@ -261,16 +256,14 @@ void Reasoning::evaluate(RulePos rule, ReasoningContext& ctx, int depth)
                             return;
                         }
 
-                        ReasoningContext ctx_copy = ctx;
-
-                        if (!ctx_copy.rule_deductions.empty())
+                        if (!ctx.rule_deductions.empty())
                         {
                             if (should_log(depth))
                                 log(depth, "evaluate", "TERMINAL (after != guard): Calling deduce");
 
                             try
                             {
-                                deduce(*vars, rule.node, depth, ctx_copy, rule.confidence);
+                                deduce(*vars, rule.node, depth, ctx, rule.confidence);
                             }
                             catch (const contradiction_error& error)
                             {
@@ -279,11 +272,11 @@ void Reasoning::evaluate(RulePos rule, ReasoningContext& ctx, int depth)
                         }
                         else if (_prune_mode)
                         {
-                            collect_prune_targets(ctx_copy.current_condition, *vars, rule.node);
+                            collect_prune_targets(ctx.current_condition, *vars, rule.node);
                         }
                         else
                         {
-                            answer(ctx_copy.current_condition, vars, rule.node);
+                            answer(ctx.current_condition, vars, rule.node);
                         }
                     }
                 };
@@ -312,27 +305,18 @@ void Reasoning::evaluate(RulePos rule, ReasoningContext& ctx, int depth)
         // used; no new bindings are produced by a negated condition.
         if (is_negated)
         {
-            // Lambda: proceed after a successful negation (advance to next
-            // condition, pop stacked conjunction branch, or reach terminal).
+            // Lambda: continue onward following a successful negation (advance
+            // to the next condition or arrive at the terminal).
             auto proceed_with_bindings = [&](std::shared_ptr<Variables> bindings)
             {
                 size_t next_index = rule.index + 1;
 
                 if (next_index < rule.conditions->size())
                 {
-                    RulePos next              = rule;
-                    next.variables            = bindings;
-                    next.index                = next_index;
-                    ReasoningContext ctx_copy = ctx;
-                    evaluate(next, ctx_copy, depth + 1);
-                }
-                else if (!ctx.next.empty())
-                {
-                    RulePos next   = ctx.next.back();
+                    RulePos next   = rule;
                     next.variables = bindings;
-                    ctx.next.pop_back();
-                    ReasoningContext ctx_copy = ctx;
-                    evaluate(next, ctx_copy, depth + 1);
+                    next.index     = next_index;
+                    evaluate(next, ctx, depth + 1);
                 }
                 else
                 {
@@ -345,16 +329,14 @@ void Reasoning::evaluate(RulePos rule, ReasoningContext& ctx, int depth)
                         return;
                     }
 
-                    ReasoningContext ctx_copy = ctx;
-
-                    if (!ctx_copy.rule_deductions.empty())
+                    if (!ctx.rule_deductions.empty())
                     {
                         if (should_log(depth))
                             log(depth, "evaluate", "TERMINAL: All conditions satisfied. Calling deduce with rule " + format(rule.node));
 
                         try
                         {
-                            deduce(*bindings, rule.node, depth, ctx_copy, rule.confidence);
+                            deduce(*bindings, rule.node, depth, ctx, rule.confidence);
                         }
                         catch (const contradiction_error& error)
                         {
@@ -363,11 +345,11 @@ void Reasoning::evaluate(RulePos rule, ReasoningContext& ctx, int depth)
                     }
                     else if (_prune_mode)
                     {
-                        collect_prune_targets(ctx_copy.current_condition, *bindings, rule.node);
+                        collect_prune_targets(ctx.current_condition, *bindings, rule.node);
                     }
                     else
                     {
-                        answer(ctx_copy.current_condition, bindings, rule.node);
+                        answer(ctx.current_condition, bindings, rule.node);
                     }
                 }
             };
@@ -526,18 +508,7 @@ void Reasoning::evaluate(RulePos rule, ReasoningContext& ctx, int depth)
                 next.unequals  = joined_unequals;
                 next.index     = next_index;
 
-                ReasoningContext ctx_copy = ctx;
-                evaluate(next, ctx_copy, depth + 1);
-            }
-            else if (!ctx.next.empty())
-            {
-                if (should_log(depth))
-                    log(depth, "match", "Popping stacked branch (" + std::to_string(ctx.next.size()) + " remaining)");
-
-                RulePos next = ctx.next.back();
-                ctx.next.pop_back();
-                ReasoningContext ctx_copy = ctx;
-                evaluate(next, ctx_copy, depth + 1);
+                evaluate(next, ctx, depth + 1);
             }
             else
             {
@@ -554,16 +525,14 @@ void Reasoning::evaluate(RulePos rule, ReasoningContext& ctx, int depth)
                 }
 
                 // Leaf: query or prune
-                ReasoningContext ctx_copy = ctx;
-
-                if (!ctx_copy.rule_deductions.empty())
+                if (!ctx.rule_deductions.empty())
                 {
                     if (should_log(depth))
                         log(depth, "evaluate", "TERMINAL: All conditions satisfied. Calling deduce with rule " + format(rule.node));
 
                     try
                     {
-                        deduce(*joined, rule.node, depth, ctx_copy, rule.confidence);
+                        deduce(*joined, rule.node, depth, ctx, rule.confidence);
                     }
                     catch (const contradiction_error& error)
                     {
@@ -572,11 +541,11 @@ void Reasoning::evaluate(RulePos rule, ReasoningContext& ctx, int depth)
                 }
                 else if (_prune_mode)
                 {
-                    collect_prune_targets(ctx_copy.current_condition, *joined, rule.node);
+                    collect_prune_targets(ctx.current_condition, *joined, rule.node);
                 }
                 else
                 {
-                    answer(ctx_copy.current_condition, joined, rule.node);
+                    answer(ctx.current_condition, joined, rule.node);
                 }
             }
         };

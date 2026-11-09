@@ -1689,13 +1689,19 @@ bool Zelph::condition_set_members(const Node condition, adjacency_set& out) cons
 {
     if (condition == 0 || !exists(condition)) return false;
 
-    const bool tagged = check_fact(condition, core.IsA, {core.Conjunction}).is_known();
+    // A STATEMENT features a predicate; a container possesses none, and what
+    // is written regarding a statement does not change that. Asked first,
+    // this keeps the member walk off every ordinary condition of every rule
+    // -- the hot path -- so only a container is ever walked.
+    //
+    // predicate_of decides, just as it does for the writer
+    // (is_condition_pattern): a collection possesses no predicate whatsoever,
+    // whereas parse_relation takes a fact regarding the container that
+    // something uses as a predicate for the container's own, and the rule
+    // holding the container would lose its conditions.
+    if (predicate_of(condition) != 0) return false;
 
-    // A STATEMENT has a predicate; a container has none. Asked first, this
-    // keeps the member walk off every ordinary condition of every rule --
-    // the hot path -- so only a container is ever walked, and only an
-    // UNTAGGED one reaches this test at all.
-    if (!tagged && parse_relation(condition) != 0) return false;
+    const bool tagged = check_fact(condition, core.IsA, {core.Conjunction}).is_known();
 
     // The members hang off the container as PartOf facts pointing AT it.
     adjacency_set members;
@@ -1721,6 +1727,37 @@ bool Zelph::is_condition_set(const Node condition) const
 {
     adjacency_set members;
     return condition_set_members(condition, members);
+}
+
+void Zelph::flatten_condition_sets(adjacency_set& conditions, std::unordered_set<Node>& sets) const
+{
+    // Each classic pass of every rule asks this query, and hardly any rule
+    // holds a set: no reconstruction occurs until a member is verified as
+    // one.
+    if (std::none_of(conditions.begin(), conditions.end(), [this](const Node condition)
+                     { return is_condition_set(condition); }))
+        return;
+
+    std::vector<Node> pending(conditions.begin(), conditions.end());
+    conditions.clear();
+    while (!pending.empty())
+    {
+        const Node condition = pending.back();
+        pending.pop_back();
+        // Read once, whether two sets hold it or it holds itself.
+        if (sets.count(condition) != 0) continue;
+
+        adjacency_set members;
+        if (condition_set_members(condition, members))
+        {
+            sets.insert(condition);
+            pending.insert(pending.end(), members.begin(), members.end());
+        }
+        else
+        {
+            conditions.insert(condition);
+        }
+    }
 }
 
 Node Zelph::negation_operand(const Node condition) const

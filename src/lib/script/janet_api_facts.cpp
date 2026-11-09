@@ -1464,7 +1464,7 @@ namespace zelph
     // Unification matches a PATTERN, so a condition that carries no statement
     // matches nothing and the rule containing it can never fire. A nested
     // condition set is the one member that is not itself a fact: the
-    // evaluator descends into it.
+    // evaluator reads its members into the rule's plan.
     bool ScriptEngine::Impl::is_condition_pattern(const network::Node n) const
     {
         if (n == 0) return false;

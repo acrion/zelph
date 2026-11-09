@@ -38,6 +38,20 @@ A parenthesised group that contains commas is parsed as **conjunction syntax sug
 
 Each comma-separated condition is itself a normal zelph statement fragment (either a fact pattern like `X R Y`, or a nested expression). The whole parenthesised expression evaluates to a **set node** that is automatically tagged as a conjunction internally (i.e. it desugars to the same topology as `(*{...} ~ conjunction)`).
 
+A comma list within the conditions means what its members signify when laid out flat: `(A good yes, (X v A, Y w B))` holds true precisely for the bindings of `(A good yes, X v A, Y w B)`. The engine plans all conditions of a rule collectively, regardless of the list they stand in, so a condition or a [guard](logic.md#inequality-constraints) positioned outside the inner list filters what the list binds, and the other way round. The rule keeps the nesting it was written with when it is printed:
+
+```
+zelph> a v n9
+zelph> b v n5
+zelph> d w n4
+zelph> n5 good yes
+zelph> (A good yes, (X v A, Y w B)) => (X fine Y)
+(((X v A), (Y w B)), (A good yes)) => (X fine Y)
+(b fine d) ⇐ {((b v n5), (d w n4)) (n5 good yes)}
+```
+
+Nesting introduces statements into the graph: the inner list is a condition set of its own, bearing its own `~ conjunction` tag and maintaining its membership within the outer list. A rule over `~`, over `in`, or over a variable predicate can bind them, just as it binds the tag of each condition set and the membership of a ground condition within a flat list.
+
 Written on a line by itself, without its outer parentheses, a comma list that names a variable functions as a [query](queries.md#conditions-in-queries): a condition list identical in form, evaluated exactly once, with each condition read as it would be within a rule.
 
 What matters is what a condition **evaluates to**: it has to be a statement, because a condition is matched against the graph and a node carries nothing to match. A [focus](concepts.md#the-focus-operator) in that position therefore does not do what it looks like — it makes its statement evaluate to the focused node — and is refused:
@@ -277,7 +291,7 @@ or script use, `.run` is the standard command.
 
 ### What the run summary counts
 
-A run ends with a summary line like `Reasoning summary: N matches processed, M contradictions found.` A match refers to a binding provided by the unification search for a positive fact condition within a rule, either by scanning the facts that the condition can match or from the new fact that seeds an iteration of semi-naive evaluation. A pass that performs scanning tallies the bindings of each such condition across every rule it applies. Such passes are the solitary pass in `.run-once`, the initial pass in `.run`, each pass when `.semi-naive off` is active, and the safety pass appended by `.semi-naive check`. Semi-naive evaluation also repeats its first pass whenever a rule has derived a new rule, ensuring the new rule encounters facts older than itself (refer to [Rules That Write Rules](rule-generators.md)), and it still takes classic passes for certain rule types: one containing a negated condition at its negation level (in a `.run-delta` execution only where seeding is insufficient), one equipped with a path condition during an iteration where fresh facts extend the predicate the path walks, and one whose conditions cannot be entirely seeded because of a `≈` condition, a nested condition set, or a condition lacking precisely one predicate (see [Reasoning incrementally](janet.md#reasoning-incrementally)). A binding is counted at the moment it is issued, regardless of whether a subsequent condition or the deduction later discards it, and it is counted again each time a later pass delivers it anew. Negated conditions `¬(…)`, `!=` guards, numeric comparisons (`A zelph:lt B`), path conditions (`P⁺`, `P∗`) and neural `≈` conditions contribute nothing to the count.
+A run ends with a summary line like `Reasoning summary: N matches processed, M contradictions found.` A match refers to a binding provided by the unification search for a positive fact condition within a rule, either by scanning the facts that the condition can match or from the new fact that seeds an iteration of semi-naive evaluation. A pass that performs scanning tallies the bindings of each such condition across every rule it applies. Such passes are the solitary pass in `.run-once`, the initial pass in `.run`, each pass when `.semi-naive off` is active, and the safety pass appended by `.semi-naive check`. Semi-naive evaluation also repeats its first pass whenever a rule has derived a new rule, ensuring the new rule encounters facts older than itself (refer to [Rules That Write Rules](rule-generators.md)), and it still takes classic passes for certain rule types: one containing a negated condition at its negation level (in a `.run-delta` execution only where seeding is insufficient), one equipped with a path condition during an iteration where fresh facts extend the predicate the path walks, and one whose conditions cannot be entirely seeded because of a `≈` condition or a condition lacking precisely one predicate (see [Reasoning incrementally](janet.md#reasoning-incrementally)). A binding is counted at the moment it is issued, regardless of whether a subsequent condition or the deduction later discards it, and it is counted again each time a later pass delivers it anew. Negated conditions `¬(…)`, `!=` guards, numeric comparisons (`A zelph:lt B`), path conditions (`P⁺`, `P∗`) and neural `≈` conditions contribute nothing to the count.
 
 The figure thus quantifies effort, not results. It is comparable across runs within a single evaluation mode, but not across `.semi-naive on`, `off`, and `check`, and under `.parallel` it can vary between two runs of identical input.
 

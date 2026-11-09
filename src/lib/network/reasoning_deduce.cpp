@@ -205,11 +205,11 @@ std::unordered_set<Node> Reasoning::rule_variables(const Node rule, const Node p
 // container in a generated CONSEQUENCE into a conjunction set.
 Node Reasoning::rebuild_condition(const Node pattern, const Variables& variables, const int depth, const Recipe* const recipe)
 {
-    // A conjunction nested inside the condition forms a distinct set, which
-    // evaluate() processes by traversing it recursively; instantiate_fact
-    // reconstructs it as one (container_plan), ensuring that a rule nested
-    // within a generated rule takes the outer binding in its conditions as
-    // well.
+    // A conjunction nested inside the condition forms a distinct set, the
+    // members of which evaluate() reads into the single plan of the rule;
+    // instantiate_fact reconstructs it as one (container_plan), ensuring that a
+    // rule nested within a generated rule takes the outer binding in its
+    // conditions as well.
     std::vector<Node> history;
     return instantiate_fact(this, pattern, variables, depth, history, recipe, Place{Position::Value, true, 0});
 }
@@ -1090,7 +1090,7 @@ bool Reasoning::nests_refuted_fact(const Node deduction, const Node pattern, con
     return false;
 }
 
-void Reasoning::deduce(const Variables& variables, const Node parent, const int depth, ReasoningContext& ctx, const double confidence)
+void Reasoning::deduce(const Variables& variables, const Node parent, const int depth, const ReasoningContext& ctx, const double confidence)
 {
     if (logging_active())
         _prof.deduce_calls.fetch_add(1, std::memory_order_relaxed);

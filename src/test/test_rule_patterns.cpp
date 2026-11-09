@@ -3708,10 +3708,10 @@ TEST_CASE("rule patterns: a rule that binds a rule's conjunction set leaves that
 
 TEST_CASE("rule patterns: a condition set among the conditions is read as well")
 {
-    // Reasoning::evaluate steps into a condition set that constitutes one
-    // of a rule's conditions, so the variables within it belong to the
-    // rule. Here, they are its sole variables, situated beneath a ground
-    // condition.
+    // Reasoning::evaluate reads a condition set that constitutes one of a
+    // rule's conditions through, so the variables contained within it
+    // belong to the rule. Here, they are its only variables, situated
+    // beneath a ground condition.
     run_both_modes([](auto& collector, auto& interactive)
                    {
         interactive.process("((a r b, (C s D, C t D)) => (c q d)) is noted");
@@ -3719,6 +3719,741 @@ TEST_CASE("rule patterns: a condition set among the conditions is read as well")
         collector.clear();
         interactive.process("S is noted");
         CHECK(collect_answers(collector).empty()); });
+}
+
+// ---------------------------------------------------------------------------
+// A set of conditions within a rule's conditions means what its constituents
+// signify when written in a flat form: `(A good yes, (X v A, Y w B))` equates
+// to `(A good yes, X v A, Y w B)`. Reasoning::evaluate reads the members into a
+// single plan associated with the rule, thereby ensuring the entire rule
+// operates under one set of bindings and one order of evaluation. Previously,
+// the set executed independently first, as the planner reads no variable within
+// the set's atom and treated it as a bound condition with nothing to bind; the
+// conditions positioned behind it ran as a continuation that the first binding
+// of the set's final condition removed from the others, causing them to proceed
+// directly to the end of the rule; behind a condition that matches a fact, it
+// did not even receive the set's bindings. Which false facts appeared depended
+// on the mode, on the order of the matches, and on whether the rule or the
+// facts were processed first, so each answer here is compared in its entirety.
+// ---------------------------------------------------------------------------
+
+// The condition located outside the set tested nothing, its variable lacking
+// a value at the time it was executed: `(a fine d)` followed despite only n5
+// being good, alongside `?? fine ??`, and `.explain` found no derivation for
+// what the forward pass had just written.
+TEST_CASE("nested condition sets: an ordinary condition outside a set filters what the set binds")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+a v n9
+b v n5
+c v n7
+d w n4
+n5 good yes
+(A good yes, (X v A, Y w B)) => (X fine Y)
+)");
+        collector.clear();
+        interactive.process("X fine Y");
+        CHECK(collect_answers(collector) == std::vector<std::string>{"b fine d"});
+
+        collector.clear();
+        interactive.process(".explain b fine d");
+        CHECK(any_output_contains(collector, "n5 good yes  [axiom]"));
+        CHECK(any_output_contains(collector, "b v n5  [axiom]"));
+        CHECK(any_output_contains(collector, "d w n4  [axiom]")); });
+}
+
+// The same with the rule written before its facts. This order lost the true
+// answer while recording the false ones: `(a fine d)` and `(c fine d)` without
+// `(b fine d)`.
+TEST_CASE("nested condition sets: facts that arrive after the rule read it the same way")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+(A good yes, (X v A, Y w B)) => (X fine Y)
+a v n9
+b v n5
+c v n7
+d w n4
+n5 good yes
+)");
+        collector.clear();
+        interactive.process("X fine Y");
+        CHECK(collect_answers(collector) == std::vector<std::string>{"b fine d"}); });
+}
+
+// The set following a condition, sharing a variable with it. The shared A must
+// agree across both, and Y must satisfy both members of the set: d and e lack
+// `u`, and `b` has no partner at all after d is gone. The set's bindings did
+// not extend to the consequence, which read `(a pair ??)` and `(b pair ??)`.
+TEST_CASE("nested condition sets: a set after a condition joins on a shared variable")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+a v n1
+b v n2
+c w n1
+c u k
+d w n2
+e w n1
+(X v A, (Y w A, Y u K)) => (X pair Y)
+)");
+        collector.clear();
+        interactive.process("X pair Y");
+        CHECK(collect_answers(collector) == std::vector<std::string>{"a pair c"});
+
+        collector.clear();
+        interactive.process(".explain a pair c");
+        CHECK(any_output_contains(collector, "a v n1  [axiom]"));
+        CHECK(any_output_contains(collector, "c w n1  [axiom]"));
+        CHECK(any_output_contains(collector, "c u k  [axiom]")); });
+}
+
+// Having no variable in common with the rest, the set constitutes a cross
+// product, leaving no room for a join to be mistaken, and the variable still
+// arrived unbound: `(a pair ??)`.
+TEST_CASE("nested condition sets: a set that shares no variable leaves no fact unbound")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+a v n1
+c w n2
+c u k
+d w n3
+(X v A, (Y w B, Y u K)) => (X pair Y)
+)");
+        collector.clear();
+        interactive.process("X pair Y");
+        CHECK(collect_answers(collector) == std::vector<std::string>{"a pair c"});
+
+        collector.clear();
+        interactive.process(".explain a pair c");
+        CHECK(any_output_contains(collector, "c u k  [axiom]")); });
+}
+
+// Two sets positioned side by side, along with a set nested inside another,
+// form a single plan as well. A continuation stack needed to carry the second
+// set past the first and the outer members past the inner ones, and the
+// bindings it did not carry were the ones they had to agree on.
+TEST_CASE("nested condition sets: two sets side by side and a set within a set are one join")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        SUBCASE("side by side")
+        {
+            process_lines(interactive, R"(
+a v n1
+a t k
+b v n2
+b t k
+c w n1
+c t k
+d w n3
+d t k
+e w n1
+e t m
+((X v A, X t K), (Y w A, Y t K)) => (X same Y)
+)");
+            collector.clear();
+            interactive.process("X same Y");
+            CHECK(collect_answers(collector) == std::vector<std::string>{"a same c"});
+
+            collector.clear();
+            interactive.process(".explain a same c");
+            CHECK(any_output_contains(collector, "c w n1  [axiom]"));
+        }
+        SUBCASE("within each other")
+        {
+            process_lines(interactive, R"(
+a p b
+b p c
+c p d
+d p e
+(W p X, (X p Y, (Y p Z, Z p V))) => (W far V)
+)");
+            collector.clear();
+            interactive.process("W far V");
+            CHECK(collect_answers(collector) == std::vector<std::string>{"a far e"});
+
+            collector.clear();
+            interactive.process(".explain a far e");
+            CHECK(any_output_contains(collector, "d p e  [axiom]"));
+        } });
+}
+
+// The guard outside the set runs behind the conditions within it. Behind the set
+// as a continuation, it received none of the set's bindings, found A without a
+// value at the end of the rule, and took the match back, so the rule derived
+// nothing.
+TEST_CASE("nested condition sets: a != outside a set runs behind what the set binds")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+a v n5
+a u k1
+b v n6
+b u k2
+(A != n5, (X v A, X u K)) => (X kept K)
+)");
+        collector.clear();
+        interactive.process("X kept K");
+        CHECK(collect_answers(collector) == std::vector<std::string>{"b kept k2"});
+
+        collector.clear();
+        interactive.process(".explain b kept k2");
+        CHECK(any_output_contains(collector, "b v n6  [axiom]")); });
+}
+
+// A deferred `!=` is remembered by its subject, one per variable, so of two
+// guards on A that a set ran first, only one survived, and `b` proceeded past the
+// one that was lost. In a single plan, both run with A bound and neither needs to
+// be remembered.
+TEST_CASE("nested condition sets: two != on one variable both hold")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+a v n7
+b v n3
+c v n5
+(X v A, (A != n7, A != n3)) => (X other yes)
+)");
+        collector.clear();
+        interactive.process("X other Y");
+        CHECK(collect_answers(collector) == std::vector<std::string>{"c other yes"});
+
+        collector.clear();
+        interactive.process(".explain c other yes");
+        CHECK(any_output_contains(collector, "c v n5  [axiom]")); });
+}
+
+// A condition that is negated within a set tests what the rest of the rule bound,
+// in whichever set that stands. Run first it had X free and inquired whether
+// anything at all is bad, which `b` is, so the rule derived nothing for `a`
+// either.
+TEST_CASE("nested condition sets: a negated member tests what the conditions outside the set bind")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+a v n1
+b v n2
+b bad yes
+(X v A, (¬(X bad yes), A != n9)) => (X ok A)
+)");
+        collector.clear();
+        interactive.process("X ok A");
+        CHECK(collect_answers(collector) == std::vector<std::string>{"a ok n1"});
+
+        collector.clear();
+        interactive.process(".explain a ok n1");
+        CHECK(any_output_contains(collector, "¬(a bad yes)")); });
+}
+
+// deduce finds the rule of a firing through the condition part it receives, for
+// the negation record that `.semi-naive check` re-tests. A firing within a
+// nested set provided it with that set, for which no registration occurs, so a
+// fact derived under a negation that later came to hold went unreported. The
+// record is what this reads, hence two sets: the terminal must lie inside one of
+// them.
+TEST_CASE("nested condition sets: a firing under a negated member keeps its negation record")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+t go k
+t u m
+t w v
+((X go Y, X u K), (¬(X bad yes), X w Z)) => (X ok Z)
+)");
+        collector.clear();
+        interactive.process("S ok O");
+        REQUIRE(collect_answers(collector) == std::vector<std::string>{"t ok v"});
+
+        collector.clear();
+        CHECK_THROWS_WITH(interactive.process("t bad yes"), doctest::Contains("derived under a negated premise that has come to hold"));
+        CHECK(any_output_contains(collector, "t ok v")); });
+}
+
+// A contradiction is recorded as the set of facts that matched, which is what causes
+// it to be reported just once. The record associated with a rule containing a set
+// within its conditions held the set's text in place of the facts it contained, so
+// instances that varied only internally within the set converged into a single
+// record, and a rule along with its flat twin, when based on identical statements,
+// resulted in two distinct records. `rules.md` says what the record commits to, and
+// these are the commitments made.
+TEST_CASE("nested condition sets: a contradiction is recorded by the facts inside the set")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+a v n1
+a w n2
+a u n3
+)");
+        SUBCASE("a further instance that differs only inside the set is reported")
+        {
+            interactive.process("(X v A, (X w B, X u C)) => !");
+            REQUIRE(count_outputs_starting_with(collector, "! ⇐") == 1);
+
+            collector.clear();
+            interactive.process("a w n4");
+            CHECK(count_outputs_starting_with(collector, "! ⇐") == 1);
+            // The report names the differing fact; the echo of the line identifies it as well.
+            CHECK(std::any_of(collector.events().begin(), collector.events().end(), [](const auto& e)
+                              { return e.channel == zelph::io::OutputChannel::Out && e.text.starts_with("! ⇐")
+                                    && e.text.find("a w n4") != std::string::npos; }));
+        }
+        SUBCASE("the nested rule and its flat twin report once between them")
+        {
+            interactive.process("(X v A, X w B, X u C) => !");
+            REQUIRE(count_outputs_starting_with(collector, "! ⇐") == 1);
+
+            collector.clear();
+            interactive.process("(X v A, (X w B, X u C)) => !");
+            CHECK(count_outputs_starting_with(collector, "! ⇐") == 0);
+        }
+        SUBCASE("a fact inside the set that returns is reported again")
+        {
+            interactive.process("(X v A, (X w B, X u C)) => !");
+            REQUIRE(count_outputs_starting_with(collector, "! ⇐") == 1);
+
+            interactive.process(".prune-facts a w n2");
+            collector.clear();
+            interactive.process("a w n2");
+            CHECK(count_outputs_starting_with(collector, "! ⇐") == 1);
+        } });
+}
+
+// What a quiet run hands to a program names the facts a firing satisfied, which
+// janet.md promises for `:conditions`. A set among the conditions stood there as
+// its own text beside the facts outside it, and a negated member within the set
+// was missing from `:absent`.
+TEST_CASE("nested condition sets: a quiet run names the facts inside the set")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process(".auto-run");
+        process_lines(interactive, R"(
+a v n1
+a w n2
+a u n3
+)");
+        SUBCASE("the conditions of a contradiction")
+        {
+            interactive.process("(X v A, (X w B, X u C)) => !");
+            CHECK(janet_value(collector, interactive, "(sorted (map string ((first ((zelph/run :quiet) :contradictions)) :conditions)))")
+                  == R"js(@["a u n3" "a v n1" "a w n2"])js");
+        }
+        SUBCASE("the premises and the absent facts of a derivation")
+        {
+            interactive.process("(X v A, (X w B, ¬(X bad yes))) => (X ok B)");
+            interactive.process("%(def d (first ((zelph/run :quiet :derived) :derived)))");
+            CHECK(janet_value(collector, interactive, "(sorted (map string (d :premises)))") == R"js(@["a v n1" "a w n2"])js");
+            CHECK(janet_value(collector, interactive, "(map string (d :absent))") == R"js(@["X bad yes"])js");
+        } });
+}
+
+// A path condition at the end of a set walks under the bindings of the whole rule.
+// With its endpoints bound externally to the set, having neither been bound when
+// the set ran first, it refused the rule for ends that two conditions bind. With T
+// bound inside, the walk binds C for the condition located outside the set, in the
+// way a flat rule's walk does.
+TEST_CASE("nested condition sets: a set ending in a path condition walks under the bindings of the rule")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+a v c1
+a u k
+b v c9
+b u k
+c1 sub c2
+c2 sub c3
+x t c3
+)");
+        SUBCASE("its ends bound outside the set")
+        {
+            interactive.process("(X v C, Y t T, (X u K, C sub⁺ T)) => (X under T)");
+        }
+        SUBCASE("one end bound inside the set")
+        {
+            interactive.process("(X v C, (Y t T, C sub⁺ T)) => (X under T)");
+        }
+        CHECK_FALSE(any_event_contains(collector, "Error"));
+
+        collector.clear();
+        interactive.process("X under T");
+        CHECK(collect_answers(collector) == std::vector<std::string>{"a under c3"});
+
+        collector.clear();
+        interactive.process(".explain a under c3");
+        CHECK(any_output_contains(collector, "a v c1  [axiom]"));
+        CHECK(any_output_contains(collector, "x t c3  [axiom]")); });
+}
+
+// A ≈ condition takes its input from the rule's bindings. Before what the set
+// binds, it refused the rule, and the firing that came through the continuation
+// nonetheless recorded its fact without confidence, whereas the flat rule's carries
+// the net's 0.8. A negated net within the set ran ahead of `A relG B` and refused
+// due to the object it lacked.
+TEST_CASE("nested condition sets: a ≈ condition reads what the set binds and carries its confidence")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+s1 in GIn
+o1 in GOut
+o2 in GOut
+%(zelph/nn-connect "s1" "o1" 0.8)
+%(zelph/nn-connect "s1" "o2" 0.2)
+gnet nn-layers <GIn GOut>
+s1 relG o1
+s1 relG o2
+s1 t k
+)");
+        SUBCASE("confirmed, outside the set")
+        {
+            interactive.process("(≈gnet(A relG B), (A relG B, A t K)) => (A verifiedG B)");
+            CHECK_FALSE(any_event_contains(collector, "Error"));
+
+            collector.clear();
+            interactive.process("A verifiedG B");
+            CHECK(collect_answers(collector) == std::vector<std::string>{"s1 verifiedG o1"});
+
+            collector.clear();
+            interactive.process(R"(%(let [f (zelph/fact "s1" "verifiedG" "o1")] (if (< 0.79 (zelph/weight f "verifiedG") 0.81) "conf-ok" "conf-bad")))");
+            CHECK(any_output_contains(collector, "conf-ok"));
+        }
+        SUBCASE("negated, in the set")
+        {
+            interactive.process("(A relG B, (A t K, ¬≈gnet(A relG B))) => (A verifiedG B)");
+            CHECK_FALSE(any_event_contains(collector, "Error"));
+
+            collector.clear();
+            interactive.process("A verifiedG B");
+            CHECK(collect_answers(collector) == std::vector<std::string>{"s1 verifiedG o2"});
+        } });
+}
+
+// Only a member that is a set of conditions in itself is read through. A set
+// constant or a set pattern serving as a term within a condition is what that
+// condition matches, and it stays one: a statement possessing a predicate of its
+// own among the conditions of the plan, with variables bound by pairing the
+// members. With the inner list running first and alone, the answers read
+// `?? fine yes` and `?? fine ??`.
+TEST_CASE("nested condition sets: a set as a term of a member stays a term")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+a v n9
+a has {c d}
+b v n5
+b has {c d}
+n5 good yes
+)");
+        SUBCASE("a set constant")
+        {
+            interactive.process("(A good yes, (X v A, X has {c d})) => (X fine yes)");
+            collector.clear();
+            interactive.process("X fine Y");
+            CHECK(collect_answers(collector) == std::vector<std::string>{"b fine yes"});
+
+            collector.clear();
+            interactive.process(".explain b fine yes");
+            CHECK(any_output_contains(collector, "b v n5  [axiom]"));
+        }
+        SUBCASE("a set pattern")
+        {
+            interactive.process("(A good yes, (X v A, X has {c Z})) => (X fine Z)");
+            collector.clear();
+            interactive.process("X fine Y");
+            CHECK(collect_answers(collector) == std::vector<std::string>{"b fine d"});
+
+            collector.clear();
+            interactive.process(".explain b fine d");
+            CHECK(any_output_contains(collector, "b v n5  [axiom]"));
+        } });
+}
+
+// A query is a condition list evaluated once, with a set within it interpreted as
+// a rule reads one. The answer prints the conditions exactly as written, a set
+// nested inside a comma list, in the order of their nodes, so it is checked part
+// by part. With the set running first and alone, the condition outside it tested
+// nothing, and the answers held rows such as `n7 good yes`, which no fact says.
+TEST_CASE("nested condition sets: a query reads a set among its conditions as a rule does")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+a v n9
+b v n5
+c v n7
+d w n4
+n5 good yes
+)");
+        collector.clear();
+        interactive.process("A good yes, (X v A, Y w B)");
+        const std::vector<std::string> answers = collect_answers(collector);
+        REQUIRE(answers.size() == 1);
+        CHECK(answers.front().find("b v n5") != std::string::npos);
+        CHECK(answers.front().find("d w n4") != std::string::npos);
+        CHECK(answers.front().find("n5 good yes") != std::string::npos); });
+}
+
+// The filter of `.prune-nodes` is likewise a list of conditions, so what it
+// selects adheres to the same reading: only b possesses the value that is good.
+// Behind the set, the condition naming X had no value for it, and the command took
+// every subject of `u`, so a went as well: this reading decides what is deleted.
+TEST_CASE("nested condition sets: .prune-nodes deletes what a filter with a set selects")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+a v n9
+a u k
+b v n5
+b u k
+n5 good yes
+)");
+        collector.clear();
+        interactive.process(".prune-nodes X (X u K, (A good yes, X v A))");
+        CHECK(any_output_contains(collector, "and 1 nodes"));
+
+        collector.clear();
+        interactive.process("S v O");
+        CHECK(collect_answers(collector) == std::vector<std::string>{"a v n9"}); });
+}
+
+// The command searches the conditions for the named variable, and it read one
+// level of them: a variable that exists solely within the set was reported as
+// absent from the pattern, which consequently left it out of the list the
+// error gives.
+TEST_CASE("nested condition sets: .prune-nodes finds its variable inside the set")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+a v n1
+a u k
+b v n2
+b u m
+n1 good yes
+)");
+        SUBCASE("the variable stands only in the set")
+        {
+            collector.clear();
+            interactive.process(".prune-nodes K (X v A, (A good yes, X u K))");
+            CHECK(any_output_contains(collector, "and 1 nodes"));
+
+            collector.clear();
+            interactive.process("S u O");
+            CHECK(collect_answers(collector) == std::vector<std::string>{"b u m"});
+        }
+        SUBCASE("the refusal lists it")
+        {
+            CHECK_THROWS_WITH(interactive.process(".prune-nodes Q (X v A, (A good yes, X u K))"),
+                              doctest::Contains("Its variables are: A, K, X."));
+        } });
+}
+
+// What is constructed by zelph/conjunction matches what the comma list builds, so a
+// program that nests one receives this interpretation too. It lost the inner
+// bindings in the same manner as the comma list did: the rule wrote `a pair ??`,
+// and zelph/query returned a row lacking Y.
+TEST_CASE("nested condition sets: zelph/conjunction nests a set the way the comma list does")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+a v n1
+c w n2
+c u k
+d w n3
+)");
+        interactive.process(R"js(%(zelph/rule [(zelph/fact 'X "v" 'A) (zelph/conjunction (zelph/fact 'Y "w" 'B) (zelph/fact 'Y "u" 'K))] (zelph/fact 'X "pair" 'Y)))js");
+        interactive.run(true, false, false);
+
+        collector.clear();
+        interactive.process("X pair Y");
+        CHECK(collect_answers(collector) == std::vector<std::string>{"a pair c"});
+
+        // zelph/query binds what the set binds, under the name of its variable.
+        const std::string rows = R"js((zelph/query (zelph/conjunction (zelph/fact 'X "v" 'A) (zelph/conjunction (zelph/fact 'Y "w" 'B) (zelph/fact 'Y "u" 'K)))))js";
+        CHECK(janet_value(collector, interactive, "(length " + rows + ")") == "1");
+        CHECK(janet_value(collector, interactive, "(zelph/name (get (get " + rows + " 0) 'Y))") == R"("c")"); });
+}
+
+// A condition does not bind a variable to a part of the rule in which it appears,
+// and the nested set along with its members qualify as such components just as
+// fully as the conditions located beside them, so a rule binds what its flat twin
+// binds. Each set used to shield only its own members: M bound the member of the
+// inner set below, and the flat rule's M did not.
+TEST_CASE("nested condition sets: a condition does not bind a part of its own rule in the set")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+a p b
+c q d
+(a p b) q z
+)");
+        SUBCASE("a member of the set")
+        {
+            interactive.process("(M q z, (a p b, c q d)) => (M flagged yes)");
+            collector.clear();
+            interactive.process("M flagged yes");
+            CHECK(collect_answers(collector).empty());
+        }
+        SUBCASE("the set itself")
+        {
+            interactive.process("(G ~ conjunction, (a p b, c q d)) => (k sees G)");
+            collector.clear();
+            interactive.process("k sees G");
+            CHECK(collect_answers(collector).empty());
+        } });
+}
+
+// The same in a seeded run, which keeps a list of each rule's parts of its own
+// (build_index): a seed binds a member of the inner set, and the condition beside it
+// must not bind the set in which the member stands. The facts arrive after the first
+// run, so that `.run-delta` seeds the rule with them.
+TEST_CASE("nested condition sets: a seeded run does not bind a part of the rule in the set either")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+.auto-run
+(G ~ conjunction, (a p b, c q d)) => (k sees G)
+.run
+a p b
+c q d
+)");
+        collector.clear();
+        interactive.process(".run-delta");
+        REQUIRE_FALSE(any_event_contains(collector, "Incremental run not applicable"));
+
+        collector.clear();
+        interactive.process("k sees G");
+        CHECK(collect_answers(collector).empty()); });
+}
+
+// `zelph/fact` takes a membership of a collection in itself, and `zelph/query` takes
+// a tagged set as it stands, so three ordinary calls arrive at this state. No meaning
+// is claimed for such a set here, only that reading it through results in an end:
+// entering the set again from within had the evaluation recurse until the stack ran
+// out.
+TEST_CASE("nested condition sets: a query over a set that holds itself comes to an end")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+a p b
+%(def s (zelph/collection (zelph/fact (zelph/var "X") "p" (zelph/var "Y"))))
+%(zelph/fact s "in" s)
+%(zelph/fact s "~" "conjunction")
+)");
+        CHECK_NOTHROW(interactive.process("%(zelph/query s)")); });
+}
+
+// A statement stays a statement regardless of the content written about it. `a p b`
+// below contains a member, expressed via an ordinary statement concerning a fact the
+// graph holds, and a firing tags it `~ conjunction`, which nothing refuses either. Read
+// as a set starting from the tag onward, it meant one thing to a firing prior to the
+// tag and a different meaning to a firing after it: the rule ceased firing once the tag
+// stood, and `.explain` found no derivation for what it had previously derived. The
+// chain through g1 ensures that the seed arrives after the tag in the order where the
+// firing must come after it.
+TEST_CASE("nested condition sets: what a firing writes about a statement leaves it a statement")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+%(zelph/fact (zelph/fact 'Q "y" "z") "in" (zelph/fact "a" "p" "b"))
+(X go Y, a p b, V w Z) => (X ok Y)
+(k now M) => ((M p b) ~ conjunction)
+(s step T) => (t g1 T)
+(t g1 T) => (t go T)
+v w q
+)");
+        SUBCASE("the firing comes after the tag")
+        {
+            interactive.process(R"js(%(do (zelph/fact "k" "now" "a") (zelph/fact "s" "step" "u")))js");
+            interactive.run(true, false, false);
+        }
+        SUBCASE("the firing comes before the tag")
+        {
+            interactive.process(R"js(%(zelph/fact "s" "step" "u"))js");
+            interactive.run(true, false, false);
+            interactive.process(R"js(%(zelph/fact "k" "now" "a"))js");
+            interactive.run(true, false, false);
+        }
+
+        collector.clear();
+        interactive.process("S ok O");
+        CHECK(collect_answers(collector) == std::vector<std::string>{"t ok u"});
+
+        collector.clear();
+        interactive.process(".explain t ok u");
+        CHECK(any_output_contains(collector, "v w q  [axiom]")); });
+}
+
+// A container is not a statement, regardless of what gets written about it. The
+// question of whether a condition possesses a predicate is put to every condition
+// set, and directed at parse_relation, which took a fact concerning the set that
+// something uses as a predicate for the set's own predicate. The rule over the
+// tags below writes such a fact for every set, and the rule holding the set below
+// lost its conditions: it was no longer fired and was dropped from `.list-rules`.
+TEST_CASE("nested condition sets: a condition set whose tag serves as a predicate stays a set")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+(X v A, X u K) => (X both K)
+(G ~ conjunction) => (x (G ~ conjunction) y)
+b v n2
+b u k
+)");
+        collector.clear();
+        interactive.process("X both K");
+        CHECK(collect_answers(collector) == std::vector<std::string>{"b both k"});
+
+        collector.clear();
+        interactive.process(".list-rules");
+        CHECK(any_output_contains(collector, "((X v A), (X u K)) => (X both K)")); });
+}
+
+// A statement stays a statement in what a firing records as well. With a member
+// written to it via `in`, a rule over `a p b` recorded that member in place of the
+// statement it matched: `:conditions` returned without `a p b`, and a contradiction
+// whose record could not be named was reported again following every later line.
+TEST_CASE("nested condition sets: a firing records a statement that has a member as itself")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process(R"js(%(zelph/fact (zelph/fact 'Q "y" "z") "in" (zelph/fact "a" "p" "b")))js");
+        SUBCASE("a contradiction is reported once")
+        {
+            interactive.process("(a p b) => !");
+            REQUIRE(count_outputs_starting_with(collector, "! ⇐") == 1);
+
+            collector.clear();
+            interactive.process("c d e");
+            CHECK(count_outputs_starting_with(collector, "! ⇐") == 0);
+        }
+        SUBCASE("its record names the statement")
+        {
+            interactive.process(".auto-run");
+            interactive.process("(a p b) => !");
+            CHECK(janet_value(collector, interactive, R"js((let [c ((first ((zelph/run :quiet) :contradictions)) :conditions)] (and (= (length c) 1) (= (first c) (zelph/fact "a" "p" "b")))))js")
+                  == "true");
+        } });
 }
 
 TEST_CASE("rule patterns: a construction's condition set is read as the typed one is")

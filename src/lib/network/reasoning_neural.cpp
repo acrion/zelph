@@ -145,7 +145,7 @@ const NeuralNet* Reasoning::compiled_net(const Node net_node, const int depth)
 // else: it succeeds when the net does NOT confirm the fact, it contributes no
 // confidence (there is no confidence in an absence to multiply in), and
 // generator mode is unavailable because a negation binds nothing.
-void Reasoning::evaluate_neural(const Node condition, const RulePos& rule, ReasoningContext& ctx, const int depth, const bool negated)
+void Reasoning::evaluate_neural(const Node condition, const RulePos& rule, const ReasoningContext& ctx, const int depth, const bool negated)
 {
     // The condition IS the tag fact (pattern nn net): extract both.
     adjacency_set nets;
@@ -295,12 +295,12 @@ void Reasoning::evaluate_neural(const Node condition, const RulePos& rule, Reaso
     }
 }
 
-// Shared continuation for procedurally evaluated conditions (currently
-// only ≈): advance to the next condition, pop a stacked conjunction
-// branch, or handle the terminal (deduce / prune / answer). Mirrors the
-// structure of the != guard and negation paths in reasoning_evaluate.cpp.
+// Shared continuation for conditions evaluated through procedural means (≈,
+// path conditions, numeric comparisons): advance to the next condition, or
+// handle the terminal (deduce / prune / answer). Mirrors the structure of the
+// != guard and negation paths found in reasoning_evaluate.cpp.
 void Reasoning::proceed_after_condition(const RulePos&             rule,
-                                        ReasoningContext&          ctx,
+                                        const ReasoningContext&    ctx,
                                         const int                  depth,
                                         std::shared_ptr<Variables> vars,
                                         std::shared_ptr<Variables> uneqs,
@@ -310,36 +310,21 @@ void Reasoning::proceed_after_condition(const RulePos&             rule,
 
     if (next_index < rule.conditions->size())
     {
-        RulePos next              = rule;
-        next.variables            = vars;
-        next.unequals             = uneqs;
-        next.confidence           = confidence;
-        next.index                = next_index;
-        ReasoningContext ctx_copy = ctx;
-        evaluate(next, ctx_copy, depth + 1);
-        return;
-    }
-
-    if (!ctx.next.empty())
-    {
-        RulePos next    = ctx.next.back();
+        RulePos next    = rule;
         next.variables  = vars;
         next.unequals   = uneqs;
         next.confidence = confidence;
-        ctx.next.pop_back();
-        ReasoningContext ctx_copy = ctx;
-        evaluate(next, ctx_copy, depth + 1);
+        next.index      = next_index;
+        evaluate(next, ctx, depth + 1);
         return;
     }
 
     // Terminal: all conditions satisfied.
-    ReasoningContext ctx_copy = ctx;
-
-    if (!ctx_copy.rule_deductions.empty())
+    if (!ctx.rule_deductions.empty())
     {
         try
         {
-            deduce(*vars, rule.node, depth, ctx_copy, confidence);
+            deduce(*vars, rule.node, depth, ctx, confidence);
         }
         catch (const contradiction_error& error)
         {
@@ -359,10 +344,10 @@ void Reasoning::proceed_after_condition(const RulePos&             rule,
         // condition, whose "match" is a walk rather than a fact.
         if (_prune_target_var != 0)
         {
-            collect_prune_targets(ctx_copy.current_condition, *vars, rule.node);
+            collect_prune_targets(ctx.current_condition, *vars, rule.node);
         }
         return;
     }
 
-    answer(ctx_copy.current_condition, vars, rule.node);
+    answer(ctx.current_condition, vars, rule.node);
 }

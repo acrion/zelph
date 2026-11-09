@@ -949,6 +949,13 @@ namespace zelph::network
         /// Whether `condition` is such a container at all.
         bool is_condition_set(Node condition) const;
 
+        /// `conditions` read through: a member that is itself a set of
+        /// conditions gives way to its own members, at every level of
+        /// nesting, and goes into `sets`. A set appearing within the
+        /// conditions means what its members, written beside the others,
+        /// mean.
+        void flatten_condition_sets(adjacency_set& conditions, std::unordered_set<Node>& sets) const;
+
         /// The pattern a negated condition negates, or 0 when `condition`
         /// is not one. `¬(P)` IS the fact `((P) ~ negation)`, and a rule
         /// names that fact as its condition, the way `⁺` and `≈` make their

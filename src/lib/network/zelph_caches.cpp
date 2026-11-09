@@ -46,7 +46,7 @@ namespace
     // Whether the conditions `conditions` represents hold a variable: the
     // members Zelph::condition_set_members reads, and the members of a
     // member that itself qualifies as a container, which
-    // Reasoning::evaluate enters as well. `holds` inquires about one
+    // Reasoning::evaluate reads as well. `holds` inquires about one
     // member. That reader decides what constitutes a container -- a
     // collection or a set constant, into which a construction writes its
     // conditions -- and reads no statement: a statement as a rule's subject

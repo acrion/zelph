@@ -219,7 +219,8 @@ namespace zelph::console
         // exactly one answer.
         //
         // collect_variables stops AT a conjunction container: its variables
-        // sit one level down, in the conditions, which is also why the
+        // sit one level deeper, within the conditions, or even further down
+        // where a set stands among them, which also explains why the
         // pattern_vars above is empty for one.
         network::Node target_var = 0;
         if (!target_name.empty())
@@ -229,10 +230,16 @@ namespace zelph::console
             network::adjacency_set            members;
 
             if (_n->condition_set_members(pattern_fact, members))
+            {
+                std::unordered_set<network::Node> sets{pattern_fact};
+                _n->flatten_condition_sets(members, sets);
                 for (const network::Node member : members)
                     network::collect_variables(_n, member, vars, 1, history);
+            }
             else
+            {
                 vars = pattern_vars;
+            }
 
             std::vector<std::string> spelled;
             for (const network::Node v : vars)

@@ -1837,6 +1837,36 @@ c q k
         CHECK(any_output_contains(collector, "¬(X blocks k)")); });
 }
 
+// The rule a generator writes keeps the set within its conditions, including the
+// outer binding (rebuild_condition), and fires as a typed rule with that set does:
+// X must satisfy the condition that holds the binding and carry its binding of Y
+// to the consequence, which read `(a fired ??)`, with `(b fired ??)` beside it.
+TEST_CASE("derived rules: a set among the conditions of a generated rule is read as its members written flat")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+a good k
+b good j
+a w z
+b w z
+a v q
+b v q
+(G now H) => ((X v Z, (X good H, X w Y)) => (X fired Y))
+go now k
+)");
+        interactive.run(true, false, false);
+
+        collector.clear();
+        interactive.process("X fired Y");
+        CHECK(collect_answers(collector) == std::vector<std::string>{"a fired z"});
+
+        collector.clear();
+        interactive.process(".explain a fired z");
+        CHECK(any_output_contains(collector, "a good k  [axiom]"));
+        CHECK(any_output_contains(collector, "a w z  [axiom]")); });
+}
+
 TEST_CASE("derived rules: recording a typed contradiction does not assert a negated member of a nested conjunction")
 {
     // Rebuilding a conjunction set is part of the construction of a rule and

@@ -1617,7 +1617,7 @@ Fresh variables (those present solely in the consequence) represent constructive
 
 ### Conjunction
 
-The comma-separated condition syntax `(cond1, cond2, cond3)` is a conjunction: all conditions must match under a **shared** variable assignment. The conditions are evaluated as a joint constraint (the semantics are order-independent, even if the engine may internally choose an evaluation order for efficiency).
+The comma-separated condition syntax `(cond1, cond2, cond3)` is a conjunction: all conditions must match under a **shared** variable assignment. The conditions are evaluated as a joint constraint (the semantics are order-independent, even if the engine may internally choose an evaluation order for efficiency). Inserting a comma list within the conditions adds no additional structure: `(cond1, (cond2, cond3))` conveys the same meaning as `(cond1, cond2, cond3)`, under a single variable assignment applied uniformly across all components.
 
 ### Negation
 

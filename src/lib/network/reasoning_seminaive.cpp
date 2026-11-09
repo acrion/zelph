@@ -226,6 +226,12 @@ uint64_t Reasoning::run_fixpoint_seminaive(bool silent, const std::vector<std::p
                     if (element && objs.count(condition) == 1)
                         ir.elements.insert(element);
                 }
+                // A set among the members yields to its constituent members,
+                // just as it does in Reasoning::evaluate, so the rule is seeded
+                // by the conditions its flat twin is seeded by. Read before the
+                // members enter `excluded`: the reading skips what that set
+                // already holds.
+                flatten_condition_sets(ir.elements, *ir.excluded);
                 ir.excluded->insert(condition);
                 for (Node e : ir.elements)
                     ir.excluded->insert(e);
@@ -263,9 +269,6 @@ uint64_t Reasoning::run_fixpoint_seminaive(bool silent, const std::vector<std::p
                 // Classify elements. A rule is delta-unsafe (and then applied
                 // classically in every iteration) when seeding over its
                 // positive conditions cannot be proven complete:
-                //  - nested conjunction elements (evaluate handles them
-                //    recursively; a flat "remaining" reconstruction would lose
-                //    that structure)
                 //  - elements without a unique predicate
                 //  - neural (approx) conditions (no fact lookup, epoch-cached)
                 //  - no positive leaf at all
@@ -291,12 +294,6 @@ uint64_t Reasoning::run_fixpoint_seminaive(bool silent, const std::vector<std::p
                                 ir.delta_unsafe = true;
                             continue;
                         }
-                    }
-
-                    if (is_condition_set(cond))
-                    {
-                        ir.delta_unsafe = true;
-                        continue;
                     }
 
                     adjacency_set rels = filter(cond, core.IsA, core.RelationTypeCategory);
@@ -576,10 +573,9 @@ uint64_t Reasoning::run_fixpoint_seminaive(bool silent, const std::vector<std::p
 
             if (remaining.empty())
             {
-                ReasoningContext ctx_copy = ctx;
                 try
                 {
-                    deduce(*match, ir.rule, 1, ctx_copy, 1.0);
+                    deduce(*match, ir.rule, 1, ctx, 1.0);
                 }
                 catch (const contradiction_error& error)
                 {
@@ -594,11 +590,10 @@ uint64_t Reasoning::run_fixpoint_seminaive(bool silent, const std::vector<std::p
                 // become direct O(1) anchors.
                 auto sorted = optimize_order(remaining, *match, 1);
 
-                RulePos          pos({ir.rule, sorted, 0, match, u.Unequals(), ir.excluded});
-                ReasoningContext ctx_copy = ctx;
+                RulePos pos({ir.rule, sorted, 0, match, u.Unequals(), ir.excluded});
                 try
                 {
-                    evaluate(pos, ctx_copy, 1);
+                    evaluate(pos, ctx, 1);
                 }
                 catch (const contradiction_error& error)
                 {

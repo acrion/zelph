@@ -84,7 +84,7 @@ namespace
 // is not remembered for a later condition to resolve, since the plan leaves no
 // further condition capable of binding one; the comparison is refused instead,
 // once.
-void Reasoning::evaluate_comparison(const Node condition, const NumericRelation relation, const RulePos& rule, ReasoningContext& ctx, const int depth, const bool negated)
+void Reasoning::evaluate_comparison(const Node condition, const NumericRelation relation, const RulePos& rule, const ReasoningContext& ctx, const int depth, const bool negated)
 {
     const std::string name = numeric_relation_name(relation);
 
@@ -152,7 +152,7 @@ void Reasoning::evaluate_comparison(const Node condition, const NumericRelation 
 
     if (!holds) return;
 
-    if (rule.index + 1 < rule.conditions->size() || !ctx.next.empty())
+    if (rule.index + 1 < rule.conditions->size())
     {
         proceed_after_condition(rule, ctx, depth, rule.variables, rule.unequals, rule.confidence);
         return;
@@ -164,12 +164,11 @@ void Reasoning::evaluate_comparison(const Node condition, const NumericRelation 
     // comparison serving as a filter just as the guard does.
     if (guards_unresolved(*rule.variables, *rule.unequals)) return;
 
-    ReasoningContext ctx_copy = ctx;
-    if (!ctx_copy.rule_deductions.empty())
+    if (!ctx.rule_deductions.empty())
     {
         try
         {
-            deduce(*rule.variables, rule.node, depth, ctx_copy, rule.confidence);
+            deduce(*rule.variables, rule.node, depth, ctx, rule.confidence);
         }
         catch (const contradiction_error& error)
         {
@@ -178,11 +177,11 @@ void Reasoning::evaluate_comparison(const Node condition, const NumericRelation 
     }
     else if (_prune_mode)
     {
-        collect_prune_targets(ctx_copy.current_condition, *rule.variables, rule.node);
+        collect_prune_targets(ctx.current_condition, *rule.variables, rule.node);
     }
     else
     {
-        answer(ctx_copy.current_condition, rule.variables, rule.node);
+        answer(ctx.current_condition, rule.variables, rule.node);
     }
 }
 
