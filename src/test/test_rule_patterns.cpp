@@ -4344,6 +4344,130 @@ c q d
         CHECK(collect_answers(collector).empty()); });
 }
 
+// A membership whose member is a set of conditions that holds a variable is
+// classified as rule text and yields no response, exactly as the membership of a
+// statement that holds a variable does. The inner list of a nested rule serves as
+// such a member, and `(M in K) => (M seen K)` wrote it into the data as
+// `((A good yes), (X u K)) seen {...}`, where the conditions of the flat twin answer
+// nothing. A set of ground conditions holds no variable, and its membership provides
+// an answer, just as the membership of a ground condition in a flat list does.
+// Following a load, whether a set holds a variable is determined by reading the set
+// directly, as the stores that record it are disarmed.
+TEST_CASE("nested condition sets: the membership of a set of conditions holding a variable answers nothing")
+{
+    const auto file = fs::temp_directory_path() / "zelph_nested_set_membership.bin";
+    run_both_modes([&](auto& collector, auto& interactive)
+                   {
+        const auto answers = [&](const std::string& query)
+        {
+            collector.clear();
+            interactive.process(query);
+            return collect_answers(collector);
+        };
+        const auto written = [&](const std::string& rule)
+        {
+            interactive.process(rule);
+            SUBCASE("in the session") {}
+            SUBCASE("after .save and .load")
+            {
+                interactive.process(".save \"" + file.string() + "\"");
+                interactive.process(".load \"" + file.string() + "\"");
+                interactive.process(".auto-run"); // a load disables it
+            }
+            interactive.process("(M in K) => (M seen K)");
+        };
+        process_lines(interactive, "a v n1\na u k\nn1 good yes");
+        SUBCASE("a set holding a variable")
+        {
+            written("(X v A, (A good yes, X u K)) => (X h K)");
+            CHECK(answers("X h K") == std::vector<std::string>{"a h k"});
+            CHECK(answers("S seen O").empty());
+            CHECK(answers("S in O").empty());
+        }
+        SUBCASE("a set of ground conditions")
+        {
+            written("(X v A, (n1 good yes, n2 good yes)) => (X h A)");
+            CHECK(answers("S seen O") == std::vector<std::string>{"((n1 good yes), (n2 good yes)) seen {((n1 good yes), (n2 good yes)) (X v A)}"});
+        }
+        SUBCASE("a set of ground conditions holding a set constant that a pattern names")
+        {
+            written("(X v A, (n1 good yes, *{(n2 good yes) (n3 good yes)} ~ conjunction)) => (X h A)");
+            interactive.process("(Z in {(n2 good yes) (n3 good yes)}) => (Z member yes)");
+            std::vector<std::string> seen = answers("S seen O");
+            std::ranges::sort(seen);
+            CHECK(seen == std::vector<std::string>{"(n2 good yes) seen {(n2 good yes) (n3 good yes)}", "(n3 good yes) seen {(n2 good yes) (n3 good yes)}", "({(n2 good yes) (n3 good yes)}, (n1 good yes)) seen {({(n2 good yes) (n3 good yes)}, (n1 good yes)) (X v A)}"});
+        } });
+    std::filesystem::remove(file);
+}
+
+// Only the sets associated with a rule are regarded as rule text. A data collection
+// named by one pattern of a rule, as `X in basket` names basket, is interpreted as a
+// set with a single member that holds a variable, and a collection holding a
+// mentioned rule also holds one: their respective memberships are treated as data,
+// and they answer like any fact does. A rule's set constant is read via its content,
+// at any depth, because a pattern that names it points at it without being among its
+// members.
+TEST_CASE("nested condition sets: a data membership beside a rule's patterns still answers")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        SUBCASE("a collection a rule's pattern names")
+        {
+            process_lines(interactive, "(X in basket) => (X edible yes)\nbasket in kitchen\napple ~ fruit\n(Y ~ fruit, ¬(basket in kitchen)) => (Y misplaced yes)");
+            collector.clear();
+            interactive.process("basket in O");
+            CHECK(collect_answers(collector) == std::vector<std::string>{"basket in kitchen"});
+
+            collector.clear();
+            interactive.process("S misplaced O");
+            CHECK(collect_answers(collector).empty());
+        }
+        SUBCASE("a collection holding a mentioned rule")
+        {
+            interactive.process("{((X p Y) => (X q Y))} in shelf");
+            collector.clear();
+            interactive.process("S in shelf");
+            CHECK(collect_answers(collector) == std::vector<std::string>{"{((X p Y) => (X q Y))} in shelf"});
+        }
+        SUBCASE("a rule's set constant that a rule's pattern names")
+        {
+            process_lines(interactive, "(*{(a p b) (c q d)} ~ conjunction) => (x y z)\n{(a p b) (c q d)} in shelf\n(X in {(a p b) (c q d)}) => (X member yes)");
+            collector.clear();
+            interactive.process("S in shelf");
+            CHECK(collect_answers(collector) == std::vector<std::string>{"{(c q d) (a p b)} in shelf"});
+        }
+        SUBCASE("a rule's set constant holding another that a rule's pattern names")
+        {
+            process_lines(interactive, "(*{(a p b) (*{(c q d) (e r f)} ~ conjunction)} ~ conjunction) => (x y z)\n{(a p b) {(c q d) (e r f)}} in shelf\n(X in {(c q d) (e r f)}) => (X member yes)");
+            collector.clear();
+            interactive.process("S in shelf");
+            CHECK(collect_answers(collector) == std::vector<std::string>{"{(a p b) {(c q d) (e r f)}} in shelf"});
+        } });
+}
+
+// A rule over a variable predicate that writes a rule bound the membership of the
+// inner list of the rule it had just written, and wrote another rule from it: one pass
+// at a time, the count of rules went to six, nine, and twelve, and a run never
+// concluded, whereas the flat twin stops at four rules. The passes run one at a time,
+// ensuring that a run that does not end cannot cause the test to hang.
+TEST_CASE("nested condition sets: a rule that writes rules from any statement stops as its flat twin does")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        std::string rule;
+        SUBCASE("nested") { rule = "(Y u Y, C Q A) => ((X p A, (X q Y, X r Y)) => (A h2 Y))"; }
+        SUBCASE("flat") { rule = "(Y u Y, C Q A) => ((X p A, X q Y, X r Y) => (A h2 Y))"; }
+        process_lines(interactive, ".auto-run\ny u y\n" + rule);
+        for (int pass = 1; pass <= 3; ++pass)
+        {
+            CAPTURE(pass);
+            interactive.process(".run-once");
+            collector.clear();
+            interactive.process(".stat");
+            CHECK(any_output_contains(collector, "Rules: 4"));
+        } });
+}
+
 // `zelph/fact` takes a membership of a collection in itself, and `zelph/query` takes
 // a tagged set as it stands, so three ordinary calls arrive at this state. No meaning
 // is claimed for such a set here, only that reading it through results in an end:

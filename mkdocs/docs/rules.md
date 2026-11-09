@@ -50,7 +50,7 @@ zelph> (A good yes, (X v A, Y w B)) => (X fine Y)
 (b fine d) ⇐ {((b v n5), (d w n4)) (n5 good yes)}
 ```
 
-Nesting introduces statements into the graph: the inner list is a condition set of its own, bearing its own `~ conjunction` tag and maintaining its membership within the outer list. A rule over `~`, over `in`, or over a variable predicate can bind them, just as it binds the tag of each condition set and the membership of a ground condition within a flat list.
+Nesting introduces statements into the graph: the inner list is a condition set of its own, bearing its own `~ conjunction` tag and maintaining its membership within the outer list. A rule over `~` or over a variable predicate may bind the tag, just as it binds the tag associated with each condition set. While the inner list holds a variable, its membership answers no query and satisfies no condition, just as the membership of a condition holding a variable does within a flat list, even though a [path condition](logic.md#transitive-path-conditions) over `in` still walks through it; an inner list composed of ground conditions answers through it in the same manner as a ground condition does.
 
 Written on a line by itself, without its outer parentheses, a comma list that names a variable functions as a [query](queries.md#conditions-in-queries): a condition list identical in form, evaluated exactly once, with each condition read as it would be within a rule.
 

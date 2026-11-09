@@ -991,6 +991,31 @@ static bool is_rule_text(const Zelph* n, const Node fact, const FactStructure& f
     return fs.predicate == n->core.Causes && n->var_in_closure(fact, reading);
 }
 
+// Whether the conditions `set` represents hold a variable, at any depth, each
+// member asked by var_in_closure. A set constant is read through its content
+// (set_constant_members), while any other container is read through its
+// members (Zelph::condition_set_members): a pattern that names a set
+// constant, as `X in {(a p b) (c q d)}` does, refers to it without being one
+// of its members, and a ground set holding such a set constant would
+// otherwise be interpreted as holding the pattern's variable.
+static bool set_holds_variable(const Zelph* n, const Node set, std::unordered_set<Node>& entered)
+{
+    if (!entered.insert(set).second) return false;
+
+    adjacency_set members;
+    if (!(Zelph::is_hash(set) ? n->set_constant_members(set, members) : n->condition_set_members(set, members))) return false;
+    return std::any_of(members.begin(), members.end(), [&](const Node m)
+                       { return n->var_in_closure(m) || set_holds_variable(n, m, entered); });
+}
+
+// Whether `member` is one of a rule's sets (holds_rule_text) holding a variable.
+static bool rule_set_holds_variable(const Zelph* n, const Node member)
+{
+    if (!n->holds_rule_text(member)) return false;
+    std::unordered_set<Node> entered;
+    return set_holds_variable(n, member, entered);
+}
+
 // What the engine writes about a rule or a contradiction is not data either
 // (Zelph::is_bookkeeping). Each contradiction record had a condition `S ~ Y`
 // bound to it, so a rule whose consequence refuted a claimed fact met the
@@ -1005,6 +1030,17 @@ static bool is_engine_bookkeeping(const Zelph* n, const FactStructure& fs)
 {
     if (fs.predicate != n->core.IsA && fs.predicate != n->core.PartOf) return false;
     if (n->is_bookkeeping(fs.subject, fs.predicate, fs.objects)) return true;
+    // A membership whose member is a rule's set of conditions holding a
+    // variable constitutes rule text and answers nothing, just as the
+    // membership of a statement holding a variable does: the inner list of a
+    // nested rule exists within the outer one solely because the rule was
+    // written in that manner. Only a rule's own collection or a set tagged
+    // `~ conjunction` qualifies as such a set (holds_rule_text), queried
+    // first due to its low cost: a data collection named by a single pattern
+    // is interpreted as a set of one member, and its memberships are data. A
+    // set of ground conditions holds no variable, and its membership answers,
+    // just as a ground condition's does.
+    if (fs.predicate == n->core.PartOf && rule_set_holds_variable(n, fs.subject)) return true;
     return n->prune_scan() && n->is_rule_text_fact(fs.subject, fs.predicate, fs.objects);
 }
 
