@@ -307,7 +307,10 @@ extern "C"
        and the accompanying validations. A stored network supersedes the
        graph: the variables zelph_variable remembered by name are erased
        along with it, and the handle of every network compiled prior becomes
-       invalid afterwards. A dump is incorporated into the graph, or read
+       invalid afterwards. The networks remain intact until the engine is
+       destroyed, ensuring that a thread still evaluating one finishes safely;
+       a session that again and again loads and compiles retains every network
+       it has ever compiled. A dump is incorporated into the graph, or read
        from its .bin cache if the graph is vacant, thereby substituting the
        graph in the identical manner. A node the caller retained through the
        load names whatever carries the same identifier afterwards, or

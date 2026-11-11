@@ -1260,17 +1260,19 @@ TEST_CASE("neural: a malformed net definition is named as such, not as a missing
 //
 // The engine that drives this feature evaluates a network from a search while
 // a second thread trains it, so the guarantee has to be stated and pinned:
-// any number of threads may evaluate concurrently, and a training step or
-// set_weights excludes them for its duration. Before the lock existed,
-// train_step wrote _w while forward read it -- a data race, i.e. undefined
-// behaviour rather than merely a stale number.
+// any number of threads may evaluate concurrently, and if one coincides with a
+// training step or set_weights operation, it re-reads the data, thereby
+// observing a whole set of weights. Such overlapping reads still constitute a
+// data race under the C++ memory model -- the sequence lock deliberately
+// permits this and throws the read away (refer to load_weight in neural.cpp)
+// -- thus, a -fsanitize=thread compilation flags these two functions, and the
+// race check applies to all other components only after that report is
+// suppressed.
 //
-// A test cannot prove the absence of a race; what it can do is exercise the
-// path hard enough that a sanitizer build has something to find, and pin the
-// two properties that must hold with or without concurrency: evaluation stays
-// finite and in range, and the weights a reader observes are always a whole
-// set, never a half-written one. Run the suite under -fsanitize=thread to
-// turn this into an actual race check.
+// What a test can do is exercise the path hard and pin the two properties
+// that must hold with or without concurrency: evaluation stays finite and in
+// range, and the weights a reader observes are always a whole set, never a
+// half-written one. `test_capi.cpp` checks the second condition by value.
 // ---------------------------------------------------------------------------
 
 TEST_CASE("neural: a network can be evaluated while another thread trains it")
@@ -1330,8 +1332,9 @@ r in SLout
         collector.clear();
 
         // zelph/nn-snapshot used to hand out a reference into the live weight
-        // store; it returns a copy taken under the lock now, so its shape is
-        // always the compiled shape even while a trainer runs.
+        // store; it returns a copy captured within the net's sequence lock
+        // now, so its shape is always the compiled shape even while a trainer
+        // runs.
         interactive.process(R"js(%(do
   (def ch (ev/thread-chan 4))
   (ev/spawn-thread

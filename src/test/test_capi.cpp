@@ -31,6 +31,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cmath>
 #include <cstring>
 #include <filesystem>
@@ -1485,11 +1486,12 @@ TEST_CASE("capi: failures come back as a status and a message, never as an excep
 }
 
 // ---------------------------------------------------------------------------
-// The threading guarantee, at the level the Rust wrapper restates it: eval
-// takes a shared reference and training takes one too, so a search thread may
-// evaluate while a trainer updates the same net. test_neural.cpp pins this
-// through Janet's ev/spawn-thread; here it is pinned through the ABI itself,
-// with plain OS threads and no VM in between.
+// The threading guarantee, at the level at which the Rust wrapper restates it:
+// both eval and training traverse the net's sequence lock, enabling a search
+// thread to perform evaluation while a trainer updates the same net. In
+// test_neural.cpp, this pinning is enforced via Janet's ev/spawn-thread; here,
+// it is achieved directly through the ABI, using standard OS threads without
+// any intervening VM.
 // ---------------------------------------------------------------------------
 
 TEST_CASE("capi: a network can be evaluated from several threads while another trains it")
@@ -1546,6 +1548,305 @@ TEST_CASE("capi: a network can be evaluated from several threads while another t
         reader.join();
 
     CHECK(failures.load() == 0);
+}
+
+// A reader overlapping a write must still perceive one whole set of weights.
+// The preceding test verifies only that scores stay finite, a condition that
+// could be satisfied even if a reader accesses a mixture of two weight sets.
+// In this scenario, either every weight is 1 or every weight is 2, toggled
+// via a restore within a tight loop, and the network is structured such that each whole set
+// produces a distinct output: one active input, `hidden` units, and one output
+// give hidden * c * c, resulting in 64 or 256 with no intermediate values.
+// Every read path in the C ABI traverses the sequence lock, so each one is
+// queried: evaluation per node and per slot, the accumulator calls, and the
+// snapshot, whose copy is also what a write-back reads.
+TEST_CASE("capi: an evaluation that overlaps a restore reads one whole set of weights")
+{
+    // Wide enough that the durations of a read and a restore frequently
+    // intersect: with just a few weights, both operations conclude within
+    // nanoseconds, and a reader that never checked the sequence still passed
+    // this test.
+    constexpr size_t hidden = 64;
+
+    Engine engine;
+    engine.member_of("i1", "In");
+    for (size_t h = 0; h < hidden; ++h)
+        engine.member_of(("h" + std::to_string(h)).c_str(), "Hidden");
+    engine.member_of("o1", "Out");
+
+    const zelph_node in        = engine.node("In");
+    const zelph_node hid       = engine.node("Hidden");
+    const zelph_node out       = engine.node("Out");
+    const zelph_node layers[3] = {in, hid, out};
+    const zelph_node i1        = engine.node("i1");
+
+    REQUIRE(zelph_nn_connect_layers(engine, in, hid, 0.1, 1, nullptr) == ZELPH_OK);
+    REQUIRE(zelph_nn_connect_layers(engine, hid, out, 0.1, 2, nullptr) == ZELPH_OK);
+    zelph_net net = -1;
+    REQUIRE(zelph_nn_compile(engine, layers, 3, ZELPH_ACTIVATION_RELU, &net) == ZELPH_OK);
+
+    // One input that is active, each hidden unit passing c, the output
+    // summing c * c across all such units: hidden * c * c, 64 or 256, and
+    // any mixture of the two sets falls in between.
+    const std::vector<double> ones(2 * hidden, 1.0);
+    const std::vector<double> twos(2 * hidden, 2.0);
+    const size_t              sizes[2] = {hidden, hidden};
+    REQUIRE(zelph_nn_restore(engine, net, ones.data(), ones.size(), sizes, 2) == ZELPH_OK);
+
+    std::atomic<bool> writing{true};
+    std::atomic<int>  failures{0};
+    std::atomic<long> reads{0};
+
+    std::thread writer([&]
+                       {
+        const auto until = std::chrono::steady_clock::now() + std::chrono::milliseconds(400);
+        for (int round = 0; std::chrono::steady_clock::now() < until; ++round)
+        {
+            const auto& w = round % 2 ? ones : twos;
+            if (zelph_nn_restore(engine, net, w.data(), w.size(), sizes, 2) != ZELPH_OK)
+                ++failures;
+        }
+        writing.store(false); });
+
+    const double low   = static_cast<double>(hidden);
+    const double high  = 4.0 * static_cast<double>(hidden);
+    const auto   whole = [&](const double score)
+    { return score == low || score == high; };
+    const auto one_value = [](const double* v, const size_t n)
+    {
+        for (size_t i = 0; i < n; ++i)
+            if (v[i] != v[0]) return false;
+        return v[0] == 1.0 || v[0] == 2.0;
+    };
+
+    std::vector<std::thread> readers;
+    for (int t = 0; t < 4; ++t)
+    {
+        readers.emplace_back([&, t]
+                             {
+            const size_t        slot = 0;
+            std::vector<double> acc(hidden);
+            std::vector<double> weights(2 * hidden);
+            while (writing.load())
+            {
+                zelph_node top   = 0;
+                double     score = 0;
+                size_t     count = 1;
+                bool       ok    = true;
+                switch (t)
+                {
+                case 0:
+                    ok = zelph_nn_eval_nodes(engine, net, &i1, nullptr, 1, 1, &top, &score, &count) == ZELPH_OK
+                      && whole(score);
+                    break;
+                case 1:
+                    ok = zelph_nn_eval_slots(engine, net, &slot, nullptr, 1, 1, &top, &score, &count) == ZELPH_OK
+                      && whole(score);
+                    break;
+                case 2:
+                    // Set and update each fill the vector from one whole set
+                    // of weights; a valid evaluation might reasonably
+                    // associate that set with the next one, 64 * 1 * 2 = 128.
+                    ok = zelph_nn_accumulator_set(engine, net, &slot, nullptr, 1, acc.data(), hidden) == ZELPH_OK
+                      && one_value(acc.data(), hidden);
+                    std::fill(acc.begin(), acc.end(), 0.0);
+                    ok = ok
+                      && zelph_nn_accumulator_update(engine, net, &slot, nullptr, 1, nullptr, nullptr, 0, acc.data(), hidden) == ZELPH_OK
+                      && one_value(acc.data(), hidden)
+                      && zelph_nn_accumulator_eval(engine, net, acc.data(), hidden, 1, &top, &score, &count) == ZELPH_OK
+                      && (whole(score) || score == 2.0 * low);
+                    break;
+                default:
+                    count = weights.size();
+                    ok    = zelph_nn_snapshot(engine, net, weights.data(), &count) == ZELPH_OK
+                      && count == weights.size() && one_value(weights.data(), weights.size());
+                    break;
+                }
+                if (!ok) ++failures;
+                ++reads;
+            } });
+    }
+
+    writer.join();
+    for (auto& reader : readers)
+        reader.join();
+
+    CHECK(failures.load() == 0);
+    CHECK(reads.load() > 0);
+}
+
+// Two threads train one input slot at a time, back to back. Each step opens its
+// window solely for the few hundred weights it modifies, yet these steps follow
+// each other within microseconds, whereas capturing a snapshot of a quarter of
+// a million weights requires significantly more time: a reader attempting
+// retries alone would rarely detect a gap. After several attempts, it asks the
+// writers to pause and waits no longer than the current window, ensuring that
+// the twenty snapshots complete within a tenth of a second. Without this
+// mechanism, on idle cores they never finished before the trainers abandoned
+// the effort after five seconds, causing a regression to fail rather than
+// resulting in a hang. On cores busy with other work, the trainers are
+// preempted frequently enough to create gaps; in such cases, snapshots could
+// take up to ten seconds, and the test catches a regression only
+// intermittently.
+TEST_CASE("capi: a long read finishes while other threads train without a pause")
+{
+    constexpr size_t inputs   = 1000;
+    constexpr size_t hidden   = 256;
+    constexpr int    trainers = 2;
+
+    Engine engine;
+    for (size_t i = 0; i < inputs; ++i)
+        engine.member_of(("x" + std::to_string(i)).c_str(), "In");
+    for (size_t h = 0; h < hidden; ++h)
+        engine.member_of(("u" + std::to_string(h)).c_str(), "Hidden");
+    engine.member_of("y", "Out");
+
+    const zelph_node in        = engine.node("In");
+    const zelph_node hid       = engine.node("Hidden");
+    const zelph_node out       = engine.node("Out");
+    const zelph_node y         = engine.node("y");
+    const zelph_node layers[3] = {in, hid, out};
+    REQUIRE(zelph_nn_connect_layers(engine, in, hid, 0.1, 1, nullptr) == ZELPH_OK);
+    REQUIRE(zelph_nn_connect_layers(engine, hid, out, 0.1, 2, nullptr) == ZELPH_OK);
+    zelph_net net = -1;
+    REQUIRE(zelph_nn_compile(engine, layers, 3, ZELPH_ACTIVATION_LEAKY_RELU, &net) == ZELPH_OK);
+
+    std::atomic<bool>        stop{false};
+    std::atomic<bool>        gave_up{false};
+    std::atomic<long>        steps{0};
+    std::vector<std::thread> threads;
+    const auto               until = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    for (int t = 0; t < trainers; ++t)
+    {
+        threads.emplace_back([&, t]
+                             {
+            const double one    = 1.0;
+            const double target = 0.5;
+            for (size_t round = t; !stop.load(); ++round)
+            {
+                if (std::chrono::steady_clock::now() > until)
+                {
+                    gave_up.store(true);
+                    break;
+                }
+                const size_t slot = round % inputs;
+                zelph_nn_train_slots(engine, net, &slot, &one, 1, &y, &target, 1, 1e-6, nullptr);
+                ++steps;
+            } });
+    }
+
+    while (steps.load() < 1000)
+        std::this_thread::yield();
+
+    std::vector<double> weights(inputs * hidden + hidden);
+    for (int round = 0; round < 20; ++round)
+    {
+        size_t count = weights.size();
+        CHECK(zelph_nn_snapshot(engine, net, weights.data(), &count) == ZELPH_OK);
+        CHECK(count == weights.size());
+    }
+
+    stop.store(true);
+    for (auto& thread : threads)
+        thread.join();
+    CHECK_FALSE(gave_up.load());
+}
+
+// When a thread is evaluating a net and a load retires its handle, the
+// thread finishes on that net: the registry keeps every net
+// until the engine is dismantled, as the lookup provides no reference
+// capable of sustaining its existence. Following the load, the handle is
+// rejected and remains unanswered by any other entity.
+TEST_CASE("capi: a load retires the handles a thread is evaluating without freeing the nets")
+{
+    const auto path = fs::temp_directory_path() / "zelph_capi_load_while_evaluating.bin";
+    fs::remove(path);
+
+    Engine engine;
+    engine.member_of("i1", "In");
+    engine.member_of("o1", "Out");
+    const zelph_node layers[2] = {engine.node("In"), engine.node("Out")};
+    const zelph_node i1        = engine.node("i1");
+    REQUIRE(zelph_nn_connect_layers(engine, layers[0], layers[1], 0.5, 1, nullptr) == ZELPH_OK);
+    zelph_net net = -1;
+    REQUIRE(zelph_nn_compile(engine, layers, 2, ZELPH_ACTIVATION_RELU, &net) == ZELPH_OK);
+    REQUIRE(zelph_save(engine, path.string().c_str()) == ZELPH_OK);
+
+    std::atomic<bool> refused{false};
+    std::atomic<int>  failures{0};
+    std::thread       reader([&]
+                       {
+        while (!refused.load())
+        {
+            zelph_node top   = 0;
+            double     score = 0;
+            size_t     count = 1;
+            const auto status = zelph_nn_eval_nodes(engine, net, &i1, nullptr, 1, 1, &top, &score, &count);
+            if (status == ZELPH_INVALID_ARGUMENT)
+                refused.store(true);
+            else if (status != ZELPH_OK || !std::isfinite(score))
+                ++failures;
+        } });
+
+    REQUIRE(zelph_load(engine, path.string().c_str()) == ZELPH_OK);
+    reader.join();
+
+    CHECK(failures.load() == 0);
+    CHECK(refused.load());
+    fs::remove(path);
+}
+
+// The registry stores its slots organized in chunks that remain fixed in
+// place, enabling the owner to append while other threads look up handles.
+// Expanding beyond a single chunk during an active evaluation triggers
+// precisely this scenario, and each handle provided must be fresh and must
+// respond.
+TEST_CASE("capi: the net registry grows past a chunk while another thread evaluates")
+{
+    Engine engine;
+    engine.member_of("i1", "In");
+    engine.member_of("o1", "Out");
+    const zelph_node layers[2] = {engine.node("In"), engine.node("Out")};
+    const zelph_node i1        = engine.node("i1");
+    REQUIRE(zelph_nn_connect_layers(engine, layers[0], layers[1], 0.5, 1, nullptr) == ZELPH_OK);
+    zelph_net first = -1;
+    REQUIRE(zelph_nn_compile(engine, layers, 2, ZELPH_ACTIVATION_RELU, &first) == ZELPH_OK);
+
+    std::atomic<bool> compiling{true};
+    std::atomic<int>  failures{0};
+    std::thread       reader([&]
+                       {
+        while (compiling.load())
+        {
+            zelph_node top   = 0;
+            double     score = 0;
+            size_t     count = 1;
+            if (zelph_nn_eval_nodes(engine, first, &i1, nullptr, 1, 1, &top, &score, &count) != ZELPH_OK
+                || top != engine.node("o1"))
+                ++failures;
+        } });
+
+    std::vector<zelph_net> handles{first};
+    for (int i = 0; i < 1100; ++i)
+    {
+        zelph_net h = -1;
+        REQUIRE(zelph_nn_compile(engine, layers, 2, ZELPH_ACTIVATION_RELU, &h) == ZELPH_OK);
+        handles.push_back(h);
+    }
+    compiling.store(false);
+    reader.join();
+    CHECK(failures.load() == 0);
+
+    for (size_t i = 1; i < handles.size(); ++i)
+        CHECK(handles[i] == handles[i - 1] + 1);
+    for (const zelph_net h : {handles[1023], handles[1024], handles.back()})
+    {
+        zelph_node top   = 0;
+        double     score = 0;
+        size_t     count = 1;
+        CHECK(zelph_nn_eval_nodes(engine, h, &i1, nullptr, 1, 1, &top, &score, &count) == ZELPH_OK);
+        CHECK(top == engine.node("o1"));
+    }
 }
 
 // ---------------------------------------------------------------------------

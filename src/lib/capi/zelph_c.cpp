@@ -29,6 +29,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include "network/adjacency_set.hpp"
 #include "network/answer.hpp"
 #include "network/fact_structure.hpp"
+#include "network/net_registry.hpp"
 #include "network/neural.hpp"
 #include "network/reasoning.hpp"
 #include "network/rule_identity.hpp"
@@ -40,7 +41,6 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include <map>
 #include <memory>
 #include <mutex>
-#include <shared_mutex>
 #include <string>
 #include <thread>
 #include <utility>
@@ -71,13 +71,13 @@ struct zelph_engine
     // times.
     std::map<std::string, zelph::network::Node> variables;
 
-    // Guards solely the handle table. The networks themselves are internally
-    // synchronized (see NeuralNet), meaning a shared lookup suffices for an
-    // evaluating thread. A lookup hands out a share of the net: a load that
-    // replaces the graph empties all entries, preserving the slots so no
-    // handle is repurposed, even as another thread continues evaluating.
-    mutable std::shared_mutex                               nets_mutex;
-    std::vector<std::shared_ptr<zelph::network::NeuralNet>> nets;
+    // The compiled networks, accessed via handle. A lookup takes no lock and
+    // produces no writes, from any thread; the networks synchronize their
+    // own weights (see NeuralNet). A load that replaces the graph retires every
+    // handle while preserving the networks, ensuring that a thread still
+    // evaluating one remains safe and no handle is ever repurposed (see
+    // NetRegistry).
+    zelph::network::NetRegistry nets;
 
     zelph_engine(const zelph_engine&)            = delete;
     zelph_engine& operator=(const zelph_engine&) = delete;
@@ -159,12 +159,9 @@ namespace
                                             "(zelph_engine_create), and this call came from another thread.");
     }
 
-    std::shared_ptr<zelph::network::NeuralNet> find_net(zelph_engine* engine, const zelph_net handle)
+    zelph::network::NeuralNet* find_net(zelph_engine* engine, const zelph_net handle)
     {
-        std::shared_lock<std::shared_mutex> lock(engine->nets_mutex);
-        if (handle < 0 || static_cast<size_t>(handle) >= engine->nets.size())
-            return nullptr;
-        return engine->nets[static_cast<size_t>(handle)];
+        return engine->nets.find(handle);
     }
 
     // The output of a forward pass, in the order zelph/nn-eval-nodes
@@ -597,9 +594,7 @@ int32_t zelph_load(zelph_engine* engine, const char* path)
     if (engine->interactive.graph()->graph_epoch() != epoch)
     {
         engine->variables.clear();
-        std::unique_lock<std::shared_mutex> lock(engine->nets_mutex);
-        for (auto& net : engine->nets)
-            net.reset();
+        engine->nets.retire_all();
     }
     return status;
 }
@@ -646,9 +641,7 @@ int32_t zelph_nn_compile(zelph_engine*     engine,
                 ? zelph::network::Activation::LeakyRelu
                 : zelph::network::Activation::Relu);
 
-        std::unique_lock<std::shared_mutex> lock(engine->nets_mutex);
-        engine->nets.push_back(std::move(net));
-        *out_handle = static_cast<zelph_net>(engine->nets.size() - 1);
+        *out_handle = engine->nets.add(std::move(net));
         return succeed(); });
 }
 
@@ -919,11 +912,11 @@ int32_t zelph_nn_snapshot_shape(zelph_engine* engine, const zelph_net handle, si
 
     return guarded([&]
                    {
-        const auto          weights = net->weights();
+        // The shapes remain unchanged once the net is compiled, so they
+        // come from its layers rather than from a copy of each weight.
         std::vector<size_t> sizes;
-        sizes.reserve(weights.size());
-        for (const auto& matrix : weights)
-            sizes.push_back(matrix.size());
+        for (size_t k = 0; k + 1 < net->layer_count(); ++k)
+            sizes.push_back(net->layer_nodes(k).size() * net->layer_nodes(k + 1).size());
 
         return write_array(sizes, out_sizes, count); });
 }
