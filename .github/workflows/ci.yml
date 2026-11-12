@@ -206,7 +206,6 @@ jobs:
           # For reproducible builds, consider pinning this to the version
           # your local `emcc --version` reports (e.g. "4.0.10").
           version: latest
-          actions-cache-folder: emsdk-cache
 
       - name: Configure (Emscripten)
         run: emcmake cmake -B build-wasm -DCMAKE_BUILD_TYPE=Release

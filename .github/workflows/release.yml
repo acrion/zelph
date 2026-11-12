@@ -263,7 +263,6 @@ jobs:
         uses: mymindstorm/setup-emsdk@v14
         with:
           version: latest
-          actions-cache-folder: emsdk-cache
 
       - name: Configure (Emscripten)
         run: emcmake cmake -B build-wasm -DCMAKE_BUILD_TYPE=Release

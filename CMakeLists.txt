@@ -48,6 +48,11 @@ set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
 
 add_library(project_options INTERFACE)
 
+# libc++ still pulls in headers that it no longer needs in order to maintain backward compatibility.
+# Disable this feature so that a missing #include breaks the build here and not only after a libc++ update.
+# libstdc++ and MSVC ignore this macro, so this only affects libc++ builds (Emscripten and Apple Clang).
+target_compile_definitions(project_options INTERFACE _LIBCPP_REMOVE_TRANSITIVE_INCLUDES)
+
 option(ZELPH_BUILD_APP   "Build the zelph REPL executable" ${PROJECT_IS_TOP_LEVEL})
 option(ZELPH_BUILD_TESTS "Build zelph tests"               ${PROJECT_IS_TOP_LEVEL})
 
@@ -59,7 +64,7 @@ option(ZELPH_BUILD_TESTS "Build zelph tests"               ${PROJECT_IS_TOP_LEVE
 set(ZELPH_X86_BASELINE "x86-64-v3" CACHE STRING
     "Instruction set floor for x86-64 builds (a -march= name, e.g. x86-64-v2)")
 option(ZELPH_NATIVE_ARCH
-       "Build for the machine that compiles, rather than for ZELPH_X86_BASELINE" OFF)
+    "Build for the machine that compiles, rather than for ZELPH_X86_BASELINE" OFF)
 
 # CMAKE_SYSTEM_PROCESSOR names the host, which is incorrect when the build aims
 # at a different architecture. Where the toolchain names a target, that decides.
