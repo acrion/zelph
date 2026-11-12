@@ -36,6 +36,18 @@ namespace zelph::platform
     size_t   get_process_memory_usage();
     uint64_t get_process_cpu_time_ns();
 
+    // An address within the caller's frame, situated on the stack of its
+    // thread.
+    std::uintptr_t stack_position();
+
+    // The lowest address the calling thread's stack can attain while leaving
+    // `reserve` bytes unutilized, as reported by the platform for the
+    // thread's stack; when no such information is provided, or the caller
+    // runs on a stack the platform does not know (a coroutine's), `fallback`
+    // bytes beneath the caller's frame. On every platform zelph is built
+    // for, the stack expands downward.
+    std::uintptr_t stack_floor(std::size_t reserve, std::size_t fallback);
+
     // Absolute, symlink-resolved path of the running executable.
     // Returns an empty path if it cannot be determined.
     std::filesystem::path get_executable_path();

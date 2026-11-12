@@ -177,7 +177,18 @@ std::unordered_set<Node> Reasoning::rule_variables(const Node rule, const Node p
     // follow -- Zelph::set creates it, and its members hang off it as
     // separate PartOf facts. Without this step the variables of a
     // multi-condition rule would be invisible.
-    std::vector<Node> pending{condition};
+    //
+    // Only a set tagged as a conjunction is entered. A data collection is a
+    // value that the rebuild preserves unchanged, and counting its variables
+    // would make a switch over it rename them on every run and leave fresh ones
+    // behind. A collection of the rule's own text is rebuilt, yet it
+    // is not entered either, so a switch whose rule has such a collection as
+    // its sole condition and a ground consequence leaves that rule as a
+    // mention. Every set is entered once: a set that holds itself, either
+    // directly or via another set, would otherwise be retrieved again and
+    // again.
+    std::vector<Node>        pending{condition};
+    std::unordered_set<Node> entered;
     while (!pending.empty())
     {
         const Node cond = pending.back();
@@ -185,6 +196,7 @@ std::unordered_set<Node> Reasoning::rule_variables(const Node rule, const Node p
 
         if (check_fact(cond, core.IsA, {core.Conjunction}).is_known())
         {
+            if (!entered.insert(cond).second) continue;
             for (const Node m : conjunction_members(this, cond))
                 pending.push_back(m);
             continue;

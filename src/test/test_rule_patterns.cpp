@@ -26,6 +26,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include <doctest/doctest.h>
 
 #include "network/reasoning.hpp"
+#include "network/rule_identity.hpp"
 #include "network/zelph.hpp"
 #include "test_helpers.hpp"
 
@@ -33,7 +34,16 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <utility>
+
+#if defined(_WIN32)
+    #define WIN32_LEAN_AND_MEAN
+    #define NOMINMAX
+    #include <windows.h>
+#else
+    #include <pthread.h>
+#endif
 
 using namespace zelph::test;
 
@@ -4469,11 +4479,10 @@ TEST_CASE("nested condition sets: a rule that writes rules from any statement st
 }
 
 // `zelph/fact` takes a membership of a collection in itself, and `zelph/query` takes
-// a tagged set as it stands, so three ordinary calls arrive at this state. No meaning
-// is claimed for such a set here, only that reading it through results in an end:
-// entering the set again from within had the evaluation recurse until the stack ran
-// out.
-TEST_CASE("nested condition sets: a query over a set that holds itself comes to an end")
+// a tagged set as it stands, so three ordinary calls reach this state. The set is
+// read once, thus the query answers what its other members bind: entering the set
+// again from within had the evaluation recurse until the stack ran out.
+TEST_CASE("nested condition sets: a query over a set that holds itself answers what its other members bind")
 {
     run_both_modes([](auto& collector, auto& interactive)
                    {
@@ -4483,7 +4492,774 @@ a p b
 %(zelph/fact s "in" s)
 %(zelph/fact s "~" "conjunction")
 )");
-        CHECK_NOTHROW(interactive.process("%(zelph/query s)")); });
+        collector.clear();
+        interactive.process(R"js(%(each r (zelph/query s) (zelph/out (string "found=" (zelph/name (get r 'X)) "/" (zelph/name (get r 'Y))))))js");
+        CHECK(count_outputs_containing(collector, "found=") == 1);
+        CHECK(any_output_contains(collector, "found=a/b")); });
+}
+
+// A set of conditions can hold itself. `zelph/fact` takes the membership in the
+// same way it takes any other, and a name merge reaches that point via ordinary
+// facts: the merge of a set with a collection that holds it, regardless of whether
+// the rule over the set was written before or after, and the merge that gives a
+// second set a member, thereby closing a cycle through it. The conditions of a rule
+// are read once per set, so a rule over such a set means the rule over its other
+// members. The first run over the rule caused a stack overflow, whether it followed
+// the line that wrote the rule, a merge, or a load. The variables are made once
+// each, thereby ensuring that the conditions and the consequence share them.
+TEST_CASE("nested condition sets: a rule over a set that holds itself derives what its other members bind")
+{
+    const auto file = fs::temp_directory_path() / "zelph_self_holding_set.bin";
+    run_both_modes([&](auto& collector, auto& interactive)
+                   {
+        const auto read = [&]
+        {
+            SUBCASE("in the session") {}
+            SUBCASE("after .save and .load")
+            {
+                interactive.process(".save \"" + file.string() + "\"");
+                interactive.process(".load \"" + file.string() + "\"");
+                interactive.process(".auto-run"); // a load disables it
+            }
+            interactive.process("c p d");
+            collector.clear();
+            interactive.process("X q Y");
+            std::vector<std::string> derived = collect_answers(collector);
+            std::ranges::sort(derived);
+            CHECK(derived == std::vector<std::string>{"a q b", "c q d"});
+        };
+        process_lines(interactive, "a p b\n%(def x (zelph/var \"X\"))\n%(def y (zelph/var \"Y\"))");
+        SUBCASE("a membership the program writes")
+        {
+            process_lines(interactive, R"(
+%(def s (zelph/collection (zelph/fact x "p" y)))
+%(zelph/fact s "in" s)
+%(zelph/fact s "~" "conjunction")
+%(zelph/fact s "=>" (zelph/fact x "q" y))
+)");
+            read();
+        }
+        SUBCASE("a name merge before the rule")
+        {
+            process_lines(interactive, R"(
+%(zelph/fact (zelph/fact x "p" y) "in" "m1")
+m1 in m2
+.name m2 zelph m1
+%(zelph/fact (zelph/resolve "m1") "~" "conjunction")
+%(zelph/fact (zelph/resolve "m1") "=>" (zelph/fact x "q" y))
+)");
+            read();
+        }
+        SUBCASE("a name merge after the rule")
+        {
+            process_lines(interactive, R"(
+%(zelph/fact (zelph/fact x "p" y) "in" "m1")
+%(zelph/fact (zelph/resolve "m1") "~" "conjunction")
+%(zelph/fact (zelph/resolve "m1") "=>" (zelph/fact x "q" y))
+m1 in m2
+.name m2 zelph m1
+)");
+            read();
+        }
+        SUBCASE("a name merge that closes a cycle through a second set")
+        {
+            process_lines(interactive, R"(
+%(zelph/fact (zelph/fact x "p" y) "in" "n2")
+%(zelph/fact (zelph/resolve "n2") "~" "conjunction")
+%(zelph/fact (zelph/resolve "n2") "in" "n1")
+%(zelph/fact (zelph/resolve "n1") "~" "conjunction")
+n1 in m
+.name m zelph n2
+%(zelph/fact (zelph/resolve "n1") "=>" (zelph/fact x "q" y))
+)");
+            read();
+        } });
+    std::filesystem::remove(file);
+}
+
+// A negated member of a set that holds itself is found as the negated member of any
+// set is, thus the rule awaits the rules that hold no negation. The facts arrive on
+// a single line, and `c r d` follows from them in two steps, a pass after the facts:
+// a rule that did not wait derived `c q d` before `c r d` was present.
+TEST_CASE("nested condition sets: a negated member of a set that holds itself waits for the positive rules")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+(X t Y) => (X u Y)
+(X u Y) => (X r Y)
+%(def x (zelph/var "X"))
+%(def y (zelph/var "Y"))
+%(def s (zelph/collection (zelph/fact x "p" y) (zelph/negate (zelph/fact x "r" y))))
+%(zelph/fact s "in" s)
+%(zelph/fact s "~" "conjunction")
+%(zelph/fact s "=>" (zelph/fact x "q" y))
+%(do (zelph/fact "a" "p" "b") (zelph/fact "c" "p" "d") (zelph/fact "c" "t" "d"))
+)");
+        collector.clear();
+        interactive.process("X q Y");
+        CHECK(collect_answers(collector) == std::vector<std::string>{"a q b"}); });
+}
+
+// `.explain` reads the conditions of a rule in the same manner as Reasoning::evaluate,
+// once for each set, and finds the derivation of a rule over a set that holds itself:
+// entering the set again from within caused the reading to recurse until the stack ran
+// out.
+TEST_CASE("nested condition sets: .explain reads a set that holds itself once")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+a p b
+%(def x (zelph/var "X"))
+%(def y (zelph/var "Y"))
+%(def s (zelph/collection (zelph/fact x "p" y)))
+%(zelph/fact s "in" s)
+%(zelph/fact s "~" "conjunction")
+%(zelph/fact s "=>" (zelph/fact x "q" y))
+)");
+        collector.clear();
+        interactive.process(".explain a q b");
+        CHECK(any_output_contains(collector, "a p b  [axiom]")); });
+}
+
+// A consequence whose predicate is a variable needs a condition that binds it, and
+// the conditions are sought within the set of the rule at every depth, each set once.
+// In a set that holds itself, the search took the members up again and again, and
+// writing the rule never ended.
+TEST_CASE("nested condition sets: the predicate variable of a consequence is looked for in a set that holds itself")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+a p b
+%(def x (zelph/var "X"))
+%(def y (zelph/var "Y"))
+%(def r (zelph/var "R"))
+%(def s (zelph/collection (zelph/fact x r y)))
+%(zelph/fact s "in" s)
+%(zelph/fact s "~" "conjunction")
+)");
+        SUBCASE("a condition binds it")
+        {
+            interactive.process(R"js(%(zelph/fact s "=>" (zelph/fact x r "z")))js");
+            collector.clear();
+            interactive.process("X p z");
+            CHECK(collect_answers(collector) == std::vector<std::string>{"a p z"});
+        }
+        SUBCASE("no condition binds it")
+        {
+            CHECK_THROWS_WITH(interactive.process(R"js(%(zelph/fact s "=>" (zelph/fact x (zelph/var "Q") "z")))js"), doctest::Contains("which no condition binds"));
+        } });
+}
+
+// The identity check computes the fingerprint of every rule before comparing a new
+// one against them. A set that held itself directly and also via a one-member set
+// was included twice at every level of the fingerprint, all the way down to the
+// depth cap, and the next rule typed after a rule over such a set never
+// returned. A set encountered again along the current path is rendered as a fixed
+// token.
+TEST_CASE("nested condition sets: a rule typed after a rule over a set that reaches itself twice is written")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+a p b
+%(def x (zelph/var "X"))
+%(def y (zelph/var "Y"))
+%(zelph/fact (zelph/fact x "p" y) "in" "s0")
+%(zelph/fact (zelph/resolve "s0") "~" "conjunction")
+%(zelph/fact (zelph/resolve "s0") "in" "s1")
+%(zelph/fact (zelph/resolve "s1") "~" "conjunction")
+s1 in m
+s0 in m
+.name m zelph s0
+%(zelph/fact (zelph/resolve "s0") "=>" (zelph/fact x "q" y))
+(X r Y) => (X t Y)
+c r d
+)");
+        collector.clear();
+        interactive.process("X t Y");
+        CHECK(collect_answers(collector) == std::vector<std::string>{"c t d"});
+        collector.clear();
+        interactive.process("X q Y");
+        CHECK(collect_answers(collector) == std::vector<std::string>{"a q b"}); });
+}
+
+// Two rules over sets of identical shape that each hold themselves constitute one rule up
+// to the names of their variables: the identity check pairs the two sets, meets each
+// again along its own path, and compares them as the token it renders for both.
+// Without a stop, the pairing progressed through the cycles up to the depth cap and
+// failed, and the second rule stood beside the first.
+TEST_CASE("nested condition sets: two rules over sets of one shape that hold themselves are one rule")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        const std::string build = R"js((def x (zelph/var "X")) (def y (zelph/var "Y")) (def s (zelph/collection (zelph/fact x "p" y))) (zelph/fact s "in" s) (zelph/fact s "~" "conjunction") (zelph/fact s "=>" (zelph/fact x "q" y)))js";
+        interactive.process("%(def r0 (do " + build + "))");
+        collector.clear();
+        interactive.process("%(zelph/out (string \"same=\" (= r0 (zelph/dedup-rule (fn [] " + build + ")))))");
+        CHECK(any_output_contains(collector, "same=true"));
+        collector.clear();
+        interactive.process(".stat");
+        CHECK(any_output_contains(collector, "Rules: 1")); });
+}
+
+// Two rules over sets that each hold themselves, with differing inner sets,
+// share a single fingerprint, so the identity check compares them: the inner sets are
+// compared against one another, and the two remain distinct rules, the second deriving
+// `a q c`.
+TEST_CASE("nested condition sets: two rules over sets that hold themselves with different inner sets stay two rules")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+%(def x (zelph/var "X"))
+%(def y (zelph/var "Y"))
+%(def z (zelph/var "Z"))
+%(def ia (zelph/collection (zelph/fact x "r" y) (zelph/fact y "r" z)))
+%(zelph/fact ia "~" "conjunction")
+%(def sa (zelph/collection (zelph/fact x "p" y) ia))
+%(zelph/fact sa "in" sa)
+%(zelph/fact sa "~" "conjunction")
+%(def r0 (zelph/fact sa "=>" (zelph/fact x "q" z)))
+)");
+        collector.clear();
+        interactive.process(R"js(%(zelph/out (string "same=" (= r0 (zelph/dedup-rule (fn [] (def x2 (zelph/var "X")) (def y2 (zelph/var "Y")) (def z2 (zelph/var "Z")) (def ib (zelph/collection (zelph/fact x2 "r" y2) (zelph/fact z2 "r" y2))) (zelph/fact ib "~" "conjunction") (def sb (zelph/collection (zelph/fact x2 "p" y2) ib)) (zelph/fact sb "in" sb) (zelph/fact sb "~" "conjunction") (zelph/fact sb "=>" (zelph/fact x2 "q" z2))))))))js");
+        CHECK(any_output_contains(collector, "same=false"));
+        process_lines(interactive, "a p b\na r b\nc r b");
+        collector.clear();
+        interactive.process("X q Y");
+        CHECK(any_output_contains(collector, "Answer: a q c")); });
+}
+
+// A set `c` that holds itself and `X p Y`, and a set `s` that holds `X p Y` and `c`: a
+// rule over `s` holds the conditions of `c`, along with `c`'s variables, in addition to
+// its own, and a rule over `c` holds them once. Their fingerprints differ unless the
+// rendering exceeds its budget before arriving at the sets, here in a consequence term
+// both rules share, the first among forty sets that hold one another along many cycles;
+// then the comparison decides. It meets `c` again solely on the path of the rule over
+// `c`, a structure on one side and a back-reference on the other, which match nothing,
+// even though both rules share the node `c`. With the rule over `c` entered first,
+// matching `c` by its identity before asking the paths, or matching a container met
+// again on one path as the token, took the two rules as one. Entered in the reverse
+// order, the rule over `c` is the one compared: its `c` is a back-reference on its own
+// path, which the comparison pairs only with a back-reference from the other rule, and
+// the rule over `s` holds none.
+TEST_CASE("nested condition sets: a rule over a set that holds itself is not the rule over a set holding it beside a condition")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        constexpr int n       = 40;
+        std::string   program;
+        for (int i = 1; i <= n; ++i)
+        {
+            const std::string set = "h" + std::to_string(i);
+            program += "%(zelph/fact (zelph/fact \"a\" \"p" + std::to_string(i) + "\" \"b\") \"in\" \"" + set + "\")\n";
+            program += "%(zelph/fact (zelph/resolve \"" + set + "\") \"~\" \"conjunction\")\n";
+        }
+        for (int i = 1; i <= n; ++i)
+            for (int d = 1; d <= 3; ++d)
+                program += "h" + std::to_string((i - 1 + d) % n + 1) + " in g" + std::to_string(i) + "\n";
+        for (int i = 1; i <= n; ++i)
+            program += ".name g" + std::to_string(i) + " zelph h" + std::to_string(i) + "\n";
+        program += R"(%(def x (zelph/var "X"))
+%(def y (zelph/var "Y"))
+%(def xc (zelph/var "X"))
+%(def yc (zelph/var "Y"))
+%(def c (zelph/collection (zelph/fact xc "p" yc)))
+%(zelph/fact c "in" c)
+%(zelph/fact c "~" "conjunction")
+%(def s (zelph/collection (zelph/fact x "p" y) c))
+%(zelph/fact s "~" "conjunction")
+)";
+        const std::string over_c = R"((zelph/fact c "=>" (zelph/fact xc "q" (zelph/resolve "h1"))))";
+        const std::string over_s = R"((zelph/fact s "=>" (zelph/fact x "q" (zelph/resolve "h1"))))";
+        std::string       first;
+        std::string       second;
+        SUBCASE("the rule over the set that holds itself first") { first = over_c; second = over_s; }
+        SUBCASE("the rule over the set beside it first") { first = over_s; second = over_c; }
+        process_lines(interactive, program);
+        interactive.process("%(def r1 " + first + ")");
+        collector.clear();
+        interactive.process("%(zelph/out (string \"same=\" (= r1 (zelph/dedup-rule (fn [] " + second + ")))))");
+        CHECK(any_output_contains(collector, "same=false"));
+        collector.clear();
+        interactive.process(".stat");
+        CHECK(any_output_contains(collector, "Rules: 2")); });
+}
+
+// A set that reaches itself through numerous one-member sets contains as many
+// back-references among its members, and each matches any other of its kind as the token
+// without establishing any binding, so a single pairing among them represents all. The set
+// below also holds `X p Y` and `Y p X`, meaning two distinct renamings of the variables
+// fit its conditions, yet only one of them fits the consequence: whichever renaming the
+// comparison tries first, for one of the two rules below it must return to try the
+// alternative. Reaching back through every order of eleven back-references exhausted the
+// comparison's budget first, and the rule, being the first one, was kept beside it.
+TEST_CASE("nested condition sets: rules over a set that reaches itself through many sets are compared in one pass")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        std::string program = "a p b\n";
+        for (const std::string pre : {"s", "t"})
+        {
+            program += "%(def x" + pre + " (zelph/var \"X\"))\n%(def y" + pre + " (zelph/var \"Y\"))\n";
+            program += "%(zelph/fact (zelph/fact x" + pre + " \"p\" y" + pre + ") \"in\" \"" + pre + "0\")\n";
+            program += "%(zelph/fact (zelph/fact y" + pre + " \"p\" x" + pre + ") \"in\" \"" + pre + "0\")\n";
+            program += "%(zelph/fact (zelph/resolve \"" + pre + "0\") \"~\" \"conjunction\")\n";
+            for (int i = 1; i <= 10; ++i)
+            {
+                const std::string h = pre + "h" + std::to_string(i);
+                program += "%(zelph/fact (zelph/resolve \"" + pre + "0\") \"in\" \"" + h + "\")\n";
+                program += "%(zelph/fact (zelph/resolve \"" + h + "\") \"~\" \"conjunction\")\n";
+                program += h + " in m" + pre + "\n";
+            }
+            program += pre + "0 in m" + pre + "\n.name m" + pre + " zelph " + pre + "0\n";
+        }
+        process_lines(interactive, program);
+        interactive.process(R"js(%(def ra (zelph/dedup-rule (fn [] (zelph/fact (zelph/resolve "s0") "=>" (zelph/fact xs "q" ys))))))js");
+        std::string consequence;
+        SUBCASE("X before Y") { consequence = "(zelph/fact xt \"q\" yt)"; }
+        SUBCASE("Y before X") { consequence = "(zelph/fact yt \"q\" xt)"; }
+        collector.clear();
+        interactive.process("%(zelph/out (string \"same=\" (= ra (zelph/dedup-rule (fn [] (zelph/fact (zelph/resolve \"t0\") \"=>\" " + consequence + "))))))");
+        CHECK(any_output_contains(collector, "same=true")); });
+}
+
+namespace
+{
+    // `k` tagged sets that each hold the condition `(X p Y)`, formed from the structure's
+    // own two variables, and, via name merges, all `k` sets; a rule over the first
+    // set, and a second rule over a second such structure, built through
+    // zelph/dedup-rule, which prints whether it found the first.
+    std::string sets_holding_one_another(const int k, const std::string& consequence)
+    {
+        std::string program;
+        for (const std::string pre : {"s", "t"})
+        {
+            program += "%(def x" + pre + " (zelph/var \"X\"))\n%(def y" + pre + " (zelph/var \"Y\"))\n";
+            for (int i = 1; i <= k; ++i)
+            {
+                const std::string set = pre + std::to_string(i);
+                program += "%(zelph/fact (zelph/fact x" + pre + " \"p\" y" + pre + ") \"in\" \"" + set + "\")\n";
+                program += "%(zelph/fact (zelph/resolve \"" + set + "\") \"~\" \"conjunction\")\n";
+            }
+            for (int i = 1; i <= k; ++i)
+                for (int j = 1; j <= k; ++j)
+                    program += pre + std::to_string(j) + " in m" + pre + std::to_string(i) + "\n";
+            for (int i = 1; i <= k; ++i)
+                program += ".name m" + pre + std::to_string(i) + " zelph " + pre + std::to_string(i) + "\n";
+        }
+        program += "%(def ra (zelph/dedup-rule (fn [] (zelph/fact (zelph/resolve \"s1\") \"=>\" (zelph/fact xs \"q\" ys)))))\n";
+        program += "%(zelph/out (string \"same=\" (= ra (zelph/dedup-rule (fn [] (zelph/fact (zelph/resolve \"t1\") \"=>\" " + consequence + "))))))\n";
+        return program;
+    }
+}
+
+// Sets that hold one another through multiple cycles unfold into more simple paths than a
+// fingerprint can render: forty sets that each hold the next three. Once a set is
+// encountered a second time along its path, a rendering stops after 100,000 positions and
+// renders the remainder as at the depth cap, so the next rule typed after a rule over
+// these sets is written; rendering every path did not end.
+TEST_CASE("nested condition sets: a rule typed after a rule over sets that hold one another along many cycles is written")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        constexpr int n       = 40;
+        std::string   program = "%(def x (zelph/var \"X\"))\n%(def y (zelph/var \"Y\"))\n";
+        for (int i = 1; i <= n; ++i)
+        {
+            const std::string set = "s" + std::to_string(i);
+            program += "%(zelph/fact (zelph/fact x \"p" + std::to_string(i) + "\" y) \"in\" \"" + set + "\")\n";
+            program += "%(zelph/fact (zelph/resolve \"" + set + "\") \"~\" \"conjunction\")\n";
+        }
+        for (int i = 1; i <= n; ++i)
+            for (int d = 1; d <= 3; ++d)
+                program += "s" + std::to_string((i - 1 + d) % n + 1) + " in m" + std::to_string(i) + "\n";
+        for (int i = 1; i <= n; ++i)
+            program += ".name m" + std::to_string(i) + " zelph s" + std::to_string(i) + "\n";
+        program += "%(zelph/fact (zelph/resolve \"s1\") \"=>\" (zelph/fact x \"q\" y))\n(X r Y) => (X w Y)\nc r d";
+        process_lines(interactive, program);
+        collector.clear();
+        interactive.process("X w Y");
+        CHECK(collect_answers(collector) == std::vector<std::string>{"c w d"}); });
+}
+
+// Two rules over sets that each hold one condition and one another share a single
+// fingerprint, and their sets form pairs in every possible order. After a comparison has
+// met a set once more along its path, it stops after 100,000 pairs and subsequently
+// finds no match: a rule differing from the first is distinguished within it, and the
+// identical rule is found again before that. Comparing every order did not end.
+TEST_CASE("nested condition sets: two rules over sets that all hold one condition and one another are compared within the budget")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        std::string consequence;
+        std::string same;
+        SUBCASE("a rule that differs") { consequence = "(zelph/fact yt \"q\" xt)"; same = "same=false"; }
+        SUBCASE("the same rule") { consequence = "(zelph/fact xt \"q\" yt)"; same = "same=true"; }
+        process_lines(interactive, sets_holding_one_another(6, consequence));
+        CHECK(any_output_contains(collector, same)); });
+}
+
+// The matcher preserves every pair it has matched on the stack until the whole rule has
+// been matched. Comparing two rules over seven sets that all hold one condition and one
+// another nests deeper than a thread's stack can accommodate; where the thread's stack
+// runs out, the comparison finds no match, where it overflowed the stack.
+TEST_CASE("nested condition sets: a comparison of rules over seven sets that hold one another ends")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, sets_holding_one_another(7, "(zelph/fact yt \"q\" xt)"));
+        CHECK(any_output_contains(collector, "same=false")); });
+}
+
+namespace
+{
+    // Runs `work` on a thread whose stack holds `size` bytes, as a program integrating
+    // zelph might initiate one.
+    void on_thread_with_stack(const std::size_t size, const std::function<void()>& work)
+    {
+#if defined(_WIN32)
+        const HANDLE thread = CreateThread(nullptr, size, [](LPVOID w) -> DWORD
+                                           {
+                                               (*static_cast<const std::function<void()>*>(w))();
+                                               return 0; },
+                                           const_cast<std::function<void()>*>(&work),
+                                           STACK_SIZE_PARAM_IS_A_RESERVATION,
+                                           nullptr);
+        REQUIRE(thread != nullptr);
+        WaitForSingleObject(thread, INFINITE);
+        CloseHandle(thread);
+#else
+        pthread_attr_t attributes;
+        REQUIRE(pthread_attr_init(&attributes) == 0);
+        REQUIRE(pthread_attr_setstacksize(&attributes, size) == 0);
+        pthread_t thread;
+        const int created = pthread_create(&thread, &attributes, [](void* w) -> void*
+                                           {
+                                               (*static_cast<const std::function<void()>*>(w))();
+                                               return nullptr; },
+                                           const_cast<std::function<void()>*>(&work));
+        pthread_attr_destroy(&attributes);
+        REQUIRE(created == 0);
+        pthread_join(thread, nullptr);
+#endif
+    }
+}
+
+// A program that embeds zelph runs it on a thread of its own choosing, whose stack may be
+// far smaller than the main thread's: on macOS, a thread initiated by a program is
+// allocated 512 KB unless otherwise specified. A comparison watches the stack of the thread
+// it runs on, thus it ends there as well, and finds no match when that stack is exhausted;
+// the same rule over six sets needs more than a megabyte of it.
+TEST_CASE("nested condition sets: a comparison of rules over sets that hold one another ends on a thread with a small stack")
+{
+    std::vector<std::string> lines;
+    std::string              failure;
+    on_thread_with_stack(512 * 1024, [&]
+                         {
+        try
+        {
+            zelph::io::OutputCollector  collector;
+            zelph::console::Interactive interactive(collector.sink());
+            process_lines(interactive, sets_holding_one_another(6, "(zelph/fact xt \"q\" yt)"));
+            for (const auto& e : collector.events())
+                lines.push_back(normalize(e.text));
+        }
+        catch (const std::exception& e)
+        {
+            failure = e.what();
+        } });
+    INFO(failure);
+    CHECK(failure.empty());
+    CHECK(std::any_of(lines.begin(), lines.end(), [](const std::string& line)
+                      { return line.find("same=") != std::string::npos; }));
+}
+
+namespace
+{
+    // `shift` unrelated facts, which move the ids of everything that comes after; four
+    // structures, each with a `Z` of its own, of `k` tagged sets that each contain
+    // `(Z r d)` and all `k` sets; a generator
+    // `(X p Y) => (A => (X q Y)) (B => (Y q X))` whose inner rules are over the first
+    // sets A and B of the first two structures, and the identical generator over the
+    // remaining two, constructed using zelph/dedup-rule with the focus on consequence
+    // `focus` (1 or 2). It prints whether the statement evaluated to the matching part
+    // of the first generator.
+    std::string focus_over_sets_holding_one_another(const int k, const int focus, const int shift)
+    {
+        std::string program;
+        for (int i = 0; i < shift; ++i)
+            program += "u" + std::to_string(i) + " v w" + std::to_string(i) + "\n";
+        program += "%(def xs (zelph/var \"X\"))\n%(def ys (zelph/var \"Y\"))\n%(def xt (zelph/var \"X\"))\n%(def yt (zelph/var \"Y\"))\n";
+        for (const std::string pre : {"as", "bs", "at", "bt"})
+        {
+            program += "%(def z" + pre + " (zelph/var \"Z\"))\n";
+            for (int i = 1; i <= k; ++i)
+            {
+                const std::string set = pre + std::to_string(i);
+                program += "%(zelph/fact (zelph/fact z" + pre + " \"r\" \"d\") \"in\" \"" + set + "\")\n";
+                program += "%(zelph/fact (zelph/resolve \"" + set + "\") \"~\" \"conjunction\")\n";
+            }
+            for (int i = 1; i <= k; ++i)
+                for (int j = 1; j <= k; ++j)
+                    program += pre + std::to_string(j) + " in m" + pre + std::to_string(i) + "\n";
+            for (int i = 1; i <= k; ++i)
+                program += ".name m" + pre + std::to_string(i) + " zelph " + pre + std::to_string(i) + "\n";
+        }
+        program += "%(var ka nil)\n%(var kb nil)\n";
+        program += "%(zelph/dedup-rule (fn [] (set ka (zelph/fact (zelph/resolve \"as1\") \"=>\" (zelph/fact xs \"q\" ys))) (set kb (zelph/fact (zelph/resolve \"bs1\") \"=>\" (zelph/fact ys \"q\" xs))) (zelph/fact (zelph/fact xs \"p\" ys) \"=>\" ka kb)))\n";
+        program += "%(def part (zelph/dedup-rule (fn [] (let [k1 (zelph/fact (zelph/resolve \"at1\") \"=>\" (zelph/fact xt \"q\" yt)) k2 (zelph/fact (zelph/resolve \"bt1\") \"=>\" (zelph/fact yt \"q\" xt))] [(zelph/fact (zelph/fact xt \"p\" yt) \"=>\" k1 k2) " + std::string(focus == 1 ? "k1" : "k2") + "])) :focus))\n";
+        program += "%(zelph/out (string \"kept part=\" (= part " + std::string(focus == 1 ? "ka" : "kb") + ")))\n.stat\n";
+        return program;
+    }
+}
+
+// A rule statement with a focus evaluates to the part it is focused on, and wherever
+// the rule exists already, to the matching part of the rule that is kept. The
+// consequences below are rules over sets of a single shape, so pairing the focused
+// consequence with the other consequence of the kept rule matches set to set in every
+// order before the variables disagree. Looked for in a search of its own, the part of
+// the kept rule could run out of the budget on that pairing, and the statement
+// evaluated to node 0; the part is now the one that the comparison which identified the
+// rule paired it with. The pairing a comparison tries first depends on the node ids, so
+// the generators are built after twenty distinct numbers of unrelated facts. When the
+// comparison itself runs out of its budget, the generator stands twice, which is
+// accepted; when this test was written, it found the generator in ten of the forty
+// layouts below, and the search of its own missed the part in five of those.
+TEST_CASE("nested condition sets: a focus on a consequence over sets that hold one another is the part of the rule kept")
+{
+    for (int focus = 1; focus <= 2; ++focus)
+    {
+        int found = 0;
+        for (int shift = 0; shift < 20; ++shift)
+        {
+            zelph::io::OutputCollector  collector;
+            zelph::console::Interactive interactive(collector.sink());
+            process_lines(interactive, focus_over_sets_holding_one_another(5, focus, shift));
+            if (!any_output_contains(collector, "Rules: 1")) continue;
+            ++found;
+            INFO("focus " << focus << ", shift " << shift);
+            CHECK(any_output_contains(collector, "kept part=true"));
+        }
+        CHECK(found > 0);
+    }
+}
+
+namespace
+{
+    // `k` tagged sets that each hold `(X p Y)` and all `k` sets, constructed
+    // via name merges.
+    std::string sets_that_all_hold_one_another(const int k)
+    {
+        std::string program = "%(def x (zelph/var \"X\"))\n%(def y (zelph/var \"Y\"))\n";
+        for (int i = 1; i <= k; ++i)
+        {
+            const std::string set = "s" + std::to_string(i);
+            program += "%(zelph/fact (zelph/fact x \"p\" y) \"in\" \"" + set + "\")\n";
+            program += "%(zelph/fact (zelph/resolve \"" + set + "\") \"~\" \"conjunction\")\n";
+        }
+        for (int i = 1; i <= k; ++i)
+            for (int j = 1; j <= k; ++j)
+                program += "s" + std::to_string(j) + " in m" + std::to_string(i) + "\n";
+        for (int i = 1; i <= k; ++i)
+            program += ".name m" + std::to_string(i) + " zelph s" + std::to_string(i) + "\n";
+        return program;
+    }
+}
+
+// Sets that hold one another densely consist of a few containers met again and again,
+// with each encounter triggering a fresh read of all their memberships, so that within
+// the budget a position or a pair incurred a cost equivalent to the width of its set: a
+// rule typed over a hundred such sets took fifteen seconds, and comparing two took over
+// a minute. Beginning with its first cycle, a rendering and a comparison each read a node
+// and a set once. The number of reads remains unaffected by the machine: below, 37 and 77
+// of them, where reading anew at every visit took more than a hundred thousand.
+TEST_CASE("nested condition sets: rules over sets that hold one another read each set once after their first cycle")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        SUBCASE("the rendering of a rule over twelve sets")
+        {
+            process_lines(interactive, sets_that_all_hold_one_another(12));
+            const uint64_t before = zelph::network::rule_identity_reads();
+            interactive.process(R"js(%(zelph/dedup-rule (fn [] (zelph/fact (zelph/resolve "s1") "=>" (zelph/fact x "q" y)))))js");
+            CHECK(zelph::network::rule_identity_reads() - before < 200);
+        }
+        SUBCASE("the comparison of two rules over six sets")
+        {
+            std::string program = sets_holding_one_another(6, "(zelph/fact yt \"q\" xt)");
+            const std::size_t last  = program.rfind("%(zelph/out");
+            const std::string setup = program.substr(0, last);
+            process_lines(interactive, setup);
+            const uint64_t before = zelph::network::rule_identity_reads();
+            process_lines(interactive, program.substr(last));
+            CHECK(any_output_contains(collector, "same=false"));
+            CHECK(zelph::network::rule_identity_reads() - before < 400);
+        } });
+}
+
+// Once a rendering has met a cycle, each position is counted against its budget,
+// including one at the depth cap, which renders as "…" at once. Without counting, every
+// container counted just above the cap rendered all of its members there: for sets that
+// hold one another densely and more deeply than the cap, a rendering took a multiple of
+// its budget that grows with the number of sets, tenfold with the forty below and
+// exceeding a million positions, and a rule typed over four hundred such sets took four
+// seconds and 850 MB.
+TEST_CASE("nested condition sets: a rendering over sets that hold one another beyond the depth cap stays within its budget")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, sets_that_all_hold_one_another(40));
+        const uint64_t before = zelph::network::rule_identity_steps();
+        interactive.process(R"js(%(zelph/dedup-rule (fn [] (zelph/fact (zelph/resolve "s1") "=>" (zelph/fact x "q" y)))))js");
+        CHECK(zelph::network::rule_identity_steps() - before < 200000); });
+}
+
+// A pair at the depth cap counts against the budget of a comparison, just as a position
+// there counts against the budget of a rendering. Tested for the cap before being
+// counted, a pair at the cap cost nothing. The number of pairs left uncounted depends on
+// the order in which the sets hold their members, which follows the node ids, so the
+// rules are entered after twenty distinct numbers of unrelated facts: when this test was
+// written, comparing the second rule with the first took two and a half million pairs
+// that way in seven of them.
+TEST_CASE("nested condition sets: a comparison over sets that hold one another beyond the depth cap stays within its budget")
+{
+    for (int shift = 0; shift < 20; ++shift)
+    {
+        zelph::io::OutputCollector  collector;
+        zelph::console::Interactive interactive(collector.sink());
+        for (int i = 0; i < shift; ++i)
+            interactive.process("u" + std::to_string(i) + " v w" + std::to_string(i));
+        process_lines(interactive, sets_that_all_hold_one_another(40));
+        interactive.process(R"js(%(zelph/dedup-rule (fn [] (zelph/fact (zelph/resolve "s1") "=>" (zelph/fact x "q" y)))))js");
+
+        INFO("shift " << shift);
+        const uint64_t before = zelph::network::rule_identity_steps();
+        interactive.process(R"js(%(zelph/dedup-rule (fn [] (zelph/fact (zelph/resolve "s1") "=>" (zelph/fact y "q" x)))))js");
+        CHECK(zelph::network::rule_identity_steps() - before < 400000);
+    }
+}
+
+// A firing names the facts it satisfied as its premises, and a contradiction records
+// them: these are retrieved from the set of conditions, and the set among its own
+// members is none of them. Regarded as a member, a set that holds itself directly would
+// stand among the premises beside the facts, and the record of a contradiction would
+// hold it.
+TEST_CASE("nested condition sets: the premises of a firing over a set that holds itself are facts")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+.auto-run
+a p b
+a r b
+%(def x (zelph/var "X"))
+%(def y (zelph/var "Y"))
+%(def s (zelph/collection (zelph/fact x "p" y)))
+%(zelph/fact s "in" s)
+%(zelph/fact s "~" "conjunction")
+%(zelph/fact s "=>" (zelph/fact x "q" y))
+%(def t (zelph/collection (zelph/fact x "p" y) (zelph/fact x "r" y)))
+%(zelph/fact t "in" t)
+%(zelph/fact t "~" "conjunction")
+%(zelph/fact t "=>" "!")
+%(def res (zelph/run :quiet :derived))
+)");
+        collector.clear();
+        interactive.process(R"js(%(zelph/out (string "premises=" (string/format "%q" (get (first (get res :derived)) :premises)))))js");
+        interactive.process(R"js(%(zelph/out (string "conditions=" (length (get (first (get res :contradictions)) :conditions)))))js");
+        CHECK(any_output_contains(collector, "premises=(<zelph/node a p b>)"));
+        CHECK(any_output_contains(collector, "conditions=2")); });
+}
+
+// A set shared by two sets of a rule is read exactly once, just as each set is, so
+// the conditions it holds are counted once within the rule's conditions, and
+// `.explain` names each of their premises once.
+TEST_CASE("nested condition sets: a set that two sets of a rule share is read once")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+x p y
+y t z
+%(def x (zelph/var "X"))
+%(def y (zelph/var "Y"))
+%(def z (zelph/var "Z"))
+%(def inner (zelph/conjunction (zelph/fact x "p" y) (zelph/fact y "u" z)))
+%(def inner2 (zelph/conjunction inner (zelph/fact y "t" z)))
+%(def outer (zelph/conjunction inner inner2))
+%(zelph/fact outer "=>" (zelph/fact x "r" z))
+y u z
+)");
+        collector.clear();
+        interactive.process(R"js(%(each r (zelph/rules) (zelph/out (string "conditions=" (length (get r :conditions))))))js");
+        CHECK(any_output_contains(collector, "conditions=3"));
+        collector.clear();
+        interactive.process(".explain x r z");
+        const std::string tree   = last_out_text(collector);
+        std::size_t       axioms = 0;
+        for (std::size_t at = tree.find("[axiom]"); at != std::string::npos; at = tree.find("[axiom]", at + 1))
+            ++axioms;
+        CHECK(axioms == 3); });
+}
+
+// A condition shared by several sets of a rule is counted as one condition of the rule,
+// and the reasoner joins it once. Collected once for each member of the rule's set that
+// reaches it, `(X p Y)` below was counted twice among the rule's conditions and the
+// negated condition twice among its negated ones, and `.explain` named each of the two
+// premises twice.
+TEST_CASE("nested condition sets: a condition that several sets of a rule hold is read once")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+x p y
+x a y
+x b y
+x c y
+((X p Y), (X a Y), ¬(X n Y), ((X p Y), (X b Y), ¬(X n Y), ((X p Y), (X c Y)))) => (X r Y)
+)");
+        collector.clear();
+        interactive.process(R"js(%(each r (zelph/rules) (zelph/out (string "conditions=" (length (get r :conditions)) " negated=" (length (get r :negated))))))js");
+        CHECK(any_output_contains(collector, "conditions=4 negated=1"));
+        collector.clear();
+        interactive.process(".explain x r y");
+        const std::string tree  = last_out_text(collector);
+        const auto        count = [&tree](const std::string& mark)
+        {
+            std::size_t n = 0;
+            for (std::size_t at = tree.find(mark); at != std::string::npos; at = tree.find(mark, at + 1))
+                ++n;
+            return n;
+        };
+        CHECK(count("[axiom]") == 4);
+        CHECK(count("[absent]") == 1); });
+}
+
+// A typed rule writes an inner set exactly once for each place it occupies, and a
+// program may construct the same rule using a single inner set shared by two of its
+// sets. They are one rule: the matcher leaves the path of a set once its members are
+// matched, so the shared set met again at the next place is compared as a set and not
+// treated as a cycle.
+TEST_CASE("nested condition sets: a typed rule is the rule a program built with an inner set two of its sets share")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+%(def x (zelph/var "X"))
+%(def y (zelph/var "Y"))
+%(def z (zelph/var "Z"))
+%(def inner (zelph/conjunction (zelph/fact x "p" y) (zelph/fact y "u" z)))
+%(def inner2 (zelph/conjunction inner (zelph/fact y "t" z)))
+%(zelph/fact (zelph/conjunction inner inner2) "=>" (zelph/fact x "r" z))
+(((X p Y), (Y u Z)), (((X p Y), (Y u Z)), (Y t Z))) => (X r Z)
+)");
+        collector.clear();
+        interactive.process(".stat");
+        CHECK(any_output_contains(collector, "Rules: 1")); });
 }
 
 // A statement stays a statement regardless of the content written about it. `a p b`

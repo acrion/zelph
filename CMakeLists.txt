@@ -162,6 +162,29 @@ else()
     endif()
 endif()
 
+# On Windows, the main thread of a program gets the stack size requested by
+# its executable -- 1 MB when linked with MSVC or LLVM, and 2 MB when linked
+# with GNU ld, unless otherwise specified -- and each thread it starts without
+# explicitly naming a size inherits that same default; Linux and macOS give
+# the main thread 8 MB by default. The engine's deepest level of recursion,
+# the comparison of two rules over sets that hold one another
+# (rule_identity.cpp), terminates when the thread's stack becomes nearly
+# exhausted, implying that a reduced stack size in a Windows build may cause
+# rules to be kept apart that other platforms treat as identical. Every
+# executable in the project requests 8 MB, prior to any flags set during
+# configure time, so that a size named there comes later on the link line and
+# takes precedence. A clang compiler that accepts GNU options but links using
+# the MSVC ABI forwards that option to its MSVC-style linker.
+if(WIN32)
+    if(MSVC)
+        string(PREPEND CMAKE_EXE_LINKER_FLAGS "/STACK:8388608 ")
+    elseif(CMAKE_CXX_SIMULATE_ID STREQUAL "MSVC")
+        string(PREPEND CMAKE_EXE_LINKER_FLAGS "-Xlinker /STACK:8388608 ")
+    else()
+        string(PREPEND CMAKE_EXE_LINKER_FLAGS "-Wl,--stack,8388608 ")
+    endif()
+endif()
+
 add_subdirectory(src/lib)
 
 if(ZELPH_WASM)

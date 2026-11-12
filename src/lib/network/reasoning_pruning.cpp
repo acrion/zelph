@@ -741,19 +741,17 @@ adjacency_set Reasoning::rule_parts() const
     // excluded regardless of who authored it.
     for (const Node mention : rule_patterns_snapshot())
         if (parts.count(mention) == 0 && !is_refuted_fact(mention) && !is_condition_tag(mention) && is_mention(mention)) add(mention);
-    while (!sets.empty())
-    {
-        const Node set = sets.back();
-        sets.pop_back();
-        adjacency_set members;
-        if (!condition_set_members(set, members)) continue;
-        for (const Node m : members)
-        {
-            if (parts.count(m) != 0) continue;
-            add(m);
-            if (is_condition_set(m)) sets.push_back(m);
-        }
-    }
+    // The members of the condition sets at every level of depth, each
+    // set accessed exactly once, as Reasoning::evaluate reads them.
+    adjacency_set members;
+    for (const Node set : sets)
+        members.insert(set);
+    std::unordered_set<Node> entered;
+    flatten_condition_sets(members, entered);
+    for (const Node set : entered)
+        add(set);
+    for (const Node m : members)
+        add(m);
     while (!nested.empty() || !collections.empty())
     {
         if (!collections.empty())

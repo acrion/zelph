@@ -26,6 +26,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include "rule_identity.hpp"
 
 #include "fact_structure.hpp"
+#include "platform/platform_utils.hpp"
 #include "zelph.hpp"
 
 #include <algorithm>
@@ -33,6 +34,9 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include <functional>
 #include <map>
 #include <memory>
+#include <optional>
+#include <tuple>
+#include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
@@ -41,12 +45,46 @@ namespace zelph::network
     namespace
     {
         std::atomic<uint64_t> climb_steps{0}; // refer to rule_statement_climb_steps
+        std::atomic<uint64_t> reads{0};       // refer to rule_identity_reads
+        std::atomic<uint64_t> steps{0};       // refer to rule_identity_steps
 
-        // Rules are small and shallow; the cap only stops a pathological
-        // cycle from becoming an infinite walk. A truncated rendering makes
-        // the shape less selective, never wrong -- the decision is taken by
-        // the matcher, which carries the same cap.
+        // Rules are small and shallow; the cap stops a pathological structure
+        // from turning into an endless walk, and a container met again along
+        // the current path stops at the point it is met (canon,
+        // Matcher::match). A rendering cut short at the cap merely causes more
+        // rules to share a shape: two rules alike up to their variables are
+        // truncated at identical points, and the matcher, which carries the
+        // same cap and the same stop, decides between them.
         constexpr int max_depth = 32;
+
+        // Sets that hold one another densely leave every container on the
+        // current path once and continue expanding along every simple path
+        // among them: ten sets that each hold all ten generate roughly a
+        // million paths. Once a rendering encounters a container again along
+        // its path, it renders at most this many further positions, and once
+        // a comparison does, it compares at most this many additional pairs;
+        // beyond this point, canon renders "…" as at the depth cap, and the
+        // matcher finds no match. A rule without a cycle is not included in
+        // the count, and the depth cap bounds its walk. Where the budget
+        // truncates, two rules alike up to their variables may be truncated
+        // at distinct points, since a rendering takes the members of a set
+        // in the order their memberships are stored, and the two remain
+        // separate.
+        constexpr std::size_t walk_budget = 100000;
+
+        // The matcher operates within nested continuations: each pair it has
+        // matched stays on the stack until the whole rule has been matched,
+        // approximately one kilobyte per pair in a release build, and within
+        // the budget a comparison over cycles nests deeper than a thread's
+        // stack typically accommodates. Once it has met a cycle, a comparison
+        // halts where the thread's stack has less than the reserve remaining,
+        // which accounts for what runs between two checks and the guard pages,
+        // and finds no match; a rule without a cycle nests as deep as it is
+        // large and is not monitored. When the platform reports no stack for
+        // the thread, a comparison goes at most to the fallback below the
+        // frame where it first encountered its cycle.
+        constexpr std::size_t stack_reserve  = 128 * 1024;
+        constexpr std::size_t stack_fallback = 128 * 1024;
 
         // A node that PROVABLY carries no variable needs no traversal: it
         // is hash-consed, so its ID already is its canonical identity, and
@@ -266,15 +304,105 @@ namespace zelph::network
             return *members.begin();
         }
 
+        // A node as canon and the matcher read it in `role` -- the node
+        // single_condition reads it as, and its kind -- and the members of a
+        // container; each reading is counted (rule_identity_reads).
+        std::pair<Node, Kind> read_fresh(const Zelph* const z, Node n, const Role role)
+        {
+            reads.fetch_add(1, std::memory_order_relaxed);
+            n = single_condition(z, n, role);
+            return {n, classify(z, n, role)};
+        }
+
+        std::vector<Node> read_members(const Zelph* const z, const Node n)
+        {
+            reads.fetch_add(1, std::memory_order_relaxed);
+            return set_members(z, n);
+        }
+
+        // What a rendering or a comparison has read of each node since it met
+        // its first cycle. Sets that hold one another densely are a few
+        // containers met again and again, and each encounter read all their
+        // memberships anew, in single_condition, in classify and for the
+        // members, so that a position incurred a cost proportional to the
+        // width of its set: within the budget, a rule typed over a hundred
+        // sets that each held all of them took fifteen seconds. Prior to its
+        // first cycle, a walk reads as it always did, and a rule without one
+        // incurs the same cost as before.
+        class Readings
+        {
+        public:
+            // `n` as single_condition reads it in `role`, and the kind of
+            // what it reads.
+            std::pair<Node, Kind> node(const Zelph* const z, const Node n, const Role role)
+            {
+                auto&      known = role == Role::Condition ? _conditions : _terms;
+                const auto it    = known.find(n);
+                if (it != known.end()) return it->second;
+                return known.emplace(n, read_fresh(z, n, role)).first->second;
+            }
+
+            // The members of the container `n`.
+            const std::vector<Node>& members(const Zelph* const z, const Node n)
+            {
+                const auto it = _members.find(n);
+                if (it != _members.end()) return it->second;
+                return _members.emplace(n, read_members(z, n)).first->second;
+            }
+
+        private:
+            std::unordered_map<Node, std::pair<Node, Kind>> _conditions;
+            std::unordered_map<Node, std::pair<Node, Kind>> _terms;
+            std::unordered_map<Node, std::vector<Node>>     _members;
+        };
+
+        // `n` as a walk reads it in `role`: via `readings` once the walk has
+        // met a cycle, directly prior.
+        std::pair<Node, Kind> read_node(const Zelph* const z, const Node n, const Role role, Readings* const readings)
+        {
+            return readings != nullptr ? readings->node(z, n, role) : read_fresh(z, n, role);
+        }
+
+        std::vector<Node> members_of(const Zelph* const z, const Node n, Readings* const readings)
+        {
+            return readings != nullptr ? readings->members(z, n) : read_members(z, n);
+        }
+
+        // What a rendering carries: the containers it is within, whether
+        // it has met one of them again, the count of positions it has
+        // rendered since, and what it has read since.
+        struct Walk
+        {
+            std::vector<Node> path;
+            bool              cyclic   = false;
+            std::size_t       rendered = 0;
+            Readings          readings;
+        };
+
         // Variable-agnostic rendering. Unordered collections (set members,
         // object sets) are sorted by their own rendering, so the result
         // does not depend on adjacency iteration order.
-        std::string canon(const Zelph* const z, Node n, const int depth, const Role role)
+        //
+        // `walk.path` holds the containers that the rendering resides within.
+        // When a container is encountered a second time along it, a cycle is
+        // closed and it renders as the fixed token `?`, as the printer shows
+        // it: a set that holds itself directly and indirectly through a
+        // second set was entered twice at every level, and the rendering
+        // doubled with every level down to the depth cap. Starting from the
+        // first token onward, the rendering counts its positions
+        // (walk_budget).
+        std::string canon(const Zelph* const z, Node n, const int depth, const Role role, Walk& walk)
         {
+            steps.fetch_add(1, std::memory_order_relaxed);
+            if (walk.cyclic)
+            {
+                if (walk.rendered >= walk_budget) return "…";
+                ++walk.rendered;
+            }
             if (depth >= max_depth) return "…";
-            n = single_condition(z, n, role);
-
-            const Kind kind = classify(z, n, role);
+            const std::pair<Node, Kind> read = read_node(z, n, role, walk.cyclic ? &walk.readings : nullptr);
+            n                                = read.first;
+            const Kind kind                  = read.second;
             switch (kind)
             {
             case Kind::Var:
@@ -284,14 +412,22 @@ namespace zelph::network
             case Kind::Set:
             case Kind::SetConst:
             {
+                if (std::find(walk.path.begin(), walk.path.end(), n) != walk.path.end())
+                {
+                    walk.cyclic = true;
+                    return "?";
+                }
+
                 // A conjunction set holds conditions, a term container holds
                 // terms -- so the members inherit the role of the node they
                 // hang off rather than being assumed to be conditions.
                 const bool conditions = role == Role::Condition || (kind == Kind::Set && is_conjunction(z, n));
 
                 std::vector<std::string> parts;
-                for (const Node m : set_members(z, n))
-                    parts.push_back(canon(z, m, depth + 1, conditions ? Role::Condition : Role::Term));
+                walk.path.push_back(n);
+                for (const Node m : members_of(z, n, walk.cyclic ? &walk.readings : nullptr))
+                    parts.push_back(canon(z, m, depth + 1, conditions ? Role::Condition : Role::Term, walk));
+                walk.path.pop_back();
                 std::sort(parts.begin(), parts.end());
 
                 // The brace tells the kinds apart: identical members, yet
@@ -311,12 +447,12 @@ namespace zelph::network
                 std::vector<std::string> objs;
                 objs.reserve(fs.objects.size());
                 for (const Node o : fs.objects)
-                    objs.push_back(canon(z, o, depth + 1, Role::Term));
+                    objs.push_back(canon(z, o, depth + 1, Role::Term, walk));
                 std::sort(objs.begin(), objs.end());
 
                 std::string out = "("
-                                + canon(z, fs.subject, depth + 1, subject_role(z, fs)) + " "
-                                + canon(z, fs.predicate, depth + 1, Role::Term) + " ";
+                                + canon(z, fs.subject, depth + 1, subject_role(z, fs), walk) + " "
+                                + canon(z, fs.predicate, depth + 1, Role::Term, walk) + " ";
                 for (const auto& o : objs)
                     out += o + " ";
                 return out + ")";
@@ -331,6 +467,35 @@ namespace zelph::network
         struct Matcher
         {
             const Zelph* z;
+
+            // The containers enclosing the match, one path per rule. A pair
+            // encountered once more along both paths closes a cycle in both
+            // rules and matches as the token canon renders for it; a container
+            // met again on only one path meets a structure on the other and
+            // matches nothing. A container shared by both rules matches by its
+            // identity only within a term (below), also when its content leads
+            // back to a container on a path, which canon then renders as the
+            // token in one rule and expanded in the other.
+            std::vector<Node> path_a;
+            std::vector<Node> path_b;
+
+            // Whether the comparison has met a container once more along a
+            // path. From that point onward it tracks the number of pairs it
+            // compares (walk_budget) and watches its stack down to
+            // `stack_end` (stack_reserve); once either is depleted, it is
+            // exhausted, and every subsequent pair fails.
+            bool           cyclic    = false;
+            bool           exhausted = false;
+            std::size_t    compared  = 0;
+            std::uintptr_t stack_end = 0;
+
+            // The content that the comparison has read since encountering its
+            // first cycle.
+            Readings readings;
+
+            // Where set, the consequence of `b` that each consequence of `a`
+            // is paired with in the successful match (corresponding_part).
+            std::vector<std::pair<Node, Node>>* pairing = nullptr;
 
             // The bijection, kept in both directions so that two distinct
             // variables of `a` cannot collapse onto one variable of `b`.
@@ -353,12 +518,25 @@ namespace zelph::network
 
             bool match(Node a, Node b, Bijection& ab, Bijection& ba, int depth, Role role, const Then& then)
             {
+                steps.fetch_add(1, std::memory_order_relaxed);
+                if (exhausted) return false;
+                if (cyclic)
+                {
+                    if (compared >= walk_budget || platform::stack_position() < stack_end)
+                    {
+                        exhausted = true;
+                        return false;
+                    }
+                    ++compared;
+                }
                 if (depth >= max_depth) return false;
-                a = single_condition(z, a, role);
-                b = single_condition(z, b, role);
-
-                const Kind ka = classify(z, a, role);
-                if (ka != classify(z, b, role)) return false;
+                Readings* const             known  = cyclic ? &readings : nullptr;
+                const std::pair<Node, Kind> read_a = read_node(z, a, role, known);
+                const std::pair<Node, Kind> read_b = read_node(z, b, role, known);
+                a                                  = read_a.first;
+                b                                  = read_b.first;
+                const Kind ka                      = read_a.second;
+                if (ka != read_b.second) return false;
 
                 switch (ka)
                 {
@@ -385,31 +563,79 @@ namespace zelph::network
                 case Kind::Set:
                 case Kind::SetConst:
                 {
-                    // The SAME container node is the same term, whatever the
-                    // bijection says about the variables inside it. Two rules
-                    // share one only when the second was alpha-renamed out of
-                    // the first and the container was not rebuilt with it --
-                    // an accumulator, whose whole point is that every rule
-                    // naming it writes into the one container. Comparing its
-                    // members would then ask the bijection to map a variable
-                    // to itself, which it cannot after the rename, and the
-                    // generator would write another copy of its rule on every
-                    // run.
-                    if (a == b) return then(ab, ba);
+                    // The paths are queried first, before determining the
+                    // identity of a term beneath: a container met again along
+                    // a path closes a cycle and becomes the token canon
+                    // renders, regardless of any other aspect it may have.
+                    const bool again_a = std::find(path_a.begin(), path_a.end(), a) != path_a.end();
+                    const bool again_b = std::find(path_b.begin(), path_b.end(), b) != path_b.end();
+                    if (again_a || again_b)
+                    {
+                        if (!cyclic)
+                        {
+                            cyclic    = true;
+                            stack_end = platform::stack_floor(stack_reserve, stack_fallback);
+                        }
+                        return again_a && again_b && then(ab, ba);
+                    }
 
-                    if (ka != Kind::Set || role == Role::Condition)
-                        return match_multiset(set_members(z, a), set_members(z, b), ab, ba, depth + 1, role, then);
+                    // In a term, the SAME container node is considered the same
+                    // term, regardless of what the bijection says about the
+                    // variables inside it. Two rules share one when the second
+                    // was alpha-renamed from the first and the container was
+                    // not rebuilt with it -- an accumulator, whose whole point
+                    // is that every rule naming it writes into the single
+                    // container. Comparing its members would then ask the
+                    // bijection to map a variable to itself, which it cannot do
+                    // after the rename, causing the generator to write another
+                    // copy of its rule on each execution. Two rules that a
+                    // program writes over one container are taken as a single
+                    // rule in the same manner, also in cases where the
+                    // container holds a variable that both rules bind and the
+                    // two therefore derive different facts.
+                    //
+                    // In condition position, a container is read as the rule's
+                    // conditions, along with the variables it binds for the
+                    // rest of the rule and the sets read before it, so the same
+                    // node may represent distinct conditions across two rules,
+                    // and it is compared according to its members. Taken by
+                    // identity, two rules sharing a single set of conditions
+                    // yet differing in consequences were treated as a single
+                    // rule; one of them was rolled back, and what it derived
+                    // was lost.
+                    if (a == b && role != Role::Condition) return then(ab, ba);
 
                     // Outside the condition position, a set of conditions
                     // constitutes the condition part of a rule nested in a
                     // term, compared as conditions, while a rule's own
                     // collection forms part of the rule's text, compared by its
                     // members as terms.
+                    Role members_role = role;
+                    if (ka == Kind::Set && role != Role::Condition)
                     {
                         const bool conditions = is_conjunction(z, a);
                         if (conditions != is_conjunction(z, b)) return false;
-                        return match_multiset(set_members(z, a), set_members(z, b), ab, ba, depth + 1, conditions ? Role::Condition : Role::Term, then);
+                        members_role = conditions ? Role::Condition : Role::Term;
                     }
+
+                    // The members are matched on the path, and the rest of
+                    // the rule beyond them is matched off it; a backtrack
+                    // into the members finds the path exactly as it was left.
+                    const Then off_path = [&](Bijection& ab1, Bijection& ba1)
+                    {
+                        path_a.pop_back();
+                        path_b.pop_back();
+                        const bool rest = then(ab1, ba1);
+                        path_a.push_back(a);
+                        path_b.push_back(b);
+                        return rest;
+                    };
+                    path_a.push_back(a);
+                    path_b.push_back(b);
+                    const bool matched = match_multiset(members_of(z, a, known), members_of(z, b, known), ab, ba, depth + 1, members_role, off_path);
+                    path_a.pop_back();
+                    path_b.pop_back();
+                    return matched;
                 }
 
                 case Kind::Fact:
@@ -428,6 +654,24 @@ namespace zelph::network
                 }
             }
 
+            // The kind of `n`, read in `role` as match reads it, if it is a
+            // container already on `path`.
+            std::optional<Kind> back_reference(Node n, const Role role, const std::vector<Node>& path)
+            {
+                Kind k = Kind::Opaque;
+                if (cyclic)
+                    std::tie(n, k) = readings.node(z, n, role);
+                else
+                {
+                    reads.fetch_add(1, std::memory_order_relaxed);
+                    n = single_condition(z, n, role);
+                }
+                if (std::find(path.begin(), path.end(), n) == path.end()) return std::nullopt;
+                if (!cyclic) k = classify(z, n, role);
+                if (k != Kind::Container && k != Kind::Set && k != Kind::SetConst) return std::nullopt;
+                return k;
+            }
+
             // Objects and set members are UNORDERED, so the pairing is part
             // of the search. Both hold at most a handful of elements (the
             // conditions of one rule, the objects of one fact), and a wrong
@@ -441,13 +685,30 @@ namespace zelph::network
                 const Node a0 = as.back();
                 as.pop_back();
 
+                // A back-reference matches every back-reference of its kind on
+                // the opposite side as the same token and binds nothing, so the
+                // first of them represents all; trying each one in turn
+                // multiplied the work by the number of their orders whenever
+                // the rest of the rule failed.
+                const std::optional<Kind> a_back     = back_reference(a0, role, path_a);
+                bool                      tried_back = false;
+
                 for (std::size_t i = 0; i < bs.size(); ++i)
                 {
+                    if (a_back)
+                    {
+                        if (tried_back || back_reference(bs[i], role, path_b) != a_back) continue;
+                        tried_back = true;
+                    }
+
                     Bijection         ab2 = ab;
                     Bijection         ba2 = ba;
                     std::vector<Node> rest(bs);
                     rest.erase(rest.begin() + static_cast<std::ptrdiff_t>(i));
 
+                    // The only multiset at depth 0 consists of the consequences of a rule.
+                    const bool record = depth == 0 && pairing != nullptr;
+                    if (record) pairing->emplace_back(a0, bs[i]);
                     if (match(a0, bs[i], ab2, ba2, depth + 1, role, [&](Bijection& ab3, Bijection& ba3)
                               { return match_multiset(as, rest, ab3, ba3, depth, role, then); }))
                     {
@@ -455,6 +716,7 @@ namespace zelph::network
                         ba = std::move(ba2);
                         return true;
                     }
+                    if (record) pairing->pop_back();
                 }
                 return false;
             }
@@ -468,6 +730,23 @@ namespace zelph::network
                 return FactStructure{};
             return fs;
         }
+
+        // The comparison between two rules: first the conditions, then the
+        // consequences. With `pairing`, the consequence of `b` that is matched
+        // with each consequence of `a` in the match that succeeds.
+        bool compare_rules(const Zelph* const z, const FactStructure& fa, const FactStructure& fb, std::vector<std::pair<Node, Node>>* const pairing)
+        {
+            Matcher            m{z};
+            Matcher::Bijection ab;
+            Matcher::Bijection ba;
+            m.pairing = pairing;
+
+            const std::vector<Node> ca(fa.objects.begin(), fa.objects.end());
+            const std::vector<Node> cb(fb.objects.begin(), fb.objects.end());
+            return m.match(fa.subject, fb.subject, ab, ba, 0, Role::Condition, [&](Matcher::Bijection& ab1, Matcher::Bijection& ba1)
+                           { return m.match_multiset(ca, cb, ab1, ba1, 0, Role::Term, [](Matcher::Bijection&, Matcher::Bijection&)
+                                                     { return true; }); });
+        }
     }
 
     std::string rule_shape(const Zelph* const z, const Node rule)
@@ -475,13 +754,14 @@ namespace zelph::network
         const FactStructure fs = rule_structure(z, rule);
         if (fs.predicate == 0) return {};
 
+        Walk                     walk;
         std::vector<std::string> consequences;
         consequences.reserve(fs.objects.size());
         for (const Node o : fs.objects)
-            consequences.push_back(canon(z, o, 1, Role::Term));
+            consequences.push_back(canon(z, o, 1, Role::Term, walk));
         std::sort(consequences.begin(), consequences.end());
 
-        std::string out = canon(z, fs.subject, 1, Role::Condition) + "=>";
+        std::string out = canon(z, fs.subject, 1, Role::Condition, walk) + "=>";
         for (const auto& c : consequences)
             out += c + " ";
         return out;
@@ -495,16 +775,7 @@ namespace zelph::network
         const FactStructure fb = rule_structure(z, b);
         if (fa.predicate == 0 || fb.predicate == 0) return false;
         if (fa.objects.size() != fb.objects.size()) return false;
-
-        Matcher            m{z};
-        Matcher::Bijection ab;
-        Matcher::Bijection ba;
-
-        const std::vector<Node> ca(fa.objects.begin(), fa.objects.end());
-        const std::vector<Node> cb(fb.objects.begin(), fb.objects.end());
-        return m.match(fa.subject, fb.subject, ab, ba, 0, Role::Condition, [&](Matcher::Bijection& ab1, Matcher::Bijection& ba1)
-                       { return m.match_multiset(ca, cb, ab1, ba1, 0, Role::Term, [](Matcher::Bijection&, Matcher::Bijection&)
-                                                 { return true; }); });
+        return compare_rules(z, fa, fb, nullptr);
     }
 
     Node corresponding_part(const Zelph* const z, const Node a, const Node b, const Node part)
@@ -518,38 +789,20 @@ namespace zelph::network
         if (fa.objects.count(part) == 0) return 0;
         if (fb.objects.size() == 1) return *fb.objects.begin();
 
-        // Several consequences: the one that pairs with `part` via a bijection
-        // valid across the whole rule. The pairing of `part` is attempted
-        // initially, after which the rest of the rule must match as in
-        // rules_alpha_equivalent.
-        Matcher            m{z};
-        Matcher::Bijection ab;
-        Matcher::Bijection ba;
-
-        std::vector<Node> rest_a;
-        for (const Node o : fa.objects)
-            if (o != part) rest_a.push_back(o);
-        const std::vector<Node> cb(fb.objects.begin(), fb.objects.end());
-
-        Node found = 0;
-        m.match(fa.subject, fb.subject, ab, ba, 0, Role::Condition, [&](Matcher::Bijection& ab1, Matcher::Bijection& ba1)
-                {
-                    for (std::size_t i = 0; i < cb.size(); ++i)
-                    {
-                        Matcher::Bijection ab2 = ab1;
-                        Matcher::Bijection ba2 = ba1;
-                        std::vector<Node>  rest_b(cb);
-                        rest_b.erase(rest_b.begin() + static_cast<std::ptrdiff_t>(i));
-                        if (m.match(part, cb[i], ab2, ba2, 0, Role::Term, [&](Matcher::Bijection& ab3, Matcher::Bijection& ba3)
-                                    { return m.match_multiset(rest_a, rest_b, ab3, ba3, 0, Role::Term, [](Matcher::Bijection&, Matcher::Bijection&)
-                                                              { return true; }); }))
-                        {
-                            found = cb[i];
-                            return true;
-                        }
-                    }
-                    return false; });
-        return found;
+        // Several consequences: the one that the comparison between the two
+        // rules pairs with `part` in the successful match. It is the
+        // comparison performed by rules_alpha_equivalent, in identical
+        // order and within the same budget, so it pairs `part` wherever
+        // that comparison found the rules alike. A standalone search, which
+        // prioritized pairing `part` first, might exhaust its budget on an
+        // incorrect pairing over sets that hold one another before
+        // attempting the right one, and the part of the kept rule was node
+        // 0.
+        std::vector<std::pair<Node, Node>> pairing;
+        if (!compare_rules(z, fa, fb, &pairing)) return 0;
+        for (const auto& [mine, theirs] : pairing)
+            if (mine == part) return theirs;
+        return 0;
     }
 
     bool rule_text_below(const Zelph* const z, const Node n)
@@ -665,20 +918,19 @@ namespace zelph::network
             }
         };
 
+        // At every level, the conditions, each set read once: a set that holds
+        // itself, either directly or through another set, had its members again
+        // and again taken up, and the walk never ended.
+        adjacency_set leaves;
+        for (const Node c : conditions)
+            leaves.insert(c);
+        std::unordered_set<Node> sets;
+        z->flatten_condition_sets(leaves, sets);
+
         std::unordered_set<Node> bound;
         std::unordered_set<Node> negated;
-        while (!conditions.empty())
-        {
-            const Node c = conditions.back();
-            conditions.pop_back();
-            adjacency_set members;
-            if (z->condition_set_members(c, members))
-            {
-                conditions.insert(conditions.end(), members.begin(), members.end());
-                continue;
-            }
+        for (const Node c : leaves)
             gather(c, z->negation_operand(c) != 0 ? negated : bound);
-        }
 
         for (const auto& [fact, predicate] : written)
         {
@@ -694,5 +946,15 @@ namespace zelph::network
     uint64_t rule_statement_climb_steps()
     {
         return climb_steps.load(std::memory_order_relaxed);
+    }
+
+    uint64_t rule_identity_reads()
+    {
+        return reads.load(std::memory_order_relaxed);
+    }
+
+    uint64_t rule_identity_steps()
+    {
+        return steps.load(std::memory_order_relaxed);
     }
 }

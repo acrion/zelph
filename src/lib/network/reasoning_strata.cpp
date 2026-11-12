@@ -185,12 +185,23 @@ void Reasoning::read_footprint(const Node condition, RuleFootprint& f)
 {
     if (is_condition_set(condition))
     {
+        // The members in the order of their memberships; a member that is a set gives its own
+        // members, at every level of depth and each set exactly once: a set that holds itself,
+        // either directly or via another set, is not revisited. A condition held by several of
+        // these sets is read once, at the first membership that reaches it, as the reasoner
+        // joins it once.
+        std::unordered_set<Node> sets{condition};
+        std::unordered_set<Node> read;
         for (const Node rel : _pImpl->get_right(condition))
         {
             if (parse_relation(rel) != core.PartOf) continue;
             adjacency_set objs;
             const Node    element = parse_fact(rel, objs);
-            if (element && objs.count(condition) == 1) read_footprint(element, f);
+            if (!element || objs.count(condition) != 1) continue;
+            adjacency_set elements{element};
+            flatten_condition_sets(elements, sets);
+            for (const Node e : elements)
+                if (read.insert(e).second) read_footprint(e, f);
         }
         return;
     }

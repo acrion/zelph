@@ -2877,6 +2877,35 @@ TEST_CASE("pruning: the variable form leaves a rule's condition set, its tag and
         CHECK(answers("S r O") == std::vector<std::string>{"e r f"}); });
 }
 
+// A ground condition within an inner set of a rule is a part of the rule, even when an
+// opaque statement refers to that set: the prune reads the members of the condition
+// sets at every level of nesting, each set exactly once. Skipped as a node it already
+// held for the opaque statement, the inner set left its members out of the rule's parts,
+// and `.prune-facts a s b` took the condition from the rule.
+TEST_CASE("pruning: a ground condition of an inner set that an opaque statement names stays in the rule")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+says ~ opaque
+x p y
+y t z
+%(def x (zelph/var "X"))
+%(def y (zelph/var "Y"))
+%(def z (zelph/var "Z"))
+%(def inner (zelph/conjunction (zelph/fact "a" "s" "b") (zelph/fact y "t" z)))
+%(def outer (zelph/conjunction (zelph/fact x "p" y) inner))
+%(zelph/fact outer "=>" (zelph/fact x "r" z))
+%(zelph/fact "k" "says" inner)
+)");
+        collector.clear();
+        interactive.process(".prune-facts a s b");
+        CHECK(any_output_contains(collector, "Pruned 1 matching"));
+        collector.clear();
+        interactive.process(".list-rules");
+        CHECK(any_output_contains(collector, "(((Y t Z), (a s b)), (X p Y)) => (X r Z)")); });
+}
+
 // The ground form reads a rule's text in the same manner as the variable
 // form. When a user inputs a tag such as `and ~ conjunction`, it
 // instructs the engine to treat `and` as a condition set, and it answers

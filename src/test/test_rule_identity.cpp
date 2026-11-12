@@ -490,6 +490,35 @@ TEST_CASE("rule identity: a rule with the focus operator evaluates to that part 
         } });
 }
 
+// The part of the kept rule is read from the pairings of the comparison that identified
+// the rule, and a pairing that did not succeed is withdrawn from them. Left among them, a
+// consequence initially attempted and subsequently rejected would come before the one
+// that matched, causing the statement to evaluate to it: to `A q B` where the focus was
+// on the twin of `B q A`. Which pairing a comparison attempts first is governed by node
+// ids, so the rule is entered after twenty distinct numbers of unrelated facts; when this
+// test was written, one of the two statements below came out wrong that way in twelve of
+// them.
+TEST_CASE("rule identity: the part of the kept rule is the consequence that matched, not one tried before it")
+{
+    for (int shift = 0; shift < 20; ++shift)
+    {
+        zelph::io::OutputCollector  collector;
+        zelph::console::Interactive interactive(collector.sink());
+        for (int i = 0; i < shift; ++i)
+            interactive.process("u" + std::to_string(i) + " v w" + std::to_string(i));
+        interactive.process("(A p B) => *(B q A) (A q B)");
+
+        INFO("shift " << shift);
+        collector.clear();
+        interactive.process("(X p Y) => (X q Y) *(Y q X)");
+        CHECK(normalize(last_out_text(collector)) == "B q A");
+
+        collector.clear();
+        interactive.process("(X p Y) => *(X q Y) (Y q X)");
+        CHECK(normalize(last_out_text(collector)) == "A q B");
+    }
+}
+
 TEST_CASE("rule identity: wherever the focus stands, a rule statement keeps all of its properties at once")
 {
     // Each position a focus occupies within a rule statement held to four
@@ -819,6 +848,79 @@ TEST_CASE("rule identity: symmetric conditions are paired together with the conc
         collector.clear();
         interactive.process(".list-rules");
         CHECK(listed_rules(collector) == 1); });
+}
+
+// A comparison counts the pairs it compares against a budget only after
+// encountering a set that holds itself, and neither rule below possesses one.
+// The eight conditions form pairs under each reassignment of the variables A
+// through H, and the comparison tests these pairings until the conclusion
+// fits as well; the number of pairs required depends on the order in which
+// the set holds its conditions, here more than a hundred thousand. Seven
+// hundred ground conditions take more than that in any order, as each is
+// paired by trying the conditions of the other rule until the same one
+// emerges. Counted starting from its first pair, the second rule was written
+// beside the first.
+TEST_CASE("rule identity: a rule over many conditions, entered twice, stays one rule")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        SUBCASE("eight interchangeable conditions")
+        {
+            const std::string rule = "((X p A), (X p B), (X p C), (X p D), (X p E), (X p F), (X p G), (X p H)) => (A q B)";
+            interactive.process(rule);
+            interactive.process(rule);
+        }
+        SUBCASE("seven hundred ground conditions")
+        {
+            interactive.process(R"js(%(defn build [] (def x (zelph/var "X")) (zelph/fact (zelph/conjunction (zelph/fact x "p" "a") ;(seq [i :range [0 700]] (zelph/fact (string "c" i) "p" (string "d" i)))) "=>" (zelph/fact x "q" "a"))))js");
+            interactive.process("%(zelph/dedup-rule build)");
+            interactive.process("%(zelph/dedup-rule build)");
+        }
+        collector.clear();
+        interactive.process(".stat");
+        CHECK(any_output_contains(collector, "Rules: 1")); });
+}
+
+// A program may write two rules over a single set of conditions, built once.
+// The set is read as the conditions for each rule, and the variables it binds
+// are identical nodes in both, so a rule concluding about `X` is not a rule
+// concluding about `Z`. Recognized by its identity, the set matched itself
+// without binding any variable, the second rule was rolled back as a
+// duplicate of the first, and `cc q a1` was never derived. Compared by its
+// members, the set still leaves two rules that are alike up to a fresh
+// variable as one rule.
+TEST_CASE("rule identity: two rules over one set of conditions are compared by what the set binds")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+aa p bb
+bb r cc
+%(def x (zelph/var "X"))
+%(def y (zelph/var "Y"))
+%(def z (zelph/var "Z"))
+%(def s (zelph/collection (zelph/fact x "p" y) (zelph/fact y "r" z)))
+%(zelph/fact s "~" "conjunction")
+)");
+        SUBCASE("conclusions about two variables of the set")
+        {
+            interactive.process(R"js(%(def r1 (zelph/dedup-rule (fn [] (zelph/fact s "=>" (zelph/fact x "q" "a1"))))))js");
+            collector.clear();
+            interactive.process(R"js(%(zelph/out (string "same=" (= r1 (zelph/dedup-rule (fn [] (zelph/fact s "=>" (zelph/fact z "q" "a1"))))))))js");
+            CHECK(any_output_contains(collector, "same=false"));
+            collector.clear();
+            interactive.process("X q a1");
+            std::vector<std::string> answers = collect_answers(collector);
+            std::ranges::sort(answers);
+            CHECK(answers == std::vector<std::string>{"aa q a1", "cc q a1"});
+        }
+        SUBCASE("conclusions alike up to a fresh variable")
+        {
+            interactive.process(R"js(%(def r1 (zelph/dedup-rule (fn [] (zelph/fact s "=>" (zelph/fact x "q" (zelph/var "W")))))))js");
+            collector.clear();
+            interactive.process(R"js(%(zelph/out (string "same=" (= r1 (zelph/dedup-rule (fn [] (zelph/fact s "=>" (zelph/fact x "q" (zelph/var "W")))))))))js");
+            CHECK(any_output_contains(collector, "same=true"));
+        } });
 }
 
 TEST_CASE("rule identity: a rule whose variables sit only in a nested conjunction is compared by its structure")

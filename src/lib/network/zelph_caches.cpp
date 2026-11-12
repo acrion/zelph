@@ -51,20 +51,24 @@ namespace
     // collection or a set constant, into which a construction writes its
     // conditions -- and reads no statement: a statement as a rule's subject
     // serves as its sole condition, and the closure reaches it as the
-    // subject of the `=>` fact. `entered` holds the containers read so far,
-    // apart from the nodes a walk has visited: the walk visits a set
-    // constant as the subject of the `=>` fact before its members are read.
+    // subject of the `=>` fact.
+    //
+    // Containers are read at every depth, each exactly once, and recorded
+    // in a separate set (Zelph::flatten_condition_sets): the walk that
+    // asks examines a set constant as the subject of the `=>` fact before
+    // reading its members, thus the nodes it has visited cannot be used.
+    // Each container below is also asked, but the outermost one is not.
     template <class Holds>
-    bool conditions_hold_variable(const Zelph* n, const Node conditions, std::unordered_set<Node>& entered, const Holds& holds)
+    bool conditions_hold_variable(const Zelph* n, const Node conditions, const Holds& holds)
     {
-        if (conditions == 0 || Zelph::is_var(conditions)) return false;
-        if (!entered.insert(conditions).second) return false; // cycle protection
-
         adjacency_set members;
-        if (!n->condition_set_members(conditions, members)) return false;
-        for (const Node m : members)
-            if (holds(m) || conditions_hold_variable(n, m, entered, holds)) return true;
-        return false;
+        if (conditions == 0 || Zelph::is_var(conditions) || !n->condition_set_members(conditions, members)) return false;
+
+        std::unordered_set<Node> entered{conditions};
+        n->flatten_condition_sets(members, entered);
+        for (const Node container : entered)
+            if (container != conditions && holds(container)) return true;
+        return std::any_of(members.begin(), members.end(), holds);
     }
 
     // Whether any member of the container `c` -- whose members are attached
@@ -158,8 +162,7 @@ namespace
         const auto               in_text = [&](const Node m)
         { return membership_holds_variable(z, m, read); };
 
-        std::unordered_set<Node> entered;
-        return conditions_hold_variable(z, subject, entered, in_text) || in_text(subject)
+        return conditions_hold_variable(z, subject, in_text) || in_text(subject)
             || std::any_of(objects.begin(), objects.end(), in_text);
     }
 
@@ -206,8 +209,7 @@ namespace
                 if (component(o, fs.predicate != n->core.PartOf)) return true;
             if (text && fs.predicate == n->core.Causes)
             {
-                std::unordered_set<Node> entered;
-                if (conditions_hold_variable(n, fs.subject, entered, [&](const Node m)
+                if (conditions_hold_variable(n, fs.subject, [&](const Node m)
                                              { return var_in_closure_walk(n, m, visited, reading); }))
                     return true;
                 if (rule_memberships_hold_variable(n, fs.subject, fs.objects)) return true;
@@ -525,8 +527,7 @@ bool Zelph::var_in_closure(const Node nd, const VariableReading reading) const
 
 bool Zelph::conditions_hold_variable(const Node conditions) const
 {
-    std::unordered_set<Node> entered;
-    return ::conditions_hold_variable(this, conditions, entered, [this](const Node m)
+    return ::conditions_hold_variable(this, conditions, [this](const Node m)
                                       { return var_in_closure(m); });
 }
 

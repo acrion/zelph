@@ -30,15 +30,114 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #ifdef __linux__
     #include <fstream>
+    #include <pthread.h>
     #include <sstream>
     #include <string>
+    #if !defined(__GLIBC__)
+        #include <sys/syscall.h>
+        #include <unistd.h>
+    #endif
 #elif defined(__APPLE__)
     #include <mach-o/dyld.h>
+    #include <pthread.h>
     #include <string>
+    #include <sys/resource.h>
 #elif defined(_WIN32)
     #define WIN32_LEAN_AND_MEAN
     #include <windows.h>
 #endif
+
+#if defined(__EMSCRIPTEN__)
+    #include <emscripten/stack.h>
+#elif defined(_MSC_VER)
+    #include <intrin.h>
+#endif
+
+namespace
+{
+    // The calling thread's stack as reported by the platform: the minimum
+    // address to which it may expand downward, and the address from which it
+    // expands downward. Both values are 0 when the platform reports no
+    // information.
+    struct StackBounds
+    {
+        std::uintptr_t low  = 0;
+        std::uintptr_t high = 0;
+    };
+
+    StackBounds read_thread_stack()
+    {
+#if defined(__EMSCRIPTEN__)
+        return {emscripten_stack_get_end(), emscripten_stack_get_base()};
+#elif defined(__linux__)
+    #if !defined(__GLIBC__)
+        // musl's pthread_getattr_np reports the main thread's stack up to its
+        // current mapped extent, rather than to its maximum possible expansion;
+        // outside glibc, the main thread therefore reports nothing in this
+        // context.
+        if (getpid() == static_cast<pid_t>(syscall(SYS_gettid))) return {};
+    #endif
+        pthread_attr_t attributes;
+        if (pthread_getattr_np(pthread_self(), &attributes) != 0) return {};
+        void*       address = nullptr;
+        std::size_t size    = 0;
+        const int   result  = pthread_attr_getstack(&attributes, &address, &size);
+        pthread_attr_destroy(&attributes);
+        if (result != 0 || address == nullptr || size == 0) return {};
+        const auto low = reinterpret_cast<std::uintptr_t>(address);
+        return {low, low + size};
+#elif defined(__APPLE__)
+        const pthread_t      self = pthread_self();
+        const std::uintptr_t high = reinterpret_cast<std::uintptr_t>(pthread_get_stackaddr_np(self));
+        std::size_t          size = pthread_get_stacksize_np(self);
+        // The kernel sizes the main thread's stack by RLIMIT_STACK; when
+        // pthread_get_stacksize_np indicates a larger value, that limit
+        // represents the size to trust.
+        if (pthread_main_np() != 0)
+        {
+            rlimit limit{};
+            if (getrlimit(RLIMIT_STACK, &limit) == 0 && limit.rlim_cur != RLIM_INFINITY && static_cast<std::size_t>(limit.rlim_cur) < size)
+                size = static_cast<std::size_t>(limit.rlim_cur);
+        }
+        if (high == 0 || size == 0 || size >= high) return {};
+        return {high - size, high};
+#elif defined(_WIN32)
+    #if _WIN32_WINNT >= 0x0602
+        ULONG_PTR low  = 0;
+        ULONG_PTR high = 0;
+        GetCurrentThreadStackLimits(&low, &high);
+        return {static_cast<std::uintptr_t>(low), static_cast<std::uintptr_t>(high)};
+    #else
+        // GetCurrentThreadStackLimits needs the headers from Windows 8 or a
+        // newer version (_WIN32_WINNT 0x0602); a build targeting an older
+        // version, or an older MinGW-w64, yields no results.
+        return {};
+    #endif
+#else
+        return {};
+#endif
+    }
+}
+
+std::uintptr_t zelph::platform::stack_position()
+{
+#if defined(__EMSCRIPTEN__)
+    return emscripten_stack_get_current();
+#elif defined(_MSC_VER)
+    return reinterpret_cast<std::uintptr_t>(_AddressOfReturnAddress());
+#else
+    return reinterpret_cast<std::uintptr_t>(__builtin_frame_address(0));
+#endif
+}
+
+std::uintptr_t zelph::platform::stack_floor(const std::size_t reserve, const std::size_t fallback)
+{
+    thread_local const StackBounds bounds = read_thread_stack();
+
+    const std::uintptr_t here = stack_position();
+    if (bounds.low != 0 && bounds.low < here && here <= bounds.high) return bounds.low + reserve;
+    return here > fallback ? here - fallback : 0;
+}
 
 size_t zelph::platform::get_process_memory_usage()
 {

@@ -462,14 +462,29 @@ namespace zelph::network
             if (parts != nullptr) parts->push_back(part);
             if (z->is_condition_set(part))
             {
+                // The members in the order of their memberships, the order in which the search
+                // tries them; a member that is a set gives its own members, at every depth and each
+                // set exactly once: a set that holds itself, either directly or via another set, is
+                // not entered again. Every set the reading enters is among the parts it has
+                // examined. A condition that several of these sets hold is collected once, at the
+                // first membership that reaches it, as the reasoner joins it once.
+                std::unordered_set<Node> sets{part};
+                std::unordered_set<Node> collected;
                 for (const Node rel : z->get_right(part))
                 {
                     if (z->parse_relation(rel) != z->core.PartOf) continue;
                     adjacency_set objs;
                     const Node    element = z->parse_fact(rel, objs);
-                    if (element && objs.count(part) == 1)
-                        collect_conditions(z, nn_pred, closure_pred, element, positive, negative, guards, closures, negated_closures, neural, comparisons, parts);
+                    if (!element || objs.count(part) != 1) continue;
+                    adjacency_set elements{element};
+                    z->flatten_condition_sets(elements, sets);
+                    for (const Node e : elements)
+                        if (collected.insert(e).second)
+                            collect_conditions(z, nn_pred, closure_pred, e, positive, negative, guards, closures, negated_closures, neural, comparisons, parts);
                 }
+                if (parts != nullptr)
+                    for (const Node set : sets)
+                        if (set != part) parts->push_back(set);
                 return;
             }
 

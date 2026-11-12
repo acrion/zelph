@@ -675,9 +675,9 @@ bool Reasoning::is_negated_condition(Node condition, int depth)
     return result;
 }
 
-// Recursively checks whether a rule's condition contains a negated
-// condition at any depth: the condition directly, or -- within conjunction
-// sets -- any element, even those embedded within further conjunctions.
+// Checks whether a rule's condition contains a negated condition at any
+// depth: the condition directly, or -- within conjunction sets -- any
+// element, even those embedded within further conjunctions.
 // Rules meeting this criterion constitute the DEFERRED STRATUM: their
 // evaluation occurs solely after positive rules have reached quiescence,
 // ensuring that negation-as-failure tests absence against a fully
@@ -691,15 +691,14 @@ bool Reasoning::condition_contains_negation(Node condition, int depth)
 {
     if (!_pImpl->exists(condition)) return false;
     if (is_negated_condition(condition, depth)) return true;
-    if (!is_condition_set(condition)) return false;
+    adjacency_set elements;
+    if (!condition_set_members(condition, elements)) return false;
 
-    for (Node rel : _pImpl->get_right(condition))
-    {
-        if (parse_relation(rel) != core.PartOf) continue;
-        adjacency_set objs;
-        Node          element = parse_fact(rel, objs);
-        if (element && objs.count(condition) == 1 && condition_contains_negation(element, depth))
-            return true;
-    }
-    return false;
+    // The members at every depth, each set read once: a set can hold itself,
+    // either directly or indirectly through another set, and entering it again
+    // from within recursed until the stack overflowed.
+    std::unordered_set<Node> sets{condition};
+    flatten_condition_sets(elements, sets);
+    return std::any_of(elements.begin(), elements.end(), [&](const Node element)
+                       { return _pImpl->exists(element) && is_negated_condition(element, depth); });
 }

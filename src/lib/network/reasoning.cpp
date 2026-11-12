@@ -429,7 +429,8 @@ std::vector<Node> Reasoning::condition_elements(const Node condition) const
         if (parse_relation(rel) != core.PartOf) continue;
         adjacency_set objs;
         const Node    element = parse_fact(rel, objs, 0);
-        if (element == 0 || objs.count(condition) != 1) continue;
+        // The set itself, among its members, is none of its conditions.
+        if (element == 0 || element == condition || objs.count(condition) != 1) continue;
         members.push_back(element);
         read_through.insert(element);
     }

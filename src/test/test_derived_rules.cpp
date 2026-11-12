@@ -4611,6 +4611,61 @@ TEST_CASE("derived rules: a rule over an atom that is a member of itself is foun
         rerun_adds_no_node(collector, interactive); });
 }
 
+// The conditions and variables of a rule a generator writes over a set that holds
+// itself are read at every depth, and each set exactly once. Activated by a switch
+// whose binding substitutes nothing, the rule had its variables read before being
+// built, and the reading brought up the set's members again and again without end;
+// written under a binding, it caused a stack overflow once a run proceeded to the
+// fixpoint.
+TEST_CASE("derived rules: a rule written over a set that holds itself fires and is found again")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+%(def x (zelph/var "X"))
+%(def y (zelph/var "Y"))
+%(def s (zelph/collection (zelph/fact x "p" y)))
+%(zelph/fact s "in" s)
+%(zelph/fact s "~" "conjunction")
+)");
+        std::string lines;
+        SUBCASE("a switch turns it on")
+        {
+            lines = R"js(%(zelph/fact (zelph/fact (zelph/var "K") "is" "on") "=>" (zelph/fact s "=>" (zelph/fact x "q" y))))js"
+                    "\na p b\nfeature is on";
+        }
+        SUBCASE("a generator writes it under a binding")
+        {
+            lines = R"js(%(zelph/fact (zelph/fact (zelph/var "G") "go" y) "=>" (zelph/fact s "=>" (zelph/fact x "q" y))))js"
+                    "\na p b\nt go b";
+        }
+        passes_keep_rules(collector, interactive, lines, 2);
+
+        collector.clear();
+        interactive.process("X q Y");
+        CHECK(collect_answers(collector) == std::vector<std::string>{"a q b"}); });
+}
+
+// The variables of a rule activated by a switch are read from the sets tagged as
+// conjunctions. A data collection, which `zelph/collection` builds, is a value that
+// the rebuild preserves unchanged: interpreted as a set of conditions, it would
+// make the switch over `@{(X p Y)}` with a ground consequence rename the variables within it on each run
+// and leave behind two new ones each time.
+TEST_CASE("derived rules: a switch over an untagged collection leaves no variable behind")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+%(def x (zelph/var "X"))
+%(def y (zelph/var "Y"))
+%(def c (zelph/collection (zelph/fact x "p" y)))
+%(zelph/fact (zelph/fact (zelph/var "K") "is" "on") "=>" (zelph/fact c "=>" (zelph/fact "k" "r" "m")))
+a p b
+feature is on
+)");
+        rerun_adds_no_node(collector, interactive); });
+}
+
 // A rule over `in` writes into what a firing derived:
 // `(X likes C) => (X in C)` puts `b` into the term built by the firing of
 // `(X p k) => (X likes @{(Z q k)})`. The rule's own collection receives

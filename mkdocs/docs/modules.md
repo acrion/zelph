@@ -89,14 +89,7 @@ When a load supersedes a network, it also purges the registry: the network being
 
 Facts are hash-consed: the node *is* its own structure, meaning that asserting the same fact twice results in no change. (Two different facts only share a node when their 62-bit hashes collide; zelph then keeps the first one and records nothing from the second, as detailed in [The Identity Foundation](internals/performance.md#the-identity-foundation).) A rule requires one additional step. It includes variables, which are allocated fresh for every statement, and a node built from newly allocated variables constitutes a fresh node – hence, entering the same rule twice would yield two rules deriving identical consequences, doubling the unification cost.
 
-zelph therefore recognises a rule it already has. A `... => ...` statement
-is compared against the existing rules **up to a renaming of its
-variables** (alpha-equivalence, as in the lambda calculus); if one matches,
-the newly built rule is rolled back and the statement evaluates to the rule
-that was already there. What counts as "the same rule" is exactly what the
-reasoner reads — set membership, the conjunction tag, and each condition's
-subject, predicate and objects, including any negated condition — so two
-rules that survive the check are guaranteed to behave differently.
+zelph therefore recognises a rule it already has. A `... => ...` statement is compared against the existing rules **up to a renaming of its variables** (alpha-equivalence, as in the lambda calculus); if one matches, the newly built rule is rolled back and the statement evaluates to the rule that was already there. What constitutes "the same rule" is determined by what the reasoner reads – set membership, the conjunction tag, and each condition’s subject, predicate, and objects, including any negated condition. The check might fail to identify a rule the graph already holds, in which case both are kept: once the path to a variable, to a set of conditions, or to a collection literal traverses approximately fourteen levels of nesting – counting each set of conditions within the rule’s own set, each collection literal within a term, each element of a list, and each fact within a condition or a consequence – or between rules that reach sets holding one another once their fingerprint or comparison exceeds its budget of 100,000 positions or pairs or the comparison exceeds the stack depth of its thread.
 
 This matters most in a place where it is easy to miss. Using `.load` swaps the current graph for the stored version, which retains a module’s rules but omits its Janet side (`zelph/number`, digit alphabets and signed forms, display schemes); thus, resuming work on a saved arithmetic network in a new session means re-importing the module:
 

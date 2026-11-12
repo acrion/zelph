@@ -66,14 +66,21 @@ namespace zelph::network
 {
     class Zelph;
 
-    // Fingerprint of a rule that ignores WHICH variable nodes it uses.
-    // Alpha-equivalent rules always share it; sharing it does not imply
-    // alpha-equivalence (`(A p B) (B p C)` and `(A p B) (C p D)` collide),
-    // which is why it is a filter in front of the real test and never a
-    // decision on its own. Empty if `rule` is not a rule.
+    // The fingerprint of a rule that ignores WHICH variable nodes it uses.
+    // Alpha-equivalent rules share this fingerprint, except when the rendering of a
+    // rule over cycles exhausts its allocated budget of rendered positions, or when a
+    // container jointly referenced by both rules in a term points back to a container
+    // nested within a cycle (see Matcher in rule_identity.cpp); sharing this
+    // fingerprint does not imply alpha-equivalence (`(A p B) (B p C)` and
+    // `(A p B) (C p D)` collide), which is why it functions as a filter prior to the
+    // real test and never serves as a standalone decision. Empty if `rule` is not a
+    // rule.
     std::string rule_shape(const Zelph* z, Node rule);
 
     // The decision: same rule up to a bijective renaming of the variables.
+    // A comparison of rules over cycles that exhausts its budget or depletes
+    // the stack of its thread yields no (refer to Matcher in
+    // rule_identity.cpp).
     bool rules_alpha_equivalent(const Zelph* z, Node a, Node b);
 
     // The part of rule `b` occupying the position where `part` stands in rule
@@ -118,4 +125,21 @@ namespace zelph::network
     // such fact across every rendering. It is independent of hardware,
     // allowing a test to hold that shape without requiring a quiet machine.
     ZELPH_EXPORT uint64_t rule_statement_climb_steps();
+
+    // The number of times rule_shape and the comparison of two rules have read
+    // a node -- as single_condition and classify read it -- or the members of a
+    // container during this process. Beginning with its first cycle, a
+    // rendering or a comparison reads each node once in every role it meets the
+    // node in, and the members of each container once; before that, it reads
+    // them at every encounter. Similar to the climb steps, it lets a test hold
+    // that shape without requiring a quiet machine.
+    ZELPH_EXPORT uint64_t rule_identity_reads();
+
+    // The number of positions rule_shape has rendered and the number of pairs
+    // the comparison of two rules has compared during this process, including
+    // those at the depth cap and past the budget, which terminate immediately.
+    // Once a rendering or a comparison has met a cycle, it takes at most its
+    // budget of positions or pairs before every further one terminates
+    // immediately.
+    ZELPH_EXPORT uint64_t rule_identity_steps();
 }
