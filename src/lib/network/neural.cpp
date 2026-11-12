@@ -28,15 +28,67 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include "zelph.hpp"
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
+#include <mutex>
 #include <random>
-#include <shared_mutex>
 #include <stdexcept>
+#include <thread>
 
 using namespace zelph::network;
 
 namespace
 {
+    // Each weight that a reader can observe during a writer's modification is
+    // accessed via these two mechanisms, ensuring that the single location
+    // where the sequence lock departs from the C++ memory model is explicitly
+    // named.
+    //
+    // A reader that overlaps a writer loads doubles that the writer is
+    // storing. The standard defines this as a data race and gives it no
+    // semantic meaning, and a thread sanitizer flags it. The reader's
+    // handling of such a load is to disregard it: `read_weights` accepts
+    // nothing unless the sequence number was even before and unchanged
+    // after, the acquire load and fence keep the loads between those two
+    // checks, and no weight is ever used as an index, a size, or a branch
+    // condition, so a torn value can only result in an incorrect number that
+    // is subsequently discarded. Relaxed atomics would make the overlap well
+    // defined, but compilers refrain from vectorizing atomic loads, and,
+    // measured on a 780x256 network, that cost 6 % of a single search thread
+    // and a third of the multi-threaded performance gain. The Linux kernel's
+    // seqlocks make the same trade.
+    inline double load_weight(const double& w) { return w; }
+
+    inline void store_weight(double& w, const double v) { w = v; }
+
+    // Holds the sequence number odd during a writer's modification of the
+    // weights, and restores it to even on every exit, including when an
+    // exception occurs: leaving an odd number would keep every reader
+    // retrying indefinitely.
+    class WriteWindow
+    {
+    public:
+        explicit WriteWindow(std::atomic<std::uint64_t>& seq)
+            : _seq(seq)
+            , _start(seq.load(std::memory_order_relaxed))
+        {
+            _seq.store(_start + 1, std::memory_order_relaxed);
+            std::atomic_thread_fence(std::memory_order_release);
+        }
+
+        ~WriteWindow()
+        {
+            _seq.store(_start + 2, std::memory_order_release);
+        }
+
+        WriteWindow(const WriteWindow&)            = delete;
+        WriteWindow& operator=(const WriteWindow&) = delete;
+
+    private:
+        std::atomic<std::uint64_t>& _seq;
+        const std::uint64_t         _start;
+    };
+
     // One active input supplies the entire row of the transposed input
     // matrix. `out` gathers the pre-activations of the layer behind it,
     // so the contributions of each unit’s sum remain in ascending input
@@ -51,12 +103,12 @@ namespace
         if (v == 1.0)
         {
             for (size_t j = 0; j < n_post; ++j)
-                out[j] += col[j];
+                out[j] += load_weight(col[j]);
         }
         else
         {
             for (size_t j = 0; j < n_post; ++j)
-                out[j] += col[j] * v;
+                out[j] += load_weight(col[j]) * v;
         }
     }
 
@@ -70,12 +122,12 @@ namespace
         if (v == 1.0)
         {
             for (size_t j = 0; j < n_post; ++j)
-                out[j] -= col[j];
+                out[j] -= load_weight(col[j]);
         }
         else
         {
             for (size_t j = 0; j < n_post; ++j)
-                out[j] -= col[j] * v;
+                out[j] -= load_weight(col[j]) * v;
         }
     }
 
@@ -88,7 +140,7 @@ namespace
         double sum = 0.0;
         for (size_t i = 0; i < n_pre; ++i)
         {
-            sum += row[i] * in[i];
+            sum += load_weight(row[i]) * in[i];
         }
         return sum;
     }
@@ -318,21 +370,94 @@ std::unique_ptr<NeuralNet> NeuralNet::compile(const Zelph&             z,
     return nn;
 }
 
+template <class Read>
+void NeuralNet::read_weights(Read&& read) const
+{
+    // After this many attempts overlapped by writers, the reader requests
+    // they step aside (see _starving). A short read hardly ever reaches this
+    // point; a long one -- a snapshot, a write-back, a dense pass -- against
+    // a trainer that never pauses would otherwise never find a gap.
+    constexpr int patience = 4;
+
+    struct Starving
+    {
+        std::atomic<std::uint32_t>* count = nullptr;
+        ~Starving()
+        {
+            if (count) count->fetch_sub(1, std::memory_order_release);
+        }
+    } starving;
+
+    for (int attempt = 0;; ++attempt)
+    {
+        if (attempt == patience)
+        {
+            _starving.fetch_add(1, std::memory_order_acq_rel);
+            starving.count = &_starving;
+        }
+
+        const std::uint64_t before = _seq.load(std::memory_order_acquire);
+        if (before & 1)
+        {
+            // A writer resides within its window. Current reading would
+            // merely be re-read.
+            std::this_thread::yield();
+            continue;
+        }
+
+        read();
+
+        std::atomic_thread_fence(std::memory_order_acquire);
+        if (_seq.load(std::memory_order_relaxed) == before) return;
+    }
+}
+
+namespace
+{
+    // Called by a writer holding the writer mutex, immediately before it
+    // opens its window: a reader that has exhausted its patience takes
+    // precedence.
+    void yield_to_starving_readers(const std::atomic<std::uint32_t>& starving)
+    {
+        while (starving.load(std::memory_order_acquire) != 0)
+            std::this_thread::yield();
+    }
+}
+
 std::vector<double> NeuralNet::forward(const std::vector<double>& input,
                                        const std::vector<size_t>* active_input) const
 {
     thread_local std::vector<std::vector<double>> act;
 
-    std::shared_lock lock(_mtx);
-    run_forward(_nodes, _w, input, active_input, _activation, act);
+    read_weights([&]
+                 { run_forward(_nodes, _w, input, active_input, _activation, act); });
     return act.back();
+}
+
+std::vector<std::vector<double>> NeuralNet::copy_weights() const
+{
+    // The shapes are determined during compile(), meaning the copy is
+    // allocated just once and only refilled when a write operation
+    // overlaps it.
+    std::vector<std::vector<double>> out(_w.size());
+    for (size_t k = 0; k < _w.size(); ++k)
+        out[k].resize(_w[k].size());
+
+    read_weights([&]
+                 {
+        for (size_t k = 0; k < _w.size(); ++k)
+        {
+            const double* from = _w[k].data();
+            double*       to   = out[k].data();
+            for (size_t e = 0; e < out[k].size(); ++e)
+                to[e] = load_weight(from[e]);
+        } });
+    return out;
 }
 
 std::vector<std::vector<double>> NeuralNet::weights() const
 {
-    std::shared_lock lock(_mtx);
-
-    std::vector<std::vector<double>> out = _w;
+    std::vector<std::vector<double>> out = copy_weights();
     // Matrix 0 is kept transposed; a caller observes one arrangement for
     // all of them, so this is where the internal one concludes. The call
     // copies anyway.
@@ -347,7 +472,11 @@ double NeuralNet::train_step(const std::vector<double>& input,
 {
     thread_local std::vector<std::vector<double>> act;
 
-    std::unique_lock lock(_mtx);
+    // Writers mutually exclude one another in this context. The forward
+    // pass and the deltas perform only reading operations, and since no
+    // alternative writer can modify the weights, they execute before the
+    // window's opening, while readers reattempt only during update loops.
+    std::lock_guard writer(_writer);
     run_forward(_nodes, _w, input, active_input, _activation, act);
     const std::vector<double>& out = act.back();
 
@@ -369,6 +498,8 @@ double NeuralNet::train_step(const std::vector<double>& input,
 
     // Backpropagate layer by layer. prev_delta is accumulated with the
     // pre-update weights (row[i] is read before it is written).
+    yield_to_starving_readers(_starving);
+    const WriteWindow window(_seq);
     for (size_t k = _w.size(); k-- > 0;)
     {
         // act[0] is empty: run_forward accesses the input layer where the
@@ -395,7 +526,7 @@ double NeuralNet::train_step(const std::vector<double>& input,
                 {
                     if (mask[j]) // only existing synapses are trainable
                     {
-                        col[j] -= learning_rate * delta[j] * p;
+                        store_weight(col[j], col[j] - learning_rate * delta[j] * p);
                     }
                 }
             };
@@ -426,7 +557,7 @@ double NeuralNet::train_step(const std::vector<double>& input,
 
                 if (mask[i]) // only existing synapses are trainable
                 {
-                    row[i] -= learning_rate * delta[j] * pre[i];
+                    store_weight(row[i], row[i] - learning_rate * delta[j] * pre[i]);
                 }
             }
         }
@@ -452,7 +583,7 @@ double NeuralNet::train_step(const std::vector<double>& input,
 
 void NeuralNet::set_weights(const std::vector<std::vector<double>>& w)
 {
-    std::unique_lock lock(_mtx);
+    std::lock_guard writer(_writer);
     if (w.size() != _w.size())
     {
         throw std::runtime_error("NeuralNet::set_weights: expected " + std::to_string(_w.size())
@@ -466,20 +597,40 @@ void NeuralNet::set_weights(const std::vector<std::vector<double>>& w)
                                      + std::to_string(w[k].size()) + " entries, expected " + std::to_string(_w[k].size()));
         }
     }
-    // The mask is a property of the graph, not of the weights, so restoring
-    // cannot resurrect a synapse the graph does not have: entries outside the
-    // mask are never trained and never read.
-    _w = w;
-
-    // What weights() delivered was matrix 0 in the caller’s layout, so this
-    // is the reverse of that step and the round trip is exact.
-    _w.front() = transpose(_w.front(), _nodes[1].size(), _nodes[0].size());
+    // The mask is a property of the graph, rather than of the weights,
+    // meaning that restoring is unable to bring back a synapse if the graph
+    // lacks it: any entries outside the mask are never subjected to training
+    // and are never accessed during reading.
+    //
+    // Each element is placed into the buffers the net already holds. Assigning
+    // new vectors would free the previous ones while a reader continues to
+    // access them, and the sequence lock safeguards values only, not memory.
+    // Matrix 0 comes in with the caller's layout, the same as weights()
+    // delivers, and gets transposed during entry, ensuring the round trip is
+    // exact.
+    yield_to_starving_readers(_starving);
+    const WriteWindow window(_seq);
+    const size_t      n_pre  = _nodes[0].size();
+    const size_t      n_post = _nodes[1].size();
+    for (size_t i = 0; i < n_pre; ++i)
+    {
+        for (size_t j = 0; j < n_post; ++j)
+            store_weight(_w[0][i * n_post + j], w[0][j * n_pre + i]);
+    }
+    for (size_t k = 1; k < _w.size(); ++k)
+    {
+        for (size_t e = 0; e < _w[k].size(); ++e)
+            store_weight(_w[k][e], w[k][e]);
+    }
 }
 
 void NeuralNet::write_back(Zelph& z) const
 {
-    std::shared_lock lock(_mtx);
-    for (size_t k = 0; k < _w.size(); ++k)
+    // First copied and then written from that copy: writing into the graph
+    // constitutes a side effect that the reader cannot reverse, hence it
+    // must not occur within a read that might need to be repeated.
+    const std::vector<std::vector<double>> w = copy_weights();
+    for (size_t k = 0; k < w.size(); ++k)
     {
         const auto& pre  = _nodes[k];
         const auto& post = _nodes[k + 1];
@@ -493,7 +644,7 @@ void NeuralNet::write_back(Zelph& z) const
 
                 if (_mask[k][at])
                 {
-                    z.set_edge_weight(pre[i], post[j], _w[k][at]);
+                    z.set_edge_weight(pre[i], post[j], w[k][at]);
                 }
             }
         }
@@ -721,8 +872,10 @@ void NeuralNet::accumulator_set(const size_t* slots,
     check_accumulator_size(size);
     gather_slots(slots, activations, count, active);
 
-    std::shared_lock lock(_mtx);
-    first_layer(active, accumulator);
+    // It is safe to execute again: first_layer
+    // overwrites the whole buffer.
+    read_weights([&]
+                 { first_layer(active, accumulator); });
 }
 
 void NeuralNet::accumulator_update(const size_t* added,
@@ -744,14 +897,23 @@ void NeuralNet::accumulator_update(const size_t* added,
     gather_slots(removed, removed_activations, removed_count, gone);
     gather_slots(added, added_activations, added_count, arrived);
 
-    const size_t     n_post = _nodes[1].size();
-    std::shared_lock lock(_mtx);
+    // The update changes the vector it consumes, meaning that any read
+    // requiring repetition must restart using the caller's original values:
+    // it works on a copy and returns the duplicate only after the read has
+    // successfully completed. Identical rows, identical order, thus the
+    // outcome matches the in-place version bit for bit.
+    thread_local std::vector<double> moved;
 
-    const double* wt = _w[0].data();
-    for (const auto& [i, v] : gone)
-        sub_input_row(wt, n_post, i, v, accumulator);
-    for (const auto& [i, v] : arrived)
-        add_input_row(wt, n_post, i, v, accumulator);
+    const size_t  n_post = _nodes[1].size();
+    const double* wt     = _w[0].data();
+    read_weights([&]
+                 {
+        moved.assign(accumulator, accumulator + size);
+        for (const auto& [i, v] : gone)
+            sub_input_row(wt, n_post, i, v, moved.data());
+        for (const auto& [i, v] : arrived)
+            add_input_row(wt, n_post, i, v, moved.data()); });
+    std::copy(moved.begin(), moved.end(), accumulator);
 }
 
 std::vector<std::pair<Node, double>> NeuralNet::accumulator_eval(const double* accumulator,
@@ -760,10 +922,15 @@ std::vector<std::pair<Node, double>> NeuralNet::accumulator_eval(const double* a
     thread_local std::vector<double> cur;
 
     check_accumulator_size(size);
-    cur.assign(accumulator, accumulator + size);
 
-    std::shared_lock lock(_mtx);
-    return scored_output(remaining_layers(cur));
+    // The `remaining_layers` function operates on its input directly,
+    // meaning a fresh copy is made each time the read is performed again.
+    const std::vector<double>* out = nullptr;
+    read_weights([&]
+                 {
+        cur.assign(accumulator, accumulator + size);
+        out = &remaining_layers(cur); });
+    return scored_output(*out);
 }
 
 std::vector<std::pair<Node, double>> NeuralNet::eval_nodes(const std::vector<std::pair<Node, double>>& input) const
@@ -772,8 +939,10 @@ std::vector<std::pair<Node, double>> NeuralNet::eval_nodes(const std::vector<std
 
     gather_active(0, input, active);
 
-    std::shared_lock lock(_mtx);
-    return scored_output(forward_sparse(active));
+    const std::vector<double>* out = nullptr;
+    read_weights([&]
+                 { out = &forward_sparse(active); });
+    return scored_output(*out);
 }
 
 std::vector<std::pair<Node, double>> NeuralNet::eval_slots(const size_t* slots,
@@ -784,6 +953,8 @@ std::vector<std::pair<Node, double>> NeuralNet::eval_slots(const size_t* slots,
 
     gather_slots(slots, activations, count, active);
 
-    std::shared_lock lock(_mtx);
-    return scored_output(forward_sparse(active));
+    const std::vector<double>* out = nullptr;
+    read_weights([&]
+                 { out = &forward_sparse(active); });
+    return scored_output(*out);
 }

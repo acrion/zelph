@@ -43,18 +43,15 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 namespace zelph
 {
-    // Null for a handle that refers to no net, or to one that a load has
-    // discarded. The caller maintains a reference to the net, meaning that a
-    // load on the main thread might free the entry even while another Janet
-    // thread is still evaluating it. A function holding the reference signals
-    // an error by throwing (guarded turns it into a panic), not by using
-    // janet_panicf: the longjmp would skip the share's release and
-    // permanently keep the net alive.
-    std::shared_ptr<network::NeuralNet> ScriptEngine::Impl::get_net(int32_t handle)
+    // Returns null for a handle referencing no net, or one that a load has
+    // retired. Even if a load on the main thread retires a net
+    // during the call, a net discovered here remains valid throughout the
+    // entire call duration: the registry only releases its nets when the
+    // script engine terminates, either at .new or at exit, and a thread still
+    // using one then operates beyond the scope of the documented rules.
+    network::NeuralNet* ScriptEngine::Impl::get_net(int32_t handle)
     {
-        std::lock_guard<std::mutex> lock(_state_mutex);
-        if (handle < 0 || static_cast<size_t>(handle) >= _neural_nets.size()) return nullptr;
-        return _neural_nets[static_cast<size_t>(handle)];
+        return _neural_nets.find(handle);
     }
 
     // Read a Janet array/tuple of numbers into a vector<double>.
@@ -190,9 +187,7 @@ namespace zelph
         {
             auto net = network::NeuralNet::compile(*s_instance->_n, layers, activation);
 
-            std::lock_guard<std::mutex> lock(s_instance->_state_mutex);
-            s_instance->_neural_nets.push_back(std::move(net));
-            return janet_wrap_integer(static_cast<int32_t>(s_instance->_neural_nets.size() - 1));
+            return janet_wrap_integer(s_instance->_neural_nets.add(std::move(net)));
         }
         catch (const std::exception& e)
         {

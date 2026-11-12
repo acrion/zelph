@@ -31,9 +31,10 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #include <zelph_export.h>
 
+#include <atomic>
 #include <cstdint>
 #include <memory>
-#include <shared_mutex>
+#include <mutex>
 #include <utility>
 #include <vector>
 
@@ -78,13 +79,21 @@ namespace zelph::network
     /// The slope below zero for Activation::LeakyRelu.
     constexpr double leaky_relu_slope = 0.01;
 
-    // (class doc comment unchanged)
-    // Thread safety: any number of threads may evaluate concurrently
-    // (forward, eval_nodes, weights, write_back); a training step
-    // (train_step, train_nodes) or set_weights excludes them for its
-    // duration. A compiled net may therefore be evaluated from a search
-    // thread while another thread trains it. compile() itself is not
-    // synchronised - build the net before sharing the handle.
+    // Thread safety: multiple threads can perform evaluation simultaneously
+    // -- every const entry point, from forward through eval_nodes to
+    // accumulator and write_back -- while other threads train it or restore
+    // its weights. An evaluation never waits for another
+    // and writes no memory it shares with one: the weights are guarded by a
+    // sequence lock, and a reader encountering an overlapping write discards
+    // its prior read and retries, ensuring it always returns a complete set
+    // of weights. A reader persistently interrupted by writes requests the
+    // writers to pause and then waits for no more than the single write
+    // currently in progress. write_back is the sole exception to "writes
+    // nothing": it reads the weights in this manner and subsequently writes
+    // them into the graph using the weight store's dedicated lock. Writers
+    // (train_step, train_nodes, train_slots, set_weights) mutually exclude
+    // each other. compile() is not synchronized -- construct the net before
+    // sharing the handle.
     class ZELPH_EXPORT NeuralNet
     {
     public:
@@ -267,9 +276,10 @@ namespace zelph::network
         // output and departs holding the net’s.
         const std::vector<double>& remaining_layers(std::vector<double>& cur) const;
 
-        // The forward pass over an ascending, duplicate-free active input
+        // A forward pass across an ascending, duplicate-free active input
         // list. The result is a per-thread buffer, valid until this thread
-        // evaluates again; the shared lock must be held across both.
+        // re-evaluates; it represents a whole set of weights' response
+        // solely when calculated within read_weights.
         const std::vector<double>& forward_sparse(const std::vector<std::pair<size_t, double>>& active) const;
 
         // The output layer paired with its nodes, in neuron index order.
@@ -281,17 +291,44 @@ namespace zelph::network
                               const std::vector<std::pair<Node, double>>&   target,
                               double                                        learning_rate);
 
-        // Guards _w, the only member that changes after compile(). _nodes,
-        // _mask and _index are written once by compile() and read-only
-        // afterwards, so they need no protection.
-        //
-        // Taken shared by the const entry points (forward, eval_nodes,
-        // write_back, weights) and exclusively by the mutating ones
-        // (train_step, set_weights). It is NOT taken by train_nodes, which
-        // delegates to train_step - locking at both levels would deadlock.
-        mutable std::shared_mutex _mtx;
+        // Runs `read`, which can read _w and write exclusively to
+        // thread-local scratch, continuing until it completes without any
+        // write operation overlapping it. Refer to _seq.
+        template <class Read>
+        void read_weights(Read&& read) const;
 
-        Activation                     _activation{Activation::Relu};
+        // A consistent copy of each matrix within the internal
+        // layout.
+        std::vector<std::vector<double>> copy_weights() const;
+
+        // The sequence lock on _w, the sole member modified following
+        // compile(). _nodes, _mask, and _index are written just once by
+        // compile() and then accessed exclusively for reading, thus requiring
+        // no protection.
+        //
+        // A writer holds _writer, sets _seq to an odd value, performs a write
+        // operation, then restores _seq to an even value again. A reader notes
+        // _seq, performs a read, and validates the read result only when _seq
+        // is even and has remained unchanged; otherwise, it retries the read.
+        // Thus, a reader performs no shared writes -- a reader-writer lock
+        // writes its reader count with every call, and at eight threads, this
+        // accounted for three quarters of each thread's evaluation time. Each
+        // resides on a separate cache line, ensuring that a writer's traffic
+        // on these lines does not evict the headers of _nodes and _w from the
+        // readers' caches.
+        alignas(64) mutable std::atomic<std::uint64_t> _seq{0};
+        alignas(64) mutable std::mutex _writer;
+
+        // Readers that have attempted multiple retries and now ask the
+        // writers to yield. A writer discovering it is non-zero pauses
+        // before opening its window, ensuring a reader continuously
+        // outmanoeuvred by consecutive training steps waits no longer than
+        // the single window already open -- the bound the reader-writer lock
+        // gave. Written exclusively by such a reader, thus the reader's
+        // fast path still writes nothing shared.
+        alignas(64) mutable std::atomic<std::uint32_t> _starving{0};
+
+        alignas(64) Activation         _activation{Activation::Relu};
         std::vector<std::vector<Node>> _nodes;
 
         // Weight matrix k, and the mask beside it, hold one entry per

@@ -25,6 +25,8 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #include "answer.hpp"
 
+#include <algorithm>
+
 using namespace zelph::network;
 
 Answer::Answer(State state, long double probability, Node relation)
