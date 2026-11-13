@@ -30,7 +30,7 @@
 
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 
-use zelph::{Channel, Engine, ErrorKind, Node};
+use zelph::{Activation, Channel, Engine, ErrorKind, Node};
 
 fn engine_lock() -> MutexGuard<'static, ()> {
     static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
@@ -275,6 +275,53 @@ fn a_network_is_wired_compiled_trained_and_read_back() {
     // boundary.
     let err = net
         .eval_graded(&inputs[0..2], &[1.0], Some(1))
+        .expect_err("length mismatch");
+    assert_eq!(err.kind(), ErrorKind::InvalidArgument);
+}
+
+#[test]
+fn a_net_addressed_by_slot_answers_and_learns_as_it_does_by_node() {
+    // Slot entry points are designed to skip a hash lookup for each input,
+    // and their value is justified only when they produce identical results:
+    // the same score, and a training step that results in bit-identical
+    // weights.
+    let _guard = engine_lock();
+    let z = silent_engine();
+
+    let (input, inputs) = layer(&z, "In", &["i1", "i2", "i3"]);
+    let (hidden, _) = layer(&z, "Hidden", &["h1", "h2"]);
+    let (output, outputs) = layer(&z, "Out", &["o1"]);
+    z.connect_layers(input, hidden, 0.5, 1).unwrap();
+    z.connect_layers(hidden, output, 0.5, 2).unwrap();
+    // Leaky, ensuring that a negative value in a hidden layer for this input
+    // still passes a gradient: under a plain ReLU, such weights leave every
+    // unit at zero, and a step alters nothing in either way.
+    let net = z
+        .compile_with(&[input, hidden, output], Activation::LeakyRelu)
+        .unwrap();
+
+    let order = net.layer_nodes(0).unwrap();
+    let slot = |node: Node| order.iter().position(|&n| n == node).expect("an input");
+    let active = [inputs[0], inputs[2]];
+    let slots = [slot(active[0]), slot(active[1])];
+
+    assert_eq!(net.best_slots(&slots).unwrap(), net.best(&active).unwrap());
+
+    let start = net.snapshot().unwrap();
+    let by_node = net
+        .train_graded(&active, Some(&[1.0, 0.5]), &outputs, Some(&[0.8]), 0.1)
+        .unwrap();
+    let after_node = net.snapshot().unwrap();
+    net.restore(&start).unwrap();
+    let by_slot = net
+        .train_slots(&slots, Some(&[1.0, 0.5]), &outputs, Some(&[0.8]), 0.1)
+        .unwrap();
+    assert_eq!(by_slot, by_node, "the loss before the step differs");
+    assert_eq!(net.snapshot().unwrap(), after_node, "the step left other weights");
+    assert_ne!(after_node, start, "the step changed nothing");
+
+    let err = net
+        .train_slots(&slots, Some(&[1.0]), &outputs, None, 0.1)
         .expect_err("length mismatch");
     assert_eq!(err.kind(), ErrorKind::InvalidArgument);
 }

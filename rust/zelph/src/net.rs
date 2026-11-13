@@ -56,9 +56,11 @@ impl Snapshot {
 /// of. Unlike the engine it is `Send + Sync`, and that is the whole point:
 /// **a net may be evaluated from any number of threads at once, including
 /// while another thread trains it.** The synchronisation is inside the C++
-/// `NeuralNet`, which takes a shared lock for evaluation and an exclusive one
-/// for a training step, so an evaluator always sees a whole set of weights -
-/// one epoch's or the next one's, never half of each.
+/// `NeuralNet`, where the weights are guarded by a sequence lock: an
+/// overlapping evaluation during a training step re-reads, ensuring it always
+/// sees a whole set of weights - one epoch's or the next one's, never half of
+/// each - and evaluations never block one another or write to shared memory,
+/// allowing them to scale according to the number of threads executing them.
 ///
 /// Training therefore takes `&self` as well. What it does *not* promise is
 /// two trainers at once being useful: they serialise, and their gradients are
@@ -372,6 +374,54 @@ impl<'e> Net<'e> {
             target_activations,
             learning_rate,
         )
+    }
+
+    /// As [`train_graded`](Net::train_graded), but the active inputs are
+    /// identified by their slot within the input layer, just as
+    /// [`best_slots`](Net::best_slots) names them. The target stays
+    /// node-addressed. Returns the loss *before* the update.
+    ///
+    /// A caller that performs evaluation via slot, thereby eliminating the
+    /// need for a hash lookup per input, also bypasses it during training
+    /// and does not require a secondary mapping back to nodes.
+    pub fn train_slots(
+        &self,
+        slots: &[usize],
+        input_activations: Option<&[f64]>,
+        target: &[Node],
+        target_activations: Option<&[f64]>,
+        learning_rate: f64,
+    ) -> Result<f64> {
+        if let Some(a) = input_activations {
+            if a.len() != slots.len() {
+                return Err(Error::new(
+                    ErrorKind::InvalidArgument,
+                    format!("{} slots but {} activations", slots.len(), a.len()),
+                ));
+            }
+        }
+        if let Some(a) = target_activations {
+            same_length(target, a)?;
+        }
+
+        let mut loss: f64 = 0.0;
+
+        check(unsafe {
+            zelph_sys::zelph_nn_train_slots(
+                self.engine,
+                self.handle,
+                slots.as_ptr(),
+                input_activations.map_or(ptr::null(), |a| a.as_ptr()),
+                slots.len(),
+                target.as_ptr().cast(),
+                target_activations.map_or(ptr::null(), |a| a.as_ptr()),
+                target.len(),
+                learning_rate,
+                &mut loss,
+            )
+        })?;
+
+        Ok(loss)
     }
 
     fn train_impl(

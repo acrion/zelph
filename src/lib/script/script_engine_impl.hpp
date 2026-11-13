@@ -36,6 +36,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 // script.
 
 #include "network/network_types.hpp"
+#include "network/net_registry.hpp"
 #include "network/neural.hpp"
 #include "script/script_engine.hpp"
 
@@ -360,20 +361,23 @@ namespace zelph
             Incomplete
         };
 
-        // Compiled neural networks (session-scoped caches, discarded on .new).
-        // The handles handed to Janet serve as indices within this vector.
-        // When a load overwrites the graph, all entries are cleared while
-        // preserving the slots, ensuring that a handle acquired before the
-        // replacement never refers to a network compiled afterwards.
-        std::vector<std::shared_ptr<network::NeuralNet>> _neural_nets;
+        // Compiled neural networks (session-scoped, discarded on .new),
+        // accessed via the handles handed to Janet. A lookup takes no lock,
+        // enabling Janet threads that evaluate nets to proceed without
+        // serialization at that point. Upon a load that replaces the graph,
+        // every handle is retired, ensuring that any handle obtained
+        // before the replacement never refers to a network compiled
+        // afterwards; the networks themselves remain intact, as detailed in
+        // NetRegistry.
+        network::NetRegistry _neural_nets;
 
         // Track variables used in the current scope/statement
         std::map<std::string, network::Node> _scoped_variables;
 
-        // Guards the script engine's own bookkeeping (_scoped_variables,
-        // _neural_nets) against concurrent access from Janet threads
-        // (ev/spawn-thread). Calls INTO the reasoning engine are synchronized
-        // by zelph itself and are not covered here.
+        // Guards the script engine's own bookkeeping (_scoped_variables) from
+        // simultaneous access by Janet threads (ev/spawn-thread). Calls INTO
+        // the reasoning engine are synchronized by zelph itself and are not
+        // covered here.
         std::mutex _state_mutex;
 
         // Set by Interactive; backs the Janet function zelph/import.
@@ -501,7 +505,7 @@ namespace zelph
 
         // --- Implemented in janet_api_neural.cpp ---
 
-        std::shared_ptr<network::NeuralNet>                  get_net(int32_t handle);
+        network::NeuralNet*                                  get_net(int32_t handle);
         static std::vector<double>                           janet_number_vector(Janet v, const char* what);
         static Janet                                         janet_cfun_zelph_nn_connect(int32_t argc, Janet* argv);
         static Janet                                         janet_cfun_zelph_weight(int32_t argc, Janet* argv);

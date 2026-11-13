@@ -28,6 +28,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include <filesystem>
 #include <functional>
 #include <string>
+#include <vector>
 
 namespace zelph::io
 {
