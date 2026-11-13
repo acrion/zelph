@@ -9,6 +9,7 @@ A subtask counts as done once its outcome has been made publicly available and c
 Updates are shared here no less than once every two months, and with each release that completes subtasks. Detailed descriptions of every release can be found in the [release notes on GitHub](https://github.com/acrion/zelph/releases).
 
 - **29 September 2026** · The status page has been published. No subtask is complete yet. Work on proof reconstruction since 8 August 2026 is documented under task 2.
+- **13 November 2026** · No subtask has reached completion. The rule engine has been prepared for the specification of the RDF term mapping (1a); the commits are listed under task 1.
 
 ## Tasks and Subtasks
 
@@ -17,6 +18,18 @@ From the project plan:
 > Every task has one published result that a stranger can find, read and use; nothing counts as done until that result exists. The order is free: no task depends on another being finished first, except where the description says so.
 
 ### 1. RDF and JSON-LD import
+
+The rule engine and its documentation have been prepared for the specification of 1a: a condition whose terms are all bound is probed instead of searched for, numeric comparisons are conditions the engine answers itself, and a set of conditions nested within another is read as a single flat set, even when a set holds itself. None of this constitutes the specification, so 1a remains open; the work is documented because the specification relies upon it.
+
+| Date | Commit | Change |
+|---|---|---|
+| 2026-11-05 | [`762d5c3`](https://github.com/acrion/zelph/commit/762d5c39ee82e893174989b89cc5e6868356c03b) | Probe fully bound conditions and record wider statements per predicate |
+| 2026-11-06 | [`a6face7`](https://github.com/acrion/zelph/commit/a6face71a25e24ff6ee35863b14b03cc1eb3c3b5) | Add numeric comparison conditions that the engine answers |
+| 2026-11-09 | [`671df0f`](https://github.com/acrion/zelph/commit/671df0f365a81b46272016f8fdc6e2c7571a38fe) | Flatten nested condition sets and seed the rules that hold them |
+| 2026-11-09 | [`0089ce8`](https://github.com/acrion/zelph/commit/0089ce8812f060a36ef67c496a69c40e42a7460a) | Treat the membership of a nested set with variables as a pattern |
+| 2026-11-09 | [`23a766f`](https://github.com/acrion/zelph/commit/23a766fe3abb9c6bf9a08c6791b1943cb5423f17) | Remove retrospectives from the docs and correct two stale details |
+| 2026-11-12 | [`c17686a`](https://github.com/acrion/zelph/commit/c17686a48b2a6e5ebde7f7fc99a4e558abc3bee6) | Conclude each walk over a set of conditions that holds itself |
+| 2026-11-13 | [`cb94bd4`](https://github.com/acrion/zelph/commit/cb94bd43590774a9ac47dcd2acc700950f9e2e16) | Compare the containers within a rule’s terms as the reasoner reads them |
 
 - **1a** (open): A specification of the mapping between RDF terms and zelph nodes, published as a documentation page: IRIs, blank nodes, plain literals, language-tagged literals and datatype IRIs, with the round-trip properties each one has and the ones it does not.
 - **1b** (open): A streaming N-Triples and N-Quads reader, reading gzip and zstd input directly, with the memory behaviour of the existing Wikidata importer: constant memory over an input of arbitrary size.
@@ -30,25 +43,27 @@ From the project plan:
 
 Since 8 August 2026, the proof reconstruction behind `.explain` has been extended and corrected. None of this currently generates the outcomes specified by the subtasks below, thus they remain open; the effort is documented because the subtasks build on it.
 
-- 2026-08-08 · [`56dae24`](https://github.com/acrion/zelph/commit/56dae24f5f1b3fd549d89d508d7f3ba19a54ea69) · Reconstruct a derivation whose premise was walked
-- 2026-08-12 · [`60b436d`](https://github.com/acrion/zelph/commit/60b436d400d2b320d2c19bb4f844218a7462bd87) · Say that a proof cannot cross a neural premise
-- 2026-08-27 · [`cdd868d`](https://github.com/acrion/zelph/commit/cdd868de42db8f966012b8e405772b68c4aa421c) · Record a contradiction in the graph, so it is reported once
-- 2026-08-28 · [`e28b1fd`](https://github.com/acrion/zelph/commit/e28b1fdae821fde6ab333cc32c97f8eada56d621) · Say how many contradictions a run met but did not announce
-- 2026-08-28 · [`31fc99d`](https://github.com/acrion/zelph/commit/31fc99d93449e790859458ccf7264f2926f8b385) · Mark a proof tree that is one of several justifications
-- 2026-08-28 · [`cc89af2`](https://github.com/acrion/zelph/commit/cc89af27f16a2583cce8017ce31c53b06ff91601) · State what the derivation export writes, and withdraw an unmeasured timing
-- 2026-08-31 · [`2123c45`](https://github.com/acrion/zelph/commit/2123c45ce1e9029384952282b58163d9c1d98d90) · Correct counts, refusals and explanations that were not true
-- 2026-08-31 · [`78906d0`](https://github.com/acrion/zelph/commit/78906d06672c520bc4e8caf7f4fe9893699d4784) · updated documentation and help, fixed ambiguous explain output, minor fix in sparql.zph
-- 2026-09-01 · [`0213ad0`](https://github.com/acrion/zelph/commit/0213ad0f4f31dff2ef49faaa7827e4c0974343f2) · Split the engines by subject, and name what a statement lacks
-- 2026-09-01 · [`4b37cc5`](https://github.com/acrion/zelph/commit/4b37cc535726e23d61f20567bd6d2fc7fcabb2af) · moved #include directives to fix windows and macos build; workaround for windows’s io.h clash
-- 2026-09-01 · [`1f38e1e`](https://github.com/acrion/zelph/commit/1f38e1e3a66f932de929f333fac90b37b1444016) · fixed formatting
-- 2026-09-02 · [`e689af6`](https://github.com/acrion/zelph/commit/e689af6ba42d7d585ab24072f5f2c0ac9d1e3e17) · Rework the documentation entry points and structure
-- 2026-09-04 · [`8ea77f7`](https://github.com/acrion/zelph/commit/8ea77f76f0d7eb053b8a32df1f7d697f41628168) · Pin the instruction set floor and the install-time test selection
-- 2026-09-05 · [`ac7f7ca`](https://github.com/acrion/zelph/commit/ac7f7ca98971f195e5103b68d5014b45f90f326d) · Run a command-line script as a session, and report what went wrong
-- 2026-10-10 · [`c9144a3`](https://github.com/acrion/zelph/commit/c9144a32f5642c0c003782b55162948b6a73f9a9) · Prepare 1.0.2: negation levels, recipe ids, sound simplifier, tabled .explain
-- 2026-10-11 · [`7e15931`](https://github.com/acrion/zelph/commit/7e15931e0d9b59a89a32601a6a940a45a07db842) · Prepare 1.1.0: nested claims, writes on the main thread, sound matching
-- 2026-10-12 · [`91fd444`](https://github.com/acrion/zelph/commit/91fd4445fb459c566a1c5cfcca0b27988ce2bfdf) · Write Mermaid pages under UTF-8 paths; compute a test’s platform-specific pin
-- 2026-10-12 · [`5cc755a`](https://github.com/acrion/zelph/commit/5cc755a587da94324f2acb56bf8832defe6d8322) · Make a negated condition into a node and a query into a single condition list
-- 2026-10-12 · [`461e2ab`](https://github.com/acrion/zelph/commit/461e2ab5df59f45365212a7982eeb73fbcf7d765) · Key negation levels by pattern, replace the graph upon loading, keep labels
+| Date | Commit | Change |
+|---|---|---|
+| 2026-08-08 | [`56dae24`](https://github.com/acrion/zelph/commit/56dae24f5f1b3fd549d89d508d7f3ba19a54ea69) | Reconstruct a derivation whose premise was walked |
+| 2026-08-12 | [`60b436d`](https://github.com/acrion/zelph/commit/60b436d400d2b320d2c19bb4f844218a7462bd87) | Say that a proof cannot cross a neural premise |
+| 2026-08-27 | [`cdd868d`](https://github.com/acrion/zelph/commit/cdd868de42db8f966012b8e405772b68c4aa421c) | Record a contradiction in the graph, so it is reported once |
+| 2026-08-28 | [`e28b1fd`](https://github.com/acrion/zelph/commit/e28b1fdae821fde6ab333cc32c97f8eada56d621) | Say how many contradictions a run met but did not announce |
+| 2026-08-28 | [`31fc99d`](https://github.com/acrion/zelph/commit/31fc99d93449e790859458ccf7264f2926f8b385) | Mark a proof tree that is one of several justifications |
+| 2026-08-28 | [`cc89af2`](https://github.com/acrion/zelph/commit/cc89af27f16a2583cce8017ce31c53b06ff91601) | State what the derivation export writes, and withdraw an unmeasured timing |
+| 2026-08-31 | [`2123c45`](https://github.com/acrion/zelph/commit/2123c45ce1e9029384952282b58163d9c1d98d90) | Correct counts, refusals and explanations that were not true |
+| 2026-08-31 | [`78906d0`](https://github.com/acrion/zelph/commit/78906d06672c520bc4e8caf7f4fe9893699d4784) | updated documentation and help, fixed ambiguous explain output, minor fix in sparql.zph |
+| 2026-09-01 | [`0213ad0`](https://github.com/acrion/zelph/commit/0213ad0f4f31dff2ef49faaa7827e4c0974343f2) | Split the engines by subject, and name what a statement lacks |
+| 2026-09-01 | [`4b37cc5`](https://github.com/acrion/zelph/commit/4b37cc535726e23d61f20567bd6d2fc7fcabb2af) | moved #include directives to fix windows and macos build; workaround for windows’s io.h clash |
+| 2026-09-01 | [`1f38e1e`](https://github.com/acrion/zelph/commit/1f38e1e3a66f932de929f333fac90b37b1444016) | fixed formatting |
+| 2026-09-02 | [`e689af6`](https://github.com/acrion/zelph/commit/e689af6ba42d7d585ab24072f5f2c0ac9d1e3e17) | Rework the documentation entry points and structure |
+| 2026-09-04 | [`8ea77f7`](https://github.com/acrion/zelph/commit/8ea77f76f0d7eb053b8a32df1f7d697f41628168) | Pin the instruction set floor and the install-time test selection |
+| 2026-09-05 | [`ac7f7ca`](https://github.com/acrion/zelph/commit/ac7f7ca98971f195e5103b68d5014b45f90f326d) | Run a command-line script as a session, and report what went wrong |
+| 2026-10-10 | [`c9144a3`](https://github.com/acrion/zelph/commit/c9144a32f5642c0c003782b55162948b6a73f9a9) | Prepare 1.0.2: negation levels, recipe ids, sound simplifier, tabled .explain |
+| 2026-10-11 | [`7e15931`](https://github.com/acrion/zelph/commit/7e15931e0d9b59a89a32601a6a940a45a07db842) | Prepare 1.1.0: nested claims, writes on the main thread, sound matching |
+| 2026-10-12 | [`91fd444`](https://github.com/acrion/zelph/commit/91fd4445fb459c566a1c5cfcca0b27988ce2bfdf) | Write Mermaid pages under UTF-8 paths; compute a test’s platform-specific pin |
+| 2026-10-12 | [`5cc755a`](https://github.com/acrion/zelph/commit/5cc755a587da94324f2acb56bf8832defe6d8322) | Make a negated condition into a node and a query into a single condition list |
+| 2026-10-12 | [`461e2ab`](https://github.com/acrion/zelph/commit/461e2ab5df59f45365212a7982eeb73fbcf7d765) | Key negation levels by pattern, replace the graph upon loading, keep labels |
 
 - **2a** (open): A serialiser for the proof graph, with stable identity per record, so that the steps of a derivation join into the chain they came from instead of having to be matched by rendered text.
 - **2b** (open): The rule that fired and the bindings that matched, recorded in the export. The proposal promises both; neither is emitted today.
@@ -63,8 +78,10 @@ Since 8 August 2026, the proof reconstruction behind `.explain` has been extende
 
 As of 12 October 2026, a negated condition functions as an independent node, with negation levels operating on patterns instead of predicates. Neither mechanism supports negation across a group of conditions, so 3f remains open; the work is documented because 3f builds on it: a negated group must be deferred on these levels.
 
-- 2026-10-12 · [`5cc755a`](https://github.com/acrion/zelph/commit/5cc755a587da94324f2acb56bf8832defe6d8322) · Make a negated condition into a node and a query into a single condition list
-- 2026-10-12 · [`461e2ab`](https://github.com/acrion/zelph/commit/461e2ab5df59f45365212a7982eeb73fbcf7d765) · Key negation levels by pattern, replace the graph upon loading, keep labels
+| Date | Commit | Change |
+|---|---|---|
+| 2026-10-12 | [`5cc755a`](https://github.com/acrion/zelph/commit/5cc755a587da94324f2acb56bf8832defe6d8322) | Make a negated condition into a node and a query into a single condition list |
+| 2026-10-12 | [`461e2ab`](https://github.com/acrion/zelph/commit/461e2ab5df59f45365212a7982eeb73fbcf7d765) | Key negation levels by pattern, replace the graph upon loading, keep labels |
 
 - **3a** (open): A reusable constraint module in the standard library with neutral vocabulary: symmetry, transitivity, inverse properties, domain and range, sub-property and sub-class, disjointness. Importable, documented, and tested through the module rather than through pasted rules.
 - **3b** (open): Functional properties and cardinality. Both need counting over a set of matches, which the rule engine does not currently do, so this includes the engine work that makes such a condition expressible.
