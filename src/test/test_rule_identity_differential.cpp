@@ -241,7 +241,7 @@ sa is special
     }
 }
 
-TEST_CASE("rule identity: a rule line added to a positive program loses no fact over named atoms")
+TEST_CASE("rule identity: a rule line added to a positive program loses no fact over named atoms" * doctest::test_suite("slow"))
 {
     const std::vector<Shape> all     = shapes();
     int                      dropped = 0;
