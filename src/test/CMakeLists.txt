@@ -92,6 +92,7 @@ add_executable(zelph_tests
     test_reasoning.cpp
     test_recipe_ids.cpp
     test_rule_identity.cpp
+    test_rule_identity_differential.cpp
     test_rule_patterns.cpp
     test_result_query.cpp
     test_save_memory.cpp

@@ -514,14 +514,16 @@ Node Reasoning::build_rule(const Node pattern, const Variables& variables, const
         // which would otherwise turn the feature on and derive nothing.
         //
         // Claiming it needs a node of its own, and alpha-renaming gives one:
-        // each statement names its own variables anyway, so a renamed copy
-        // says exactly the same thing while being a statement rather than a
-        // reference to one.
+        // each statement names its own variables anyway, so a renamed copy says
+        // exactly the same thing while being a statement rather than a
+        // reference to one. A copy claimed earlier is located here, as is a
+        // rule entered through alternative methods; neither of the two being
+        // compared is new.
         for (const Node candidate : get_left(core.Causes))
         {
             if (candidate == existing.relation()) continue;
             if (is_mentioned(candidate)) continue;
-            if (rules_alpha_equivalent(this, candidate, existing.relation())) return candidate;
+            if (rules_alpha_equivalent(this, candidate, existing.relation(), {})) return candidate;
         }
 
         Variables renamed = variables;
@@ -550,11 +552,20 @@ Node Reasoning::build_rule(const Node pattern, const Variables& variables, const
 
     const Node built = fact(condition, core.Causes, consequences);
 
-    // A rule in force that says the same is that rule: a typed twin, a rule
-    // a different generator wrote, the rule a name merge rebuilt. The rule
+    // A rule in force that says the same is that rule: a typed twin, a rule a
+    // different generator wrote, the rule a name merge rebuilt. The rule
     // freshly constructed goes with the rest of the construction
-    // (rebuild_rule).
-    if (const Node twin = find_equivalent_rule(built, false); twin != 0) return twin;
+    // (rebuild_rule). The construction assigns no part it produced to the new
+    // rule as its own (NewRuleNodes): it finds a set of conditions it
+    // reconstructs via its members, enabling another construction with the same
+    // firing to reuse a set this one made, and a set taken back with this rule
+    // can no longer be found. Thus a typed twin previously entered, or the same
+    // rule written by another generator, over a set of conditions in a term
+    // that is a different node stays beside the new rule, and a query gets a
+    // second answer regarding a set that looks alike.
+    if (const Node twin = find_equivalent_rule(built, false, [](Node)
+                                               { return false; });
+        twin != 0) return twin;
 
     created = true;
     return keep(built);
@@ -617,7 +628,7 @@ Node Reasoning::existing_rule(const Node pattern, const Variables& variables, co
     {
         if (candidate == existing.relation()) continue;
         if (is_mentioned(candidate)) continue;
-        if (rules_alpha_equivalent(this, candidate, existing.relation())) return candidate;
+        if (rules_alpha_equivalent(this, candidate, existing.relation(), {})) return candidate;
     }
     return 0;
 }

@@ -340,9 +340,9 @@ namespace zelph
     // it would never fire. Only when resolving a pattern (via .explain, the
     // .prune commands) does the mention get named, since naming it is the
     // purpose in that context.
-    network::Node ScriptEngine::Impl::find_duplicate_rule(const network::Node rule)
+    network::Node ScriptEngine::Impl::find_duplicate_rule(const network::Node rule, const std::function<bool(network::Node)>& made)
     {
-        return _n->find_equivalent_rule(rule, _resolving_pattern);
+        return _n->find_equivalent_rule(rule, _resolving_pattern, made);
     }
 
     // A rule built while another one is being built would activate the same
@@ -602,7 +602,42 @@ namespace zelph
             }
         }
 
-        const network::Node twin = s_instance->find_duplicate_rule(rule);
+        // The new rule's own nodes are what the rollback of a duplicate takes
+        // back: the scratch cluster, except for what the facts a focus wrote
+        // beside the rule need, which stays (below). What the statement's
+        // islands built is not in the scratch and stays as well, so a set they
+        // made may be held by a fact they wrote. Read only when the comparison
+        // asks (network::NewRuleNodes), while the scratch cluster still holds
+        // it.
+        struct Journal
+        {
+            const network::Zelph* const               z;
+            const ParsedStatement* const              statement;
+            const std::size_t                         own_aside;
+            std::optional<std::vector<network::Node>> made;
+
+            bool holds(const network::Node n)
+            {
+                if (!made)
+                {
+                    made = s_instance->_n->cluster_nodes(kRuleScratch);
+                    if (statement != nullptr && statement->aside.size() > own_aside)
+                    {
+                        const std::vector<network::Node> aside(statement->aside.begin() + static_cast<std::ptrdiff_t>(own_aside), statement->aside.end());
+                        std::vector<network::Node>       stays = needed_by_aside(z, aside, *made);
+                        std::sort(stays.begin(), stays.end());
+                        std::erase_if(*made, [&](const network::Node m)
+                                      { return std::binary_search(stays.begin(), stays.end(), m); });
+                    }
+                    std::sort(made->begin(), made->end());
+                }
+                return std::binary_search(made->begin(), made->end(), n);
+            }
+        };
+        Journal                     journal{z, statement, own_aside, std::nullopt};
+        const network::NewRuleNodes own = [&journal](const network::Node n)
+        { return journal.holds(n); };
+        const network::Node twin = s_instance->find_duplicate_rule(rule, own);
 
         // A typed rule statement qualifies as a rule even if its focus causes
         // it to evaluate to one of its parts: the statement claims the rule
@@ -631,7 +666,7 @@ namespace zelph
 
         // Find the corresponding part of the existing rule at this moment,
         // while the new rule remains in place.
-        const network::Node kept_part = focus ? network::corresponding_part(z, rule, twin, part) : 0;
+        const network::Node kept_part = focus ? network::corresponding_part(z, rule, twin, part, own) : 0;
 
         // When the rule duplicates one the graph has, what a focus wrote
         // beside it stays. The drop previously removed all that the build

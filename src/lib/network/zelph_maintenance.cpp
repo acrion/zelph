@@ -1583,7 +1583,7 @@ void Zelph::note_rule_text_changed() const
     _pImpl->_rule_index_stale.store(true, std::memory_order_release);
 }
 
-Node Zelph::find_equivalent_rule(const Node rule, const bool mentioned) const
+Node Zelph::find_equivalent_rule(const Node rule, const bool mentioned, const std::function<bool(Node)>& made) const
 {
     std::lock_guard lock(_pImpl->_rule_index_mtx);
 
@@ -1634,7 +1634,7 @@ Node Zelph::find_equivalent_rule(const Node rule, const bool mentioned) const
         }
         ++it;
 
-        if (candidate == rule || !rules_alpha_equivalent(this, rule, candidate)) continue;
+        if (candidate == rule || !rules_alpha_equivalent(this, rule, candidate, made)) continue;
         if (!is_mentioned(candidate)) return candidate;
         if (only_mentioned == 0) only_mentioned = candidate;
     }

@@ -206,8 +206,9 @@ namespace zelph::network
         // every atom traversed during the walk.
         enum class Role
         {
-            Condition, // the => subject, also of a nested rule, and each member of a condition set
-            Term       // subject / predicate / object inside a condition
+            Condition, // the => subject of the rule and of a rule it writes, and each member of a condition set
+            Rule,      // a consequence: a fact a rule writes, or a rule a generator writes
+            Term       // The subject / predicate / object within a condition or a consequence, including a rule quoted therein
         };
 
         // How the REASONER reads this node -- see collect_conditions. A set
@@ -220,7 +221,7 @@ namespace zelph::network
         enum class Kind
         {
             Var,
-            Set,       // compared by its members: a set of conditions, a rule's own collection
+            Set,       // compared by its members: a set of conditions, a rule's own collection (in a term, see Matcher::match)
             Container, // a container in condition position the engine does not read as a set: several members, no tag
             Fact,
             SetConst, // a set constant that incorporates a rule's own collection or a conjunction set positioned beneath it
@@ -246,14 +247,14 @@ namespace zelph::network
                 // could not be entered.
                 if (role == Role::Condition) return is_container(z, n) ? Kind::Container : Kind::Opaque;
 
-                // Elsewhere the id decides, and no membership is read for it:
-                // a rule's own collection forms a component of the rule's
-                // text and is compared by its members, whereas every other
-                // collection serves as a value -- data a rule refers to --
-                // and functions as the identical term solely as the same
-                // node, akin to an atom. A conjunction set is read by its tag
-                // regardless of position: the conditions within a nested
-                // rule.
+                // Elsewhere the id decides, and no membership is read for it: a
+                // rule's own collection forms a component of the rule's text
+                // and is compared by its members, whereas every other
+                // collection serves as a value -- data a rule refers to -- and
+                // functions as the identical term solely as the same node, akin
+                // to an atom. A conjunction set is read by its tag irrespective
+                // of position; when two distinct ones meet in a term, the
+                // matcher decides whether their members are compared.
                 return z->is_rule_template(n) || is_conjunction(z, n) ? Kind::Set : Kind::Opaque;
             }
 
@@ -280,13 +281,31 @@ namespace zelph::network
             return Kind::Opaque;
         }
 
-        // When a rule is nested in another rule, it transforms into a rule
-        // upon derivation, so its subject is read as a condition, just as
-        // the engine reads it at that location: a set containing a single
-        // condition is equivalent to that condition.
-        Role subject_role(const Zelph* const z, const FactStructure& fs)
+        // A rule that a rule writes, either as a consequence or as a
+        // consequence of such a rule, becomes a rule upon derivation, so its
+        // subject is read as a condition, just as the engine reads it at that
+        // location: a set containing a single condition is equivalent to that
+        // condition. Any other rule inside a rule is a term, and so is its
+        // subject: a firing writes a rule quoted in a consequence as the node
+        // it is, along with its set of conditions, and a condition matches a
+        // set constant via its node and the subject of a rule via its members
+        // only when both are sets of conditions (unify_condition), so that a
+        // set of a single condition is not that condition in this context, and
+        // two untagged containers are two nodes. Read as conditions, such a
+        // subject made one rule of two rules that the reasoner distinguishes,
+        // and the rule rolled back lost what it derived. Two rules that name or
+        // quote rules over named sets of identical members, which a condition
+        // matches alike, stay two, even though one would suffice.
+        Role subject_role(const Zelph* const z, const FactStructure& fs, const Role role)
         {
-            return fs.predicate == z->core.Causes ? Role::Condition : Role::Term;
+            return fs.predicate == z->core.Causes && role == Role::Rule ? Role::Condition : Role::Term;
+        }
+
+        // The consequences of a rule that a rule writes are themselves
+        // consequences; the objects of any other fact are terms.
+        Role object_role(const Zelph* const z, const FactStructure& fs, const Role role)
+        {
+            return fs.predicate == z->core.Causes && role == Role::Rule ? Role::Rule : Role::Term;
         }
 
         // A condition set with a single element is equivalent to that
@@ -418,15 +437,16 @@ namespace zelph::network
                     return "?";
                 }
 
-                // A conjunction set holds conditions, a term container holds
-                // terms -- so the members inherit the role of the node they
-                // hang off rather than being assumed to be conditions.
-                const bool conditions = role == Role::Condition || (kind == Kind::Set && is_conjunction(z, n));
+                // The members of a container in condition position are
+                // conditions; in a term, the members of each container are
+                // terms, including those of a set of conditions (see
+                // Matcher::match).
+                const Role members_role = role == Role::Condition ? Role::Condition : Role::Term;
 
                 std::vector<std::string> parts;
                 walk.path.push_back(n);
                 for (const Node m : members_of(z, n, walk.cyclic ? &walk.readings : nullptr))
-                    parts.push_back(canon(z, m, depth + 1, conditions ? Role::Condition : Role::Term, walk));
+                    parts.push_back(canon(z, m, depth + 1, members_role, walk));
                 walk.path.pop_back();
                 std::sort(parts.begin(), parts.end());
 
@@ -447,11 +467,11 @@ namespace zelph::network
                 std::vector<std::string> objs;
                 objs.reserve(fs.objects.size());
                 for (const Node o : fs.objects)
-                    objs.push_back(canon(z, o, depth + 1, Role::Term, walk));
+                    objs.push_back(canon(z, o, depth + 1, object_role(z, fs, role), walk));
                 std::sort(objs.begin(), objs.end());
 
                 std::string out = "("
-                                + canon(z, fs.subject, depth + 1, subject_role(z, fs), walk) + " "
+                                + canon(z, fs.subject, depth + 1, subject_role(z, fs, role), walk) + " "
                                 + canon(z, fs.predicate, depth + 1, Role::Term, walk) + " ";
                 for (const auto& o : objs)
                     out += o + " ";
@@ -472,12 +492,15 @@ namespace zelph::network
             // encountered once more along both paths closes a cycle in both
             // rules and matches as the token canon renders for it; a container
             // met again on only one path meets a structure on the other and
-            // matches nothing. A container shared by both rules matches by its
-            // identity only within a term (below), also when its content leads
-            // back to a container on a path, which canon then renders as the
-            // token in one rule and expanded in the other.
+            // matches nothing. A container shared by both rules is compared by
+            // its members in the same way as any other, so its content meets
+            // the paths where canon's rendering meets them.
             std::vector<Node> path_a;
             std::vector<Node> path_b;
+
+            // What the statement that built rule `a` created, none for a
+            // construction; empty whenever neither rule is new (NewRuleNodes).
+            const NewRuleNodes* made = nullptr;
 
             // Whether the comparison has met a container once more along a
             // path. From that point onward it tracks the number of pairs it
@@ -515,6 +538,14 @@ namespace zelph::network
             // equivalent rule being treated as a new one on some entries and
             // recognized on others.
             using Then = std::function<bool(Bijection&, Bijection&)>;
+
+            // Whether the distinct sets of conditions `a` and `b`, standing in
+            // a term, may be compared by their members (see match).
+            bool alike_sets_in_a_term(const Node a, const Node b) const
+            {
+                if (z->is_named_any(a) || z->is_named_any(b)) return false;
+                return made == nullptr || !*made || (*made)(a);
+            }
 
             bool match(Node a, Node b, Bijection& ab, Bijection& ba, int depth, Role role, const Then& then)
             {
@@ -563,10 +594,10 @@ namespace zelph::network
                 case Kind::Set:
                 case Kind::SetConst:
                 {
-                    // The paths are queried first, before determining the
-                    // identity of a term beneath: a container met again along
-                    // a path closes a cycle and becomes the token canon
-                    // renders, regardless of any other aspect it may have.
+                    // The paths are examined first, before any other request
+                    // made of the container: one met again along a path closes
+                    // a cycle and serves as the token canon renders, regardless
+                    // of any other aspect it might possess.
                     const bool again_a = std::find(path_a.begin(), path_a.end(), a) != path_a.end();
                     const bool again_b = std::find(path_b.begin(), path_b.end(), b) != path_b.end();
                     if (again_a || again_b)
@@ -579,43 +610,76 @@ namespace zelph::network
                         return again_a && again_b && then(ab, ba);
                     }
 
-                    // In a term, the SAME container node is considered the same
-                    // term, regardless of what the bijection says about the
-                    // variables inside it. Two rules share one when the second
-                    // was alpha-renamed from the first and the container was
-                    // not rebuilt with it -- an accumulator, whose whole point
-                    // is that every rule naming it writes into the single
-                    // container. Comparing its members would then ask the
-                    // bijection to map a variable to itself, which it cannot do
-                    // after the rename, causing the generator to write another
-                    // copy of its rule on each execution. Two rules that a
-                    // program writes over one container are taken as a single
-                    // rule in the same manner, also in cases where the
-                    // container holds a variable that both rules bind and the
-                    // two therefore derive different facts.
-                    //
-                    // In condition position, a container is read as the rule's
-                    // conditions, along with the variables it binds for the
-                    // rest of the rule and the sets read before it, so the same
-                    // node may represent distinct conditions across two rules,
-                    // and it is compared according to its members. Taken by
-                    // identity, two rules sharing a single set of conditions
-                    // yet differing in consequences were treated as a single
+                    // One container node shared by both rules is compared by
+                    // its members via the bijection, regardless of position. A
+                    // container read as the rule's conditions binds variables
+                    // for the rest of the rule, a set pattern within a
+                    // condition binds the content it holds through its
+                    // memberships, and a rule's own collection, a set constant
+                    // over one, or a set of conditions that a generator
+                    // rebuilds is instantiated with the bindings: the two rules
+                    // read such a container differently when it holds a
+                    // variable that both bind and the bijection maps that
+                    // variable elsewhere. Taken by identity, two rules a
+                    // program wrote over one container were treated as a single
                     // rule; one of them was rolled back, and what it derived
-                    // was lost.
-                    if (a == b && role != Role::Condition) return then(ab, ba);
-
-                    // Outside the condition position, a set of conditions
-                    // constitutes the condition part of a rule nested in a
-                    // term, compared as conditions, while a rule's own
-                    // collection forms part of the rule's text, compared by its
-                    // members as terms.
-                    Role members_role = role;
+                    // was lost. A set of conditions that a firing keeps as its
+                    // node is held to the same test, so two rules over it may
+                    // remain distinct even when one would suffice.
+                    //
+                    // Outside the condition position, the members of a set of
+                    // conditions are compared as terms, similar to those in a
+                    // rule's own collection: when the reasoner matches such a
+                    // set based on its members, it pairs them in the same way
+                    // it matches any term (unify_members), so a member named
+                    // set is the node it is, a set containing a single
+                    // condition is not that condition itself, and an untagged
+                    // container is a node. Read as conditions, two rules that
+                    // name or quote rules over `(a p b, n1)` and `(a p b, n2)`,
+                    // with n1 and n2 named sets possessing identical members,
+                    // were treated as a single rule, and the one rolled back
+                    // lost what it derived.
+                    Role members_role = role == Role::Condition ? Role::Condition : Role::Term;
+                    bool in_term      = false;
                     if (ka == Kind::Set && role != Role::Condition)
                     {
                         const bool conditions = is_conjunction(z, a);
                         if (conditions != is_conjunction(z, b)) return false;
-                        members_role = conditions ? Role::Condition : Role::Term;
+                        in_term = true;
+
+                        // Two distinct sets of conditions in a term are treated
+                        // as two separate terms by the reasoner: a firing writes
+                        // its facts about the node it holds (NewRuleNodes).
+                        // Where the comparison involves a new rule, they are the
+                        // same term only when rule `a`'s statement made its set
+                        // and neither set is named, since a set typed in a
+                        // rule's text is made anew by each statement of the
+                        // rule; in the claim search, which contains none,
+                        // wherever neither is named. A named set is the same
+                        // term only as itself, as a named container in condition
+                        // position is (is_container).
+                        if (conditions && a != b && !alike_sets_in_a_term(a, b)) return false;
+
+                        // A set of conditions read within a term functions as a
+                        // node that a firing writes facts about, and so does
+                        // the collection a firing makes from a rule's own
+                        // collection of fixed members, one per binding and
+                        // template; thus the container becomes part of the
+                        // bijection: once paired with a container of `b`, it
+                        // stands for that specific one at every place, and no
+                        // other container of `a` stands for it, also not where
+                        // a container both rules hold is paired with itself.
+                        // Paired independently at each position, one set of
+                        // conditions from the new rule represented two distinct
+                        // sets from the rule currently in force, and a guard `L
+                        // != M` or a join over the single set told the two
+                        // rules apart after the second had been rolled back. A
+                        // collection that holds a variable is written as the
+                        // set constant of its members, which constitutes one
+                        // node for two templates, so two rules over it can
+                        // remain two even when one would suffice.
+                        if (const auto paired = ab.find(a); paired != ab.end()) return paired->second == b && then(ab, ba);
+                        if (ba.find(b) != ba.end()) return false;
                     }
 
                     // The members are matched on the path, and the rest of
@@ -630,11 +694,23 @@ namespace zelph::network
                         path_b.push_back(b);
                         return rest;
                     };
+                    // A match leaves the bijection in its prior state upon
+                    // failure, thus reclaiming the pair along with it.
+                    if (in_term)
+                    {
+                        ab[a] = b;
+                        ba[b] = a;
+                    }
                     path_a.push_back(a);
                     path_b.push_back(b);
                     const bool matched = match_multiset(members_of(z, a, known), members_of(z, b, known), ab, ba, depth + 1, members_role, off_path);
                     path_a.pop_back();
                     path_b.pop_back();
+                    if (!matched && in_term)
+                    {
+                        ab.erase(a);
+                        ba.erase(b);
+                    }
                     return matched;
                 }
 
@@ -648,8 +724,8 @@ namespace zelph::network
                     const std::vector<Node> oa(fa.objects.begin(), fa.objects.end());
                     const std::vector<Node> ob(fb.objects.begin(), fb.objects.end());
                     return match(fa.predicate, fb.predicate, ab, ba, depth + 1, Role::Term, [&](Bijection& ab1, Bijection& ba1)
-                                 { return match(fa.subject, fb.subject, ab1, ba1, depth + 1, subject_role(z, fa), [&](Bijection& ab2, Bijection& ba2)
-                                                { return match_multiset(oa, ob, ab2, ba2, depth + 1, Role::Term, then); }); });
+                                 { return match(fa.subject, fb.subject, ab1, ba1, depth + 1, subject_role(z, fa, role), [&](Bijection& ab2, Bijection& ba2)
+                                                { return match_multiset(oa, ob, ab2, ba2, depth + 1, object_role(z, fa, role), then); }); });
                 }
                 }
             }
@@ -734,17 +810,18 @@ namespace zelph::network
         // The comparison between two rules: first the conditions, then the
         // consequences. With `pairing`, the consequence of `b` that is matched
         // with each consequence of `a` in the match that succeeds.
-        bool compare_rules(const Zelph* const z, const FactStructure& fa, const FactStructure& fb, std::vector<std::pair<Node, Node>>* const pairing)
+        bool compare_rules(const Zelph* const z, const FactStructure& fa, const FactStructure& fb, const NewRuleNodes& made, std::vector<std::pair<Node, Node>>* const pairing)
         {
             Matcher            m{z};
             Matcher::Bijection ab;
             Matcher::Bijection ba;
+            m.made    = &made;
             m.pairing = pairing;
 
             const std::vector<Node> ca(fa.objects.begin(), fa.objects.end());
             const std::vector<Node> cb(fb.objects.begin(), fb.objects.end());
             return m.match(fa.subject, fb.subject, ab, ba, 0, Role::Condition, [&](Matcher::Bijection& ab1, Matcher::Bijection& ba1)
-                           { return m.match_multiset(ca, cb, ab1, ba1, 0, Role::Term, [](Matcher::Bijection&, Matcher::Bijection&)
+                           { return m.match_multiset(ca, cb, ab1, ba1, 0, Role::Rule, [](Matcher::Bijection&, Matcher::Bijection&)
                                                      { return true; }); });
         }
     }
@@ -758,7 +835,7 @@ namespace zelph::network
         std::vector<std::string> consequences;
         consequences.reserve(fs.objects.size());
         for (const Node o : fs.objects)
-            consequences.push_back(canon(z, o, 1, Role::Term, walk));
+            consequences.push_back(canon(z, o, 1, Role::Rule, walk));
         std::sort(consequences.begin(), consequences.end());
 
         std::string out = canon(z, fs.subject, 1, Role::Condition, walk) + "=>";
@@ -767,7 +844,7 @@ namespace zelph::network
         return out;
     }
 
-    bool rules_alpha_equivalent(const Zelph* const z, const Node a, const Node b)
+    bool rules_alpha_equivalent(const Zelph* const z, const Node a, const Node b, const NewRuleNodes& made)
     {
         if (a == b) return true;
 
@@ -775,10 +852,10 @@ namespace zelph::network
         const FactStructure fb = rule_structure(z, b);
         if (fa.predicate == 0 || fb.predicate == 0) return false;
         if (fa.objects.size() != fb.objects.size()) return false;
-        return compare_rules(z, fa, fb, nullptr);
+        return compare_rules(z, fa, fb, made, nullptr);
     }
 
-    Node corresponding_part(const Zelph* const z, const Node a, const Node b, const Node part)
+    Node corresponding_part(const Zelph* const z, const Node a, const Node b, const Node part, const NewRuleNodes& made)
     {
         const FactStructure fa = rule_structure(z, a);
         const FactStructure fb = rule_structure(z, b);
@@ -791,15 +868,15 @@ namespace zelph::network
 
         // Several consequences: the one that the comparison between the two
         // rules pairs with `part` in the successful match. It is the
-        // comparison performed by rules_alpha_equivalent, in identical
-        // order and within the same budget, so it pairs `part` wherever
-        // that comparison found the rules alike. A standalone search, which
-        // prioritized pairing `part` first, might exhaust its budget on an
-        // incorrect pairing over sets that hold one another before
-        // attempting the right one, and the part of the kept rule was node
-        // 0.
+        // comparison performed by rules_alpha_equivalent, in identical order,
+        // within the same budget, and using the same nodes from the new rule,
+        // so it pairs `part` wherever that comparison found the rules alike. A
+        // standalone search, which prioritized pairing `part` first, might
+        // exhaust its budget on an incorrect pairing over sets that hold one
+        // another before attempting the right one, and the part of the kept
+        // rule was node 0.
         std::vector<std::pair<Node, Node>> pairing;
-        if (!compare_rules(z, fa, fb, &pairing)) return 0;
+        if (!compare_rules(z, fa, fb, made, &pairing)) return 0;
         for (const auto& [mine, theirs] : pairing)
             if (mine == part) return theirs;
         return 0;

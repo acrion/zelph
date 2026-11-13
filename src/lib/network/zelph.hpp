@@ -1062,8 +1062,10 @@ namespace zelph::network
         /// The rule in force that specifies the same content as `rule`, up to
         /// a renaming of its variables (rule_identity.hpp), or 0. With
         /// `mentioned`, if not found, a rule that a statement merely mentions.
-        /// Determined via the fingerprint index; refer to the definition.
-        Node find_equivalent_rule(Node rule, bool mentioned) const;
+        /// `made` tells which nodes the statement that built `rule` created;
+        /// a construction gives none (NewRuleNodes). Determined via the
+        /// fingerprint index; refer to the definition.
+        Node find_equivalent_rule(Node rule, bool mentioned, const std::function<bool(Node)>& made) const;
 
         /// How many rule fingerprints the index has computed since the
         /// most recent reset, tallied only when logging is active

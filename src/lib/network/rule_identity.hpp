@@ -44,14 +44,21 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 // under SOME bijection of their variables -- alpha-equivalence, as in the
 // lambda calculus.
 //
-// What "structurally identical" covers is deliberately exactly what the
-// reasoner interprets (see collect_conditions / Reasoning::evaluate): set
-// membership, the Conjunction tag, and each condition's subject / predicate
-// / object set. Predicate identity is what separates a != guard, an ≈
-// neural condition and a negation from an ordinary pattern, so those need
-// no special case. Consequently "alpha-equivalent" here means
-// "operationally indistinguishable to the engine", which is the property
-// that makes skipping the second rule safe.
+// What "structurally identical" covers is what the reasoner interprets (see
+// collect_conditions / Reasoning::evaluate): membership in a set, the
+// Conjunction tag, and the subject / predicate / object set for each condition.
+// Predicate identity is what separates a != guard, an ≈ neural condition and a
+// negation from an ordinary pattern, so those need no special case. In a term,
+// the subject of a rule quoted in a consequence or named or quoted by a
+// condition included, a set of conditions is read by its node. Two such sets
+// that are not named are compared by their members, as terms, where the new
+// rule's statement has just made its set and takes it back with the rule
+// (NewRuleNodes), and always during the claim search of a construction, which
+// involves no new rule. Every container met in a term corresponds to one
+// container of the other rule at every place. Thus, two rules that a comparison
+// with a new rule determines to be alike derive the same outcome, up to
+// renaming of elements that only the new rule's statement made, which is the
+// property enabling the safety of skipping the second rule.
 
 #include "adjacency_set.hpp"
 #include "network_types.hpp"
@@ -59,6 +66,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include <zelph_export.h>
 
 #include <cstdint>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -68,26 +76,48 @@ namespace zelph::network
 
     // The fingerprint of a rule that ignores WHICH variable nodes it uses.
     // Alpha-equivalent rules share this fingerprint, except when the rendering of a
-    // rule over cycles exhausts its allocated budget of rendered positions, or when a
-    // container jointly referenced by both rules in a term points back to a container
-    // nested within a cycle (see Matcher in rule_identity.cpp); sharing this
-    // fingerprint does not imply alpha-equivalence (`(A p B) (B p C)` and
-    // `(A p B) (C p D)` collide), which is why it functions as a filter prior to the
-    // real test and never serves as a standalone decision. Empty if `rule` is not a
-    // rule.
+    // rule over cycles exhausts its allocated budget of rendered positions (see
+    // Matcher in rule_identity.cpp); sharing this fingerprint does not imply
+    // alpha-equivalence (`(A p B) (B p C)` and `(A p B) (C p D)` collide, and so do
+    // two rules over distinct sets of conditions in a term that are alike in their
+    // members), which is why it functions as a filter prior to the real test and
+    // never serves as a standalone decision. Empty if `rule` is not a rule.
     std::string rule_shape(const Zelph* z, Node rule);
 
-    // The decision: same rule up to a bijective renaming of the variables.
-    // A comparison of rules over cycles that exhausts its budget or depletes
-    // the stack of its thread yields no (refer to Matcher in
-    // rule_identity.cpp).
-    bool rules_alpha_equivalent(const Zelph* z, Node a, Node b);
+    // Which nodes the statement that built the new rule of a comparison, its
+    // first rule, created and reclaims when the rule is determined to be a
+    // duplicate. In a term, a set of conditions is treated as a constant by the
+    // reasoner: a firing keeps its node and records facts concerning that node.
+    // The comparison reads the subject of a rule that a condition names or
+    // quotes as such a term as well (subject_role). Two distinct sets of
+    // conditions there are considered the same term solely
+    // when the new rule's set is one of those nodes and neither set bears a
+    // name: nothing beyond the rule retains a set that the rollback reclaims,
+    // thus omitting the new rule results in no loss. A construction holds none
+    // of its nodes as the new rule's own: it finds a set it reconstructs via
+    // its members (instantiate_container), so a second rule from the
+    // same firing might reuse a set created by the first, and upon rolling back
+    // the first rule and reclaiming its set, the second rule generated a set of
+    // its own, and a join over the shared set was lost. Empty when neither rule
+    // is new (the claim search of a construction); two distinct sets of
+    // conditions that are not named then match by their members, and the rule
+    // the search identifies may refer to a different set than the rule it was
+    // searching for.
+    using NewRuleNodes = std::function<bool(Node)>;
+
+    // The decision: identical rule up to a bijective renaming of the variables,
+    // `a` representing the new rule when the comparison has one and `made` what
+    // its statement created. A comparison of rules over cycles that exhausts
+    // its budget or depletes the stack of its thread yields no (refer to
+    // Matcher in rule_identity.cpp).
+    bool rules_alpha_equivalent(const Zelph* z, Node a, Node b, const NewRuleNodes& made);
 
     // The part of rule `b` occupying the position where `part` stands in rule
     // `a`, given two alpha-equivalent rules: the condition, the `=>` predicate,
     // or the consequence that the bijection pairs with `part`. 0 if `part` is
-    // none of these or the rules do not match.
-    Node corresponding_part(const Zelph* z, Node a, Node b, Node part);
+    // none of these or the rules do not match. `made` is what the comparison
+    // that found `b` was given.
+    Node corresponding_part(const Zelph* z, Node a, Node b, Node part, const NewRuleNodes& made);
 
     // Whether a rule's own collection or a conjunction set appears
     // beneath the fact or set constant `n`, accessed via facts and set

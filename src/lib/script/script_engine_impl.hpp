@@ -35,13 +35,14 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 // that is what keeps <janet.h> out of everything that merely wants to run a
 // script.
 
-#include "network/network_types.hpp"
 #include "network/net_registry.hpp"
+#include "network/network_types.hpp"
 #include "network/neural.hpp"
 #include "script/script_engine.hpp"
 
 #include <janet.h>
 
+#include <functional>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -470,7 +471,7 @@ namespace zelph
         static Janet  janet_cfun_zelph_cdr(int32_t argc, Janet* argv);
         static Janet  janet_cfun_zelph_parse(int32_t argc, Janet* argv);
         static Janet  janet_cfun_zelph_negate(int32_t argc, Janet* argv);
-        network::Node find_duplicate_rule(const network::Node rule);
+        network::Node find_duplicate_rule(const network::Node rule, const std::function<bool(network::Node)>& made);
         void          refuse_nested_rule(const char* caller) const;
         JanetSignal   run_rule_build(const char* caller, JanetFunction* thunk, std::string& previous, Janet& out, RuleBuildStep build = nullptr, std::vector<network::Node>* mention_markings = nullptr);
         static Janet  janet_cfun_zelph_dedup_rule(int32_t argc, Janet* argv);

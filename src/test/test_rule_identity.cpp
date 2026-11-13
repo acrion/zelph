@@ -519,6 +519,40 @@ TEST_CASE("rule identity: the part of the kept rule is the consequence that matc
     }
 }
 
+// The comparison that finds the kept rule pairs each consequence of the new
+// rule with one of the kept rule's, while a set of conditions in a term is
+// matched by its members exclusively when the new rule's statement made it. The
+// kept part is taken from a second run of that comparison
+// (network::corresponding_part), which therefore needs the same nodes of the
+// new rule: a rule whose consequences note `X` about its own set and about a
+// set made outside it pairs its own set solely with the kept rule's own set.
+// Without these, the second comparison might match the new rule's own set with
+// the externally created one, causing the focus to evaluate to the kept rule's
+// other consequence. The order in which the comparison tries the consequences
+// is determined by their node ids, hence the twenty layouts.
+TEST_CASE("rule identity: the kept part pairs a set of conditions in a term as the comparison that found the rule did")
+{
+    for (int shift = 0; shift < 20; ++shift)
+    {
+        zelph::io::OutputCollector  collector;
+        zelph::console::Interactive interactive(collector.sink());
+        interactive.process("%(for i 0 " + std::to_string(shift) + R"js( (zelph/var "D")) )js");
+        process_lines(interactive, R"js(
+%(def outside (zelph/collection (zelph/fact "a" "p" "b")))
+%(zelph/fact outside "~" "conjunction")
+%(var kept-own nil)
+%(def kept (zelph/dedup-rule (fn [] (def x (zelph/var "X")) (def own (zelph/collection (zelph/fact "a" "p" "b"))) (zelph/fact own "~" "conjunction") (set kept-own (zelph/fact own "noted" x)) (zelph/fact (zelph/fact x "q" "k") "=>" kept-own (zelph/fact outside "noted" x)))))
+)js");
+
+        INFO("shift " << shift);
+        CHECK(janet_value(collector, interactive, R"js((= kept-own (zelph/dedup-rule (fn [] (def x (zelph/var "X")) (def own (zelph/collection (zelph/fact "a" "p" "b"))) (zelph/fact own "~" "conjunction") (def mine (zelph/fact own "noted" x)) [(zelph/fact (zelph/fact x "q" "k") "=>" mine (zelph/fact outside "noted" x)) mine]) :focus)) )js")
+              == "true");
+        collector.clear();
+        interactive.process(".stat");
+        CHECK(any_output_contains(collector, "Rules: 1"));
+    }
+}
+
 TEST_CASE("rule identity: wherever the focus stands, a rule statement keeps all of its properties at once")
 {
     // Each position a focus occupies within a rule statement held to four
@@ -923,6 +957,130 @@ bb r cc
         } });
 }
 
+// The same applies to a container shared by two rules in a term. A program
+// reaches such a pair via the Janet API, by keeping a variable and a container
+// and employing both within two rules, or through a set of conditions made
+// outside the rules; typed rules get fresh variables and fresh containers per
+// statement. Each rule instantiates the container using the bindings of the
+// variables within it, so where the bijection maps such a variable elsewhere,
+// the two rules derive different facts. Taken by its identity, the container
+// matched itself, the second rule was rolled back as a duplicate of the first,
+// and what it derived was lost. Each subcase checks the derivations of both
+// rules; the last one checks that a container both rules read alike still
+// leaves one rule.
+TEST_CASE("rule identity: two rules over one container in a term are compared by what the container holds")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+a p b
+b p a
+%(def x (zelph/var "X"))
+%(def y (zelph/var "Y"))
+%(var c nil)
+%(var sc nil)
+)");
+        // A rule over the conditions `(X p Y, Y p X)`, which the thunk builds
+        // anew after `prelude`, built by zelph/dedup-rule.
+        const auto dedup = [](const std::string& prelude, const std::string& consequence)
+        {
+            return "(zelph/dedup-rule (fn [] " + prelude
+                 + R"js( (def s (zelph/collection (zelph/fact x "p" y) (zelph/fact y "p" x))) (zelph/fact s "~" "conjunction") (zelph/fact s "=>" )js"
+                 + consequence + ")))";
+        };
+        const auto first  = [&](const std::string& prelude, const std::string& consequence)
+        { interactive.process("%(def r1 " + dedup(prelude, consequence) + ")"); };
+        const auto second = [&](const std::string& consequence)
+        {
+            collector.clear();
+            interactive.process("%(zelph/out (string \"same=\" (= r1 " + dedup("", consequence) + ")))");
+        };
+
+        SUBCASE("a rule's own collection in a consequence")
+        {
+            first("(set c (zelph/collection x))", R"js((zelph/fact x "q" c) )js");
+            second(R"js((zelph/fact y "q" c) )js");
+            CHECK(any_output_contains(collector, "same=false"));
+
+            interactive.run(true, false, false);
+            collector.clear();
+            interactive.process("S q O");
+            std::vector<std::string> answers = collect_answers(collector);
+            std::ranges::sort(answers);
+            CHECK(answers == std::vector<std::string>{"a q {a}", "a q {b}", "b q {a}", "b q {b}"});
+        }
+        SUBCASE("a set constant over a rule's own collection in a consequence")
+        {
+            first(R"js((set c (zelph/collection x)) (set sc (zelph/set c "e")) )js", R"js((zelph/fact x "q" sc) )js");
+            second(R"js((zelph/fact y "q" sc) )js");
+            CHECK(any_output_contains(collector, "same=false"));
+
+            interactive.run(true, false, false);
+            collector.clear();
+            interactive.process("S q O");
+            CHECK(collect_answers(collector).size() == 4);
+            CHECK(answers_contain(collector, "a q {e {b}}"));
+            CHECK(answers_contain(collector, "b q {e {a}}"));
+        }
+        SUBCASE("a set pattern in a condition")
+        {
+            // `(X has {Y})` binds Y via the membership, both rules hold the
+            // same pattern, and the second draws its conclusion regarding Z.
+            process_lines(interactive, R"(
+x has {a}
+a r b
+b r a
+%(def z (zelph/var "Z"))
+)");
+            const auto over = [](const std::string& prelude, const std::string& concluded)
+            {
+                return "(zelph/dedup-rule (fn [] " + prelude
+                     + R"js( (def s (zelph/collection (zelph/fact x "has" c) (zelph/fact y "r" z) (zelph/fact z "r" y))) (zelph/fact s "~" "conjunction") (zelph/fact s "=>" (zelph/fact x "q" )js"
+                     + concluded + "))))";
+            };
+            interactive.process("%(def r1 " + over("(set c (zelph/collection y))", "y") + ")");
+            collector.clear();
+            interactive.process("%(zelph/out (string \"same=\" (= r1 " + over("", "z") + ")))");
+            CHECK(any_output_contains(collector, "same=false"));
+
+            interactive.run(true, false, false);
+            collector.clear();
+            interactive.process("x q O");
+            std::vector<std::string> answers = collect_answers(collector);
+            std::ranges::sort(answers);
+            CHECK(answers == std::vector<std::string>{"x q a", "x q b"});
+        }
+        SUBCASE("a set of conditions made outside the rules, in the consequence of a generator")
+        {
+            // A generator rebuilds the set `{(X s K)}` of its inner rule using
+            // the binding of K: the first generator writes it regarding K, the
+            // subsequent one regarding V.
+            process_lines(interactive, R"js(
+c r d
+%(def k (zelph/var "K"))
+%(def v (zelph/var "V"))
+%(def t (zelph/collection (zelph/fact x "s" k)))
+%(zelph/fact t "~" "conjunction")
+%(defn gen [who] (fn [] (def s (zelph/collection (zelph/fact k "p" v) (zelph/fact v "p" k))) (zelph/fact s "~" "conjunction") (zelph/fact s "=>" (zelph/fact (zelph/fact x "r" y) "=>" (zelph/fact who "has" t)))))
+%(def g1 (zelph/dedup-rule (gen k)))
+)js");
+            collector.clear();
+            interactive.process("%(zelph/out (string \"same=\" (= g1 (zelph/dedup-rule (gen v)))))");
+            CHECK(any_output_contains(collector, "same=false"));
+
+            interactive.run(true, false, false);
+            collector.clear();
+            interactive.process("S has O");
+            CHECK(collect_answers(collector).size() == 4);
+        }
+        SUBCASE("a container both rules read alike")
+        {
+            first("(set c (zelph/collection x))", R"js((zelph/fact x "q" c) )js");
+            second(R"js((zelph/fact x "q" c) )js");
+            CHECK(any_output_contains(collector, "same=true"));
+        } });
+}
+
 TEST_CASE("rule identity: a rule whose variables sit only in a nested conjunction is compared by its structure")
 {
     // The template-variable store captures only the variables associated
@@ -982,14 +1140,15 @@ TEST_CASE("rule identity: a rule whose variables sit only in a nested conjunctio
         } });
 }
 
-TEST_CASE("rule identity: a set of conditions is compared by its members wherever it stands")
+TEST_CASE("rule identity: a set of conditions that a rule's text makes is compared by its members wherever it stands")
 {
-    // The engine reads a conjunction set via its tag, and within a term
-    // position -- either the conditions of a rule nested in a consequence, or
-    // a set that a consequence refers to -- it remains rule text regardless.
-    // Compared there by its node, a counter that each statement builds anew,
-    // a nested rule whose conditions constitute such a set never matched its
-    // twin, and each statement of the rule added one.
+    // Every statement of a rule makes the sets of conditions its text holds
+    // anew: the conditions contained within a rule nested in a consequence, and
+    // a set that a consequence refers to. Compared via its node, a counter that
+    // each statement builds anew, such a set never matched the first
+    // statement's, and each statement of the rule added one. A set that the
+    // statement has just made, and that the rule's rollback retracts, is held
+    // by nothing else, so its members determine the outcome.
     run_both_modes([](auto& collector, auto& interactive)
                    {
         std::string rule;
@@ -1009,6 +1168,916 @@ TEST_CASE("rule identity: a set of conditions is compared by its members whereve
         collector.clear();
         interactive.process(".stat");
         CHECK(node_count(collector) == before); });
+}
+
+// A set of conditions within a term is a constant for the reasoner: a firing
+// keeps the node and writes its facts regarding that node. Two distinct sets
+// alike in their members are therefore two separate terms, and two rules naming
+// them derive facts about two different nodes, unless the new rule's statement
+// has just made its set and takes it back with the rule, so that nothing else
+// holds it. Compared via their members, the two sets made the second rule a
+// duplicate of the first, and what it derived was lost: a set named by the
+// user, a set that a rule over rules bound, the set of a generator's product
+// beside a typed twin, a set in a rule quoted within a consequence, a set that
+// a fact written beside the rule or an island holds. A named set that stands in
+// a term is the same term only as itself, in either order of entry.
+TEST_CASE("rule identity: two distinct sets of conditions in a term are one term only where the new rule made its set")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        const auto rules = [&]
+        {
+            collector.clear();
+            interactive.process(".list-rules");
+            return listed_rules(collector);
+        };
+
+        SUBCASE("two named sets in a consequence")
+        {
+            process_lines(interactive, R"(
+(a r d) in sa
+sa ~ conjunction
+(a r d) in sb
+sb ~ conjunction
+aa p bb
+(X p Y) => (sa q X)
+(X p Y) => (sb q X)
+)");
+            CHECK(rules() == 2);
+            interactive.run(true, false, false);
+            collector.clear();
+            interactive.process("S q O");
+            std::vector<std::string> answers = collect_answers(collector);
+            std::ranges::sort(answers);
+            CHECK(answers == std::vector<std::string>{"sa q aa", "sb q aa"});
+        }
+        SUBCASE("two named sets in a condition")
+        {
+            process_lines(interactive, R"(
+(a r d) in sa
+sa ~ conjunction
+(a r d) in sb
+sb ~ conjunction
+x has sb
+(X has sa) => (X q yes)
+(X has sb) => (X q yes)
+)");
+            CHECK(rules() == 2);
+            interactive.run(true, false, false);
+            collector.clear();
+            interactive.process("S q O");
+            CHECK(collect_answers(collector) == std::vector<std::string>{"x q yes"});
+        }
+        SUBCASE("a named set and a typed set of the same members, in either order")
+        {
+            // The answers of a rule over the named set print its name wherever
+            // the other rule's statement typed a list, so both rules stay, in
+            // either order of entry.
+            process_lines(interactive, R"(
+(a r d) in sa
+(b r e) in sa
+sa ~ conjunction
+)");
+            std::string first;
+            std::string second;
+            SUBCASE("the named set first")
+            {
+                first  = "(X q Y) => (sa got X)";
+                second = "(X q Y) => ((a r d, b r e) got X)";
+            }
+            SUBCASE("the typed set first")
+            {
+                first  = "(X q Y) => ((a r d, b r e) got X)";
+                second = "(X q Y) => (sa got X)";
+            }
+            interactive.process(first);
+            interactive.process(second);
+            CHECK(rules() == 2);
+        }
+        SUBCASE("a named set that the new statement makes is the same term only as itself")
+        {
+            // The set belonging to the new rule is its statement's own, and a
+            // name maintains its distinction regardless.
+            process_lines(interactive, R"js(
+u q v
+(X q Y) => ((a r d, b r e) got X)
+%(zelph/dedup-rule (fn [] (def x (zelph/var "X")) (def y (zelph/var "Y")) (zelph/fact (zelph/fact "a" "r" "d") "in" "sx") (zelph/fact (zelph/fact "b" "r" "e") "in" "sx") (zelph/fact (zelph/resolve "sx") "~" "conjunction") (zelph/fact (zelph/fact x "q" y) "=>" (zelph/fact (zelph/resolve "sx") "got" x))) )
+)js");
+            CHECK(rules() == 2);
+            interactive.run(true, false, false);
+            collector.clear();
+            interactive.process("S got O");
+            CHECK(answers_contain(collector, "sx got u"));
+        }
+        SUBCASE("a rule quoted in a consequence holds its set of conditions as a term")
+        {
+            // A rule that stands in a term of a consequence is a value: a
+            // firing writes it as it stands, with its set of conditions serving
+            // as the node it is. Its conditions are not conditions of a rule in
+            // this context, in contrast to those of a rule a generator writes,
+            // so two quoted rules over two named sets are two distinct terms.
+            process_lines(interactive, R"(
+(a r d) in sa
+(b r e) in sa
+sa ~ conjunction
+(a r d) in sb
+(b r e) in sb
+sb ~ conjunction
+sa is special
+u s v
+)");
+            std::string first;
+            std::string second;
+            SUBCASE("the rule over the special set first")
+            {
+                first  = "(X s Y) => ((sa => (e f k)) noted X)";
+                second = "(X s Y) => ((sb => (e f k)) noted X)";
+            }
+            SUBCASE("the rule over the other set first")
+            {
+                first  = "(X s Y) => ((sb => (e f k)) noted X)";
+                second = "(X s Y) => ((sa => (e f k)) noted X)";
+            }
+            interactive.process(first);
+            interactive.process(second);
+            CHECK(rules() == 2);
+            interactive.process("((C => (e f k)) noted X, C is special) => (X hit yes)");
+            interactive.run(true, false, false);
+            collector.clear();
+            interactive.process("S hit O");
+            CHECK(collect_answers(collector) == std::vector<std::string>{"u hit yes"});
+        }
+        SUBCASE("a rule quoted in an object of a consequence holds its set of conditions as a term")
+        {
+            // The identical scenario, with the quoted rule serving as the
+            // object of the fact that a consequence writes: only the objects of
+            // a rule that a rule writes are considered consequences.
+            process_lines(interactive, R"(
+(a r d) in sa
+(b r e) in sa
+sa ~ conjunction
+(a r d) in sb
+(b r e) in sb
+sb ~ conjunction
+sa is special
+u s v
+)");
+            std::string first;
+            std::string second;
+            SUBCASE("the rule over the special set first")
+            {
+                first  = "(X s Y) => (X noted (sa => (e f k)))";
+                second = "(X s Y) => (X noted (sb => (e f k)))";
+            }
+            SUBCASE("the rule over the other set first")
+            {
+                first  = "(X s Y) => (X noted (sb => (e f k)))";
+                second = "(X s Y) => (X noted (sa => (e f k)))";
+            }
+            interactive.process(first);
+            interactive.process(second);
+            CHECK(rules() == 2);
+            interactive.process("(X noted (C => (e f k)), C is special) => (X hit yes)");
+            interactive.run(true, false, false);
+            collector.clear();
+            interactive.process("S hit O");
+            CHECK(collect_answers(collector) == std::vector<std::string>{"u hit yes"});
+        }
+        SUBCASE("two rules a condition quotes over named sets of the same members stay two")
+        {
+            // A condition matches the subject of a quoted rule through its
+            // members when both are sets of conditions, whether named or not,
+            // so both observers match the rule over `sb` that the first rule
+            // writes. The comparison reads that subject as a term, as required
+            // for a rule within a set constant and for a subject that is a set
+            // containing one condition or an untagged container (see "a rule
+            // that a condition names or quotes is read as a term"), and the two
+            // observers stay two distinct rules where one would be sufficient;
+            // both derive.
+            process_lines(interactive, R"(
+(a r d) in sa
+(b r e) in sa
+sa ~ conjunction
+(a r d) in sb
+(b r e) in sb
+sb ~ conjunction
+u s v
+(X s Y) => ((sb => (e f k)) noted X)
+((sa => (e f k)) noted X) => (X hit yes)
+((sb => (e f k)) noted X) => (X hit yes)
+)");
+            CHECK(rules() == 3);
+            interactive.run(true, false, false);
+            collector.clear();
+            interactive.process("S hit O");
+            CHECK(collect_answers(collector) == std::vector<std::string>{"u hit yes"});
+        }
+        SUBCASE("rules over rules bind the condition sets of two rules in quoted rules")
+        {
+            // As in the subcase "rules over rules bind the condition sets of
+            // two rules", with each bound set appearing in a rule that the
+            // generated rule quotes.
+            process_lines(interactive, R"(
+(a p b, c q d) => (e f g)
+(a p b, c q d) => (e f h)
+(C => (e f g)) => ((X s Y) => ((C => (e f k)) noted X))
+(C => (e f h)) => ((X s Y) => ((C => (e f k)) noted X))
+(C => (e f h)) => (C is hset)
+u s v
+((C => (e f k)) noted X, C is hset) => (X hit yes)
+)");
+            interactive.run(true, false, false);
+            collector.clear();
+            interactive.process("S hit O");
+            CHECK(collect_answers(collector) == std::vector<std::string>{"u hit yes"});
+        }
+        SUBCASE("a set that a fact written beside the rule holds is not the statement's own")
+        {
+            // A focus writes the fact it marks beside the rule, and that fact
+            // stays when the rule is rolled back as a duplicate, along with the
+            // set it holds. Taken as the first rule's set, the second rule's
+            // set stayed `noted` with no rule writing what is `got` about it.
+            process_lines(interactive, R"(
+u q v
+(X q Y) => ((a p b, c r d) got X)
+(X q Y) => ((*(a p b, c r d) is noted) got X)
+)");
+            CHECK(rules() == 2);
+            interactive.process("(L got X, L is noted) => (X hit yes)");
+            interactive.run(true, false, false);
+            collector.clear();
+            interactive.process("S hit O");
+            CHECK(collect_answers(collector) == std::vector<std::string>{"u hit yes"});
+        }
+        SUBCASE("a set an island makes is not the statement's own")
+        {
+            // What the islands of a statement construct remains upon the rule
+            // being rolled back as a duplicate, carrying every fact an island
+            // wrote.
+            process_lines(interactive, R"js(
+u q v
+%(zelph/register-keyword "<<" ">>" (fn [text] (def s (zelph/collection (zelph/fact "a" "p" "b") (zelph/fact "c" "r" "d"))) (zelph/fact s "~" "conjunction") (zelph/fact s "is" "noted") s) )
+(X q Y) => ((a p b, c r d) got X)
+(X q Y) => (<<s>> got X)
+)js");
+            CHECK(rules() == 2);
+            interactive.process("(L got X, L is noted) => (X hit yes)");
+            interactive.run(true, false, false);
+            collector.clear();
+            interactive.process("S hit O");
+            CHECK(collect_answers(collector) == std::vector<std::string>{"u hit yes"});
+        }
+        SUBCASE("rules over rules bind the condition sets of two rules")
+        {
+            // The two rules over `(a p b, c q d)` possess two condition sets,
+            // and the generators write one rule per set. The rule generated
+            // for the second set derives what the join beneath requires.
+            process_lines(interactive, R"(
+(a p b, c q d) => (e f g)
+(a p b, c q d) => (e f h)
+(C => (e f g)) => ((X s Y) => (C first X))
+(C => (e f h)) => ((X s Y) => (C first X))
+(C => (e f h)) => (C is hset)
+u s v
+(C first X, C is hset) => (X hit yes)
+)");
+            interactive.run(true, false, false);
+            collector.clear();
+            interactive.process("S first O");
+            CHECK(collect_answers(collector).size() == 2);
+            collector.clear();
+            interactive.process("S hit O");
+            CHECK(collect_answers(collector) == std::vector<std::string>{"u hit yes"});
+        }
+        SUBCASE("a typed set, then a rule over rules that binds a rule's set of the same members")
+        {
+            process_lines(interactive, R"(
+(a p b, c q d) => (e f g)
+(X s Y) => ((a p b, c q d) first X)
+(C => (e f g)) => ((X s Y) => (C first X))
+(C => (e f g)) => (C is gset)
+u s v
+(C first X, C is gset) => (X hit yes)
+)");
+            interactive.run(true, false, false);
+            collector.clear();
+            interactive.process("S hit O");
+            CHECK(collect_answers(collector) == std::vector<std::string>{"u hit yes"});
+        }
+        SUBCASE("a generator's rules share its set beside a typed twin entered before them")
+        {
+            // The generator writes one rule for each switch, both concerning
+            // the set the generator quotes, and the join relates what the two
+            // rules note about that set. The typed twin of the first rule
+            // records information about its own set. When taken as the typed
+            // twin, the first generated rule was never written, and `u1 with
+            // u2` was missing. The set holds variables that the switch does not
+            // bind, so the generator finds no alternative set for it; a set
+            // lacking variables it reconstructs identically, it finds among all
+            // sets sharing the same members, including the typed twin's,
+            // depending on the node ids.
+            process_lines(interactive, R"(
+k1 is on
+k2 is on
+u1 q k1
+u2 q k2
+(X q k1) => ((X p Y, X r Y) noted X)
+(K is on) => ((X q K) => ((X p Y, X r Y) noted X))
+)");
+            interactive.run(true, false, false);
+            interactive.process("(L noted X, L noted Y) => (X with Y)");
+            interactive.run(true, false, false);
+            collector.clear();
+            interactive.process("u1 with O");
+            CHECK(answers_contain(collector, "u1 with u2"));
+        }
+        SUBCASE("a typed twin before a generator stays beside a rule the generator makes a set for")
+        {
+            // The generator substitutes `k` into the set of its inner rule and
+            // makes the set anew. A different rule from the same firing might
+            // locate that set through its members, so the construction does not
+            // count it as its rule's own, and the typed twin entered before
+            // remains beside the generated rule. Typed afterwards, the twin's
+            // set is one its statement has just made, and the twin is
+            // recognised.
+            process_lines(interactive, R"(
+k is on
+u q k
+)");
+            const std::string typed     = "(X q k) => ((X p k, X r Y) noted X)";
+            const std::string generator = "(K is on) => ((X q K) => ((X p K, X r Y) noted X))";
+            std::size_t       expected  = 0;
+            SUBCASE("typed before")
+            {
+                interactive.process(typed);
+                interactive.process(generator);
+                interactive.run(true, false, false);
+                expected = 3;
+            }
+            SUBCASE("typed after")
+            {
+                interactive.process(generator);
+                interactive.run(true, false, false);
+                interactive.process(typed);
+                expected = 2;
+            }
+            CHECK(rules() == expected);
+            interactive.run(true, false, false);
+            collector.clear();
+            interactive.process("S noted O");
+            CHECK(collect_answers(collector).size() == expected - 1);
+        }
+        SUBCASE("a typed twin before a generator stays beside the generator's rule")
+        {
+            // The rule generated for `k` refers to the set quoted by the
+            // generator, the typed twin to its own: two sets that print alike,
+            // and two rules. Typed after the generator's rule, the twin's set
+            // is one its statement has just made, and the twin is recognized.
+            process_lines(interactive, R"(
+k is on
+u q k
+)");
+            const std::string typed     = "(X q k) => ((X p Y, X r Y) noted X)";
+            const std::string generator = "(K is on) => ((X q K) => ((X p Y, X r Y) noted X))";
+            std::size_t       expected  = 0;
+            SUBCASE("typed before")
+            {
+                interactive.process(typed);
+                interactive.process(generator);
+                interactive.run(true, false, false);
+                expected = 3;
+            }
+            SUBCASE("typed after")
+            {
+                interactive.process(generator);
+                interactive.run(true, false, false);
+                interactive.process(typed);
+                expected = 2;
+            }
+            CHECK(rules() == expected);
+            interactive.run(true, false, false);
+            collector.clear();
+            interactive.process("S noted O");
+            CHECK(collect_answers(collector).size() == expected - 1);
+        } });
+}
+
+// The claim search compares a switch's mentioned rule against every rule in
+// force, and neither rule is new within that context; a named set matches only
+// itself therein as well. Claimed for the rule over `sa`, the switch never
+// wrote its own rule, and what it derives regarding the typed set was missing.
+// Refused, the switch builds a copy of its rule, and the construction finds the
+// copy's set through its members among every such set, `sa` included; the one
+// it encounters first follows the node ids and the order of a hash set, and in
+// certain layouts the copy lands on `sa`. Thus the test counts the layouts
+// where the switch's own derivation is present.
+TEST_CASE("rule identity: a switch over a typed set does not claim a rule over a named set of its members")
+{
+    int found = 0;
+    for (int shift = 0; shift < 16; ++shift)
+    {
+        zelph::io::OutputCollector  collector;
+        zelph::console::Interactive interactive(collector.sink());
+        interactive.process(".semi-naive check");
+        for (int i = 0; i < shift; ++i)
+            interactive.process("pad" + std::to_string(i) + " is pad");
+        process_lines(interactive, R"(
+(a r d) in sa
+(b r e) in sa
+sa ~ conjunction
+k is on
+u q v
+(X q Y) => (sa got X)
+(K is on) => ((X q Y) => ((a r d, b r e) got X))
+)");
+        interactive.run(true, false, false);
+        collector.clear();
+        interactive.process("S got O");
+        // The switch's own rule provides responses regarding the typed set,
+        // whose members print in a sequence that follows the node ids.
+        const std::vector<std::string> answers = collect_answers(collector);
+        if (std::ranges::any_of(answers, [](const std::string& answer)
+                                { return answer != "sa got u" && answer.ends_with(" got u"); }))
+            ++found;
+    }
+    CHECK(found > 0);
+}
+
+// A generator whose two inner rules hold sets composed of identical members,
+// which it reconstructs using its binding, writes both rules over a single set:
+// the second construction finds the set the first one created through its
+// members. Beside a typed twin of the first inner rule entered earlier, the
+// first rule was rolled back as its duplicate, its set reclaimed alongside it,
+// and the second rule made a set independently, thus causing the join over the
+// shared set to be lost. The order in which the generator builds its inner
+// rules follows the node ids, hence the sixteen layouts; the join must hold in
+// every one of them.
+TEST_CASE("rule identity: a generator's rules that share a set it makes are written beside a typed twin")
+{
+    for (int shift = 0; shift < 16; ++shift)
+    {
+        zelph::io::OutputCollector  collector;
+        zelph::console::Interactive interactive(collector.sink());
+        interactive.process(".semi-naive check");
+        for (int i = 0; i < shift; ++i)
+            interactive.process("pad" + std::to_string(i) + " is pad");
+        process_lines(interactive, R"(
+k is on
+u q k
+(X q k) => ((X p k, X r Y) noted X)
+(K is on) => ((X q K) => ((X p K, X r Y) noted X)) ((X q K) => ((X p K, X r Y) seen X))
+)");
+        interactive.run(true, false, false);
+        interactive.process("(L noted X, L seen X) => (X both yes)");
+        interactive.run(true, false, false);
+        collector.clear();
+        interactive.process("S both O");
+        INFO("shift " << shift);
+        CHECK(collect_answers(collector) == std::vector<std::string>{"u both yes"});
+    }
+}
+
+// A set of conditions that a rule reads within a term constitutes a node that a
+// firing writes its facts about, and likewise the collection a firing makes
+// from a rule's own collection of fixed members, one per binding and template;
+// the two rules being compared must be alike up to a renaming of those nodes as
+// well as of their variables: one container of the new rule corresponds to one
+// container of the rule in force at every place, and two to two. Paired at each
+// location individually, one set of the new rule could represent two distinct
+// sets of the rule in force, or two for one, and a guard `L != M` or a join
+// across one set served to distinguish the rules after the second had been
+// rolled back. A collection that holds a variable is written as the set
+// constant of its members, which is the same node for two templates, so two
+// rules over it may stay two even when one would suffice.
+TEST_CASE("rule identity: a container in a term stands for one container of the other rule")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        SUBCASE("two sets of the new rule are not one set of the rule in force")
+        {
+            // The generator writes a rule over a single bound set at two
+            // places; the typed rule following it possesses two sets of its
+            // own.
+            process_lines(interactive, R"(
+(a p b, c q d) => (e f g)
+(C => (e f g)) => ((X s Y) => (C noted X) (C seen X))
+u s v
+)");
+            interactive.run(true, false, false);
+            interactive.process("(X s Y) => ((a p b, c q d) noted X) ((a p b, c q d) seen X)");
+            interactive.process("(L noted X, M seen X, L != M) => (X distinct yes)");
+            interactive.run(true, false, false);
+            collector.clear();
+            interactive.process("S distinct O");
+            CHECK(collect_answers(collector) == std::vector<std::string>{"u distinct yes"});
+        }
+        SUBCASE("one set at two places is not two sets, in either order of entry")
+        {
+            // The rule built by `one` records `X` regarding a single set of its
+            // own at two places, the rule built by `two` concerning two sets.
+            process_lines(interactive, R"js(
+u q k
+%(defn two [] (def x (zelph/var "X")) (def s1 (zelph/collection (zelph/fact "a" "p" "b") (zelph/fact "c" "r" "d"))) (zelph/fact s1 "~" "conjunction") (def s2 (zelph/collection (zelph/fact "a" "p" "b") (zelph/fact "c" "r" "d"))) (zelph/fact s2 "~" "conjunction") (zelph/fact (zelph/fact x "q" "k") "=>" (zelph/fact s1 "noted" x) (zelph/fact s2 "seen" x)))
+%(defn one [] (def x (zelph/var "X")) (def s (zelph/collection (zelph/fact "a" "p" "b") (zelph/fact "c" "r" "d"))) (zelph/fact s "~" "conjunction") (zelph/fact (zelph/fact x "q" "k") "=>" (zelph/fact s "noted" x) (zelph/fact s "seen" x)))
+)js");
+            std::string first;
+            std::string second;
+            SUBCASE("the rule over two sets first")
+            {
+                first  = "two";
+                second = "one";
+            }
+            SUBCASE("the rule over one set first")
+            {
+                first  = "one";
+                second = "two";
+            }
+            interactive.process("%(def kept (zelph/dedup-rule " + first + "))");
+            collector.clear();
+            interactive.process("%(zelph/out (string \"same=\" (= kept (zelph/dedup-rule " + second + "))))");
+            CHECK(any_output_contains(collector, "same=false"));
+            interactive.process("(L noted X, L seen X) => (X both yes)");
+            interactive.run(true, false, false);
+            collector.clear();
+            interactive.process("S both O");
+            CHECK(collect_answers(collector) == std::vector<std::string>{"u both yes"});
+        }
+        SUBCASE("a generator that rebuilds two sets into one beside a typed rule over two")
+        {
+            // The generator substitutes `k` into its two sets sharing
+            // identical members, and the construction finds the first one
+            // it made for the second: its rule notes `X` regarding one set
+            // at two distinct places.
+            process_lines(interactive, R"(
+k is on
+u q k
+(X q k) => ((X p k, X r Y) noted X) ((X p k, X r Y) seen X)
+(K is on) => ((X q K) => ((X p K, X r Y) noted X) ((X p K, X r Y) seen X))
+)");
+            interactive.run(true, false, false);
+            interactive.process("(L noted X, L seen X) => (X both yes)");
+            interactive.run(true, false, false);
+            collector.clear();
+            interactive.process("S both O");
+            CHECK(collect_answers(collector) == std::vector<std::string>{"u both yes"});
+        }
+        SUBCASE("a rule's own collection of fixed members stands for one collection")
+        {
+            // The typed rule encompasses two collections, while the rule built
+            // by `one` contains just one, present at two places.
+            process_lines(interactive, R"js(
+u q k
+(X q k) => (X has @{a}) (X owns @{a})
+%(defn one [] (def x (zelph/var "X")) (def c (zelph/collection "a")) (zelph/fact (zelph/fact x "q" "k") "=>" (zelph/fact x "has" c) (zelph/fact x "owns" c)))
+%(zelph/dedup-rule one)
+)js");
+            interactive.process("(X has L, X owns L) => (X same yes)");
+            interactive.run(true, false, false);
+            collector.clear();
+            interactive.process("S same O");
+            CHECK(collect_answers(collector) == std::vector<std::string>{"u same yes"});
+        }
+        SUBCASE("a set both rules hold stands for itself")
+        {
+            // The rule in force records `X` regarding the set made outside the
+            // rules at both places; the new rule notes it about a set of its
+            // own and the one made outside. Paired with the set made outside at
+            // the first place, the new rule's own set took the image that the
+            // set made outside has for itself at the second.
+            process_lines(interactive, R"js(
+u q k
+%(def f (zelph/collection (zelph/fact "a" "p" "b")))
+%(zelph/fact f "~" "conjunction")
+%(def kept (zelph/dedup-rule (fn [] (def x (zelph/var "X")) (zelph/fact (zelph/fact x "q" "k") "=>" (zelph/fact f "noted" x) (zelph/fact f "seen" x)))))
+)js");
+            collector.clear();
+            interactive.process(R"js(%(zelph/out (string "same=" (= kept (zelph/dedup-rule (fn [] (def x (zelph/var "X")) (def s (zelph/collection (zelph/fact "a" "p" "b"))) (zelph/fact s "~" "conjunction") (zelph/fact (zelph/fact x "q" "k") "=>" (zelph/fact s "noted" x) (zelph/fact f "seen" x))))))) )js");
+            CHECK(any_output_contains(collector, "same=false"));
+            interactive.process("(L noted X, M seen X, L != M) => (X distinct yes)");
+            interactive.run(true, false, false);
+            collector.clear();
+            interactive.process("S distinct O");
+            CHECK(collect_answers(collector) == std::vector<std::string>{"u distinct yes"});
+        } });
+}
+
+// A rule produced by a rule is regarded as a rule as soon as it is derived, at
+// any level of depth, and its set of conditions is read as conditions, by its
+// members, regardless of whether they are named or not; any other rule inside a
+// rule is read as a term. Read as a term in that context, two generators whose
+// inner rules differ solely in a named set of identical members, or in a set
+// containing one condition and that condition, would be treated as two distinct
+// rules.
+TEST_CASE("rule identity: the conditions of a rule that a rule writes are conditions at any depth")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        const auto rules = [&]
+        {
+            collector.clear();
+            interactive.process(".list-rules");
+            return listed_rules(collector);
+        };
+        SUBCASE("named sets two levels down")
+        {
+            process_lines(interactive, R"(
+(a r d) in sa
+(b r e) in sa
+sa ~ conjunction
+(a r d) in sb
+(b r e) in sb
+sb ~ conjunction
+(G go H) => ((a is up) => (sa => (x p H)))
+(G go H) => ((a is up) => (sb => (x p H)))
+)");
+            CHECK(rules() == 1);
+        }
+        SUBCASE("a set of one condition and that condition, one level down")
+        {
+            process_lines(interactive, R"js(
+%(let [g (zelph/var "G") h (zelph/var "H") condition (zelph/collection (zelph/fact "x" "p" h))] (zelph/fact condition "~" "conjunction") (zelph/dedup-rule (fn [] (zelph/fact (zelph/fact g "go" h) "=>" (zelph/fact condition "=>" (zelph/fact "y" "q" h))))))
+(G go H) => ((x p H) => (y q H))
+)js");
+            CHECK(rules() == 1);
+        } });
+}
+
+// A condition matches a set constant through its node, and the subject of a
+// rule through its members only when both are sets of conditions
+// (unify_condition): a set containing a single condition is not equivalent to
+// that condition there, and two untagged containers are two distinct nodes.
+// Read as conditions, these subjects made the two rules of each subcase into
+// one rule, the rule rolled back derived nothing, and behind a negation the
+// program derived a wrong fact. Each subcase holds data for both rules, so a
+// rule missing in either order of entry becomes apparent.
+TEST_CASE("rule identity: a rule that a condition names or quotes is read as a term")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        const auto rules = [&]
+        {
+            collector.clear();
+            interactive.process(".list-rules");
+            return listed_rules(collector);
+        };
+        // Sorted: in parallel mode, the order of the answers varies across
+        // runs.
+        const auto answers = [&](const std::string& query)
+        {
+            interactive.run(true, false, false);
+            collector.clear();
+            interactive.process(query);
+            std::vector<std::string> result = collect_answers(collector);
+            std::ranges::sort(result);
+            return result;
+        };
+        std::string first;
+        std::string second;
+        SUBCASE("a rule in a set constant, over two named sets of the same members")
+        {
+            process_lines(interactive, R"(
+(a r d) in sa
+(b r e) in sa
+sa ~ conjunction
+(a r d) in sb
+(b r e) in sb
+sb ~ conjunction
+u has {(sb => (e f k))}
+w has {(sa => (e f k))}
+)");
+            const std::string over_sa = "(X has {(sa => (e f k))}) => (X hit yes)";
+            const std::string over_sb = "(X has {(sb => (e f k))}) => (X hit yes)";
+            SUBCASE("the rule over sa first")
+            {
+                first  = over_sa;
+                second = over_sb;
+            }
+            SUBCASE("the rule over sb first")
+            {
+                first  = over_sb;
+                second = over_sa;
+            }
+            interactive.process(first);
+            interactive.process(second);
+            interactive.process("(X has Y, ¬(X hit yes)) => (X miss yes)");
+            CHECK(rules() == 3);
+            CHECK(answers("S hit O") == std::vector<std::string>{"u hit yes", "w hit yes"});
+            collector.clear();
+            interactive.process("S miss O");
+            CHECK(collect_answers(collector).empty());
+        }
+        SUBCASE("a set of one condition and that condition, in a rule a condition names")
+        {
+            const std::string set = R"js(%(zelph/dedup-rule (fn [] (def x (zelph/var "X")) (def c (zelph/collection (zelph/fact "a" "p" "b"))) (zelph/fact c "~" "conjunction") (zelph/fact (zelph/fact c "=>" (zelph/fact "e" "f" x)) "=>" (zelph/fact x "hit" "yes")))) )js";
+            const std::string condition = "((a p b) => (e f X)) => (X hit yes)";
+            SUBCASE("the set first")
+            {
+                first  = set;
+                second = condition;
+            }
+            SUBCASE("the condition first")
+            {
+                first  = condition;
+                second = set;
+            }
+            interactive.process(first);
+            interactive.process(second);
+            process_lines(interactive, R"js(
+(a p b) => (e f u)
+%(let [c (zelph/collection (zelph/fact "a" "p" "b"))] (zelph/fact c "~" "conjunction") (zelph/fact c "=>" (zelph/fact "e" "f" "w")))
+)js");
+            CHECK(rules() == 4);
+            CHECK(answers("S hit O") == std::vector<std::string>{"u hit yes", "w hit yes"});
+        }
+        SUBCASE("a set of one condition and that condition, in a rule a condition quotes")
+        {
+            const std::string set = R"js(%(zelph/dedup-rule (fn [] (def x (zelph/var "X")) (def c (zelph/collection (zelph/fact "a" "p" "b"))) (zelph/fact c "~" "conjunction") (zelph/fact (zelph/fact (zelph/fact c "=>" (zelph/fact "e" "f" x)) "noted" x) "=>" (zelph/fact x "hit" "yes")))) )js";
+            const std::string condition = "(((a p b) => (e f X)) noted X) => (X hit yes)";
+            SUBCASE("the set first")
+            {
+                first  = set;
+                second = condition;
+            }
+            SUBCASE("the condition first")
+            {
+                first  = condition;
+                second = set;
+            }
+            interactive.process(first);
+            interactive.process(second);
+            process_lines(interactive, R"js(
+((a p b) => (e f u)) noted u
+%(let [c (zelph/collection (zelph/fact "a" "p" "b"))] (zelph/fact c "~" "conjunction") (zelph/fact (zelph/fact c "=>" (zelph/fact "e" "f" "w")) "noted" "w"))
+)js");
+            CHECK(rules() == 2);
+            CHECK(answers("S hit O") == std::vector<std::string>{"u hit yes", "w hit yes"});
+        }
+        SUBCASE("two untagged containers of the same members, in a rule a condition quotes")
+        {
+            process_lines(interactive, R"js(
+%(def c1 (zelph/collection (zelph/fact "a" "p" "b") (zelph/fact "c" "q" "d")))
+%(def c2 (zelph/collection (zelph/fact "a" "p" "b") (zelph/fact "c" "q" "d")))
+)js");
+            const std::string over_c1 = R"js(%(zelph/dedup-rule (fn [] (def x (zelph/var "X")) (zelph/fact (zelph/fact (zelph/fact c1 "=>" (zelph/fact "e" "f" x)) "noted" x) "=>" (zelph/fact x "hit" "yes")))) )js";
+            const std::string over_c2 = R"js(%(zelph/dedup-rule (fn [] (def x (zelph/var "X")) (zelph/fact (zelph/fact (zelph/fact c2 "=>" (zelph/fact "e" "f" x)) "noted" x) "=>" (zelph/fact x "hit" "yes")))) )js";
+            SUBCASE("the rule over c1 first")
+            {
+                first  = over_c1;
+                second = over_c2;
+            }
+            SUBCASE("the rule over c2 first")
+            {
+                first  = over_c2;
+                second = over_c1;
+            }
+            interactive.process(first);
+            interactive.process(second);
+            process_lines(interactive, R"js(
+%(zelph/fact (zelph/fact c2 "=>" (zelph/fact "e" "f" "u")) "noted" "u")
+%(zelph/fact (zelph/fact c1 "=>" (zelph/fact "e" "f" "w")) "noted" "w")
+)js");
+            CHECK(rules() == 2);
+            CHECK(answers("S hit O") == std::vector<std::string>{"u hit yes", "w hit yes"});
+        } });
+}
+
+// When the reasoner matches a set of conditions through its members, it pairs
+// them just as it does with any term (unify_members): a member named set is the
+// node it is, and a set containing a single condition is not equivalent to that
+// condition. Read as conditions there, the members made the two rules of each
+// subcase into a single rule, and the rule rolled back derived nothing. Each
+// subcase holds data for both rules.
+TEST_CASE("rule identity: the members of a set of conditions in a term are read as terms")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        const auto rules = [&]
+        {
+            collector.clear();
+            interactive.process(".list-rules");
+            return listed_rules(collector);
+        };
+        // Sorted: in parallel mode, the order of the answers varies across
+        // runs.
+        const auto answers = [&](const std::string& query)
+        {
+            interactive.run(true, false, false);
+            collector.clear();
+            interactive.process(query);
+            std::vector<std::string> result = collect_answers(collector);
+            std::ranges::sort(result);
+            return result;
+        };
+        const char* const named = R"(
+(c q d) in n1
+(g h i) in n1
+n1 ~ conjunction
+(c q d) in n2
+(g h i) in n2
+n2 ~ conjunction
+)";
+        std::string first;
+        std::string second;
+        SUBCASE("a named set among the conditions of a rule a condition names")
+        {
+            process_lines(interactive, named);
+            const std::string over_n1 = "((a p b, n1) => (e f X)) => (X hit yes)";
+            const std::string over_n2 = "((a p b, n2) => (e f X)) => (X hit yes)";
+            SUBCASE("the rule over n1 first")
+            {
+                first  = over_n1;
+                second = over_n2;
+            }
+            SUBCASE("the rule over n2 first")
+            {
+                first  = over_n2;
+                second = over_n1;
+            }
+            interactive.process(first);
+            interactive.process(second);
+            process_lines(interactive, R"(
+(a p b, n2) => (e f u)
+(a p b, n1) => (e f w)
+)");
+            CHECK(rules() == 4);
+            CHECK(answers("S hit O") == std::vector<std::string>{"u hit yes", "w hit yes"});
+        }
+        SUBCASE("a named set among the conditions of a rule a condition quotes")
+        {
+            process_lines(interactive, named);
+            const std::string over_n1 = "(((a p b, n1) => (e f X)) noted X) => (X hit yes)";
+            const std::string over_n2 = "(((a p b, n2) => (e f X)) noted X) => (X hit yes)";
+            SUBCASE("the rule over n1 first")
+            {
+                first  = over_n1;
+                second = over_n2;
+            }
+            SUBCASE("the rule over n2 first")
+            {
+                first  = over_n2;
+                second = over_n1;
+            }
+            interactive.process(first);
+            interactive.process(second);
+            process_lines(interactive, R"(
+((a p b, n2) => (e f u)) noted u
+((a p b, n1) => (e f w)) noted w
+)");
+            CHECK(rules() == 2);
+            CHECK(answers("S hit O") == std::vector<std::string>{"u hit yes", "w hit yes"});
+        }
+        SUBCASE("a named set among the conditions of a rule quoted in a consequence")
+        {
+            process_lines(interactive, named);
+            const std::string over_n1 = "(X s Y) => (X noted ((a p b, n1) => (e f k)))";
+            const std::string over_n2 = "(X s Y) => (X noted ((a p b, n2) => (e f k)))";
+            SUBCASE("the rule over n1 first")
+            {
+                first  = over_n1;
+                second = over_n2;
+            }
+            SUBCASE("the rule over n2 first")
+            {
+                first  = over_n2;
+                second = over_n1;
+            }
+            interactive.process(first);
+            interactive.process(second);
+            process_lines(interactive, R"(
+u s v
+(X noted ((a p b, n1) => (e f k))) => (X hit n1)
+(X noted ((a p b, n2) => (e f k))) => (X hit n2)
+)");
+            CHECK(rules() == 4);
+            CHECK(answers("S hit O") == std::vector<std::string>{"u hit n1", "u hit n2"});
+        }
+        SUBCASE("a set of one condition among the conditions of a rule a condition names")
+        {
+            process_lines(interactive, R"js(
+%(def inner (zelph/collection (zelph/fact "c" "q" "d")))
+%(zelph/fact inner "~" "conjunction")
+)js");
+            const std::string set = R"js(%(zelph/dedup-rule (fn [] (def x (zelph/var "X")) (def s (zelph/collection (zelph/fact "a" "p" "b") inner)) (zelph/fact s "~" "conjunction") (zelph/fact (zelph/fact s "=>" (zelph/fact "e" "f" x)) "=>" (zelph/fact x "hit" "yes")))) )js";
+            const std::string condition = "((a p b, c q d) => (e f X)) => (X hit yes)";
+            SUBCASE("the set first")
+            {
+                first  = set;
+                second = condition;
+            }
+            SUBCASE("the condition first")
+            {
+                first  = condition;
+                second = set;
+            }
+            interactive.process(first);
+            interactive.process(second);
+            process_lines(interactive, R"js(
+(a p b, c q d) => (e f u)
+%(let [s (zelph/collection (zelph/fact "a" "p" "b") inner)] (zelph/fact s "~" "conjunction") (zelph/fact s "=>" (zelph/fact "e" "f" "w")))
+)js");
+            CHECK(rules() == 4);
+            CHECK(answers("S hit O") == std::vector<std::string>{"u hit yes", "w hit yes"});
+        } });
 }
 
 TEST_CASE("rule identity: a set of conditions with one member is that condition")
