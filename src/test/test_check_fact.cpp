@@ -180,6 +180,41 @@ TEST_CASE("adjacency_set: sort makes Set storage iterate ascending")
     CHECK(std::vector<Node>(small.begin(), small.end()) == std::vector<Node>{10, 20, 30});
 }
 
+// The node map holds both sides of a node within a single entry
+// (Network::node_entry), and a partial load may read one side of a node
+// without reading the other. The side that was not read is an absent set, and
+// adjacency readers never verify its status: to each of them, it must appear
+// as an empty set, hash included. Only locations where a side's existence
+// influences a decision check is_absent(). A copy is what get_left and
+// get_right deliver, so it must not carry the mark; an erase leaves a side
+// that was not read in an unread state, and an insertion or the assignment of
+// a set imparts independent content to it.
+TEST_CASE("adjacency_set: an absent set reads as an empty one")
+{
+    const adjacency_set absent = adjacency_set::absent();
+    CHECK(absent.is_absent());
+    CHECK(absent.empty());
+    CHECK(absent.size() == 0);
+    CHECK(absent.count(1) == 0);
+    CHECK(absent.begin() == absent.end());
+    CHECK(Zelph::create_hash(absent) == Zelph::create_hash(adjacency_set{}));
+    CHECK_FALSE(adjacency_set{}.is_absent());
+
+    const adjacency_set copy = absent;
+    CHECK_FALSE(copy.is_absent());
+
+    adjacency_set side = adjacency_set::absent();
+    side.erase(7);
+    CHECK(side.is_absent());
+    side.insert(7);
+    CHECK_FALSE(side.is_absent());
+    CHECK(side.count(7) == 1);
+
+    adjacency_set assigned = adjacency_set::absent();
+    assigned               = adjacency_set{};
+    CHECK_FALSE(assigned.is_absent());
+}
+
 TEST_CASE("check_fact: the hash space is wide enough for six-figure graphs")
 {
     // A node IS its hash, meaning the node width determines the size of

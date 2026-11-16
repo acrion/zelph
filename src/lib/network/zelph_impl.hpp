@@ -96,7 +96,7 @@ namespace zelph::network
     // At hub nodes (popular Wikidata classes) this means scanning millions
     // of unrelated relations (e.g. all P31 instance facts of a class) just
     // to find its few P279 edges. The index is built in one pass over the
-    // relations of a single predicate (_right[predicate]) and maps
+    // relations of a single predicate (its right side) and maps
     // subject -> objects and object -> subjects for exactly that predicate;
     // a BFS over the index touches only true edges.
     struct PredicateIndex

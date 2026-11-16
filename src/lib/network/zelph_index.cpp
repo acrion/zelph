@@ -109,12 +109,12 @@ std::vector<IndexPair> Zelph::Impl::extract_predicate_pairs(const Node predicate
 
     std::vector<IndexPair> fw;
 
-    const auto rels_it = _right.find(predicate);
-    if (rels_it == _right.end()) return fw;
+    const adjacency_set* const rels_of = find_right(predicate);
+    if (rels_of == nullptr) return fw;
 
     std::vector<Node> rels;
-    rels.reserve(rels_it->second.size());
-    for (const Node rel : rels_it->second)
+    rels.reserve(rels_of->size());
+    for (const Node rel : *rels_of)
         rels.push_back(rel);
 
     const size_t n_threads =
@@ -142,16 +142,15 @@ std::vector<IndexPair> Zelph::Impl::extract_predicate_pairs(const Node predicate
                 // locks -- see Zelph::unasserted_snapshot.
                 if (skip != nullptr && skip->count(rel) != 0) continue;
 
-                const auto rl_it = _left.find(rel);
-                const auto rr_it = _right.find(rel);
-                if (rl_it == _left.end() || rr_it == _right.end()) continue;
+                const auto rel_it = _nodes.find(rel);
+                if (rel_it == _nodes.end() || rel_it->second.left.is_absent() || rel_it->second.right.is_absent()) continue;
 
-                const adjacency_set& rel_left  = rl_it->second;
-                const adjacency_set& rel_right = rr_it->second;
+                const adjacency_set& rel_left  = rel_it->second.left;
+                const adjacency_set& rel_right = rel_it->second.right;
 
-                // rel may be in _right[predicate] because the predicate
-                // is the *subject* of rel (e.g. (P ~ ->)); such relations
-                // contribute nothing below.
+                // rel may appear on the right side of predicate because
+                // the predicate is the *subject* of rel (e.g. (P ~ ->));
+                // such relations contribute nothing below.
                 if (rel_left.count(predicate) == 0) continue;
 
                 // One pass, same reading as the direct traversal: the
@@ -436,8 +435,8 @@ void Zelph::Impl::invalidate_relation_type_set() const
     ++_rel_types_gen;
 }
 
-// Lock-once transitive traversal working directly on _left/_right
-// references: no adjacency_set copies, no per-edge lock acquisitions.
+// Lock-once transitive traversal working directly on references into the
+// node map: no adjacency_set copies, no per-edge lock acquisitions.
 // Aborts and returns false once `scan_budget` relation entries have
 // been scanned - hub nodes blow the budget immediately, signalling
 // the caller to switch to the predicate index. On false, `result`
@@ -465,27 +464,26 @@ bool Zelph::Impl::try_transitive_direct(Node start, Node predicate, bool include
     auto expand = [&](const Node n, std::vector<Node>& next) -> bool
     {
         // Outgoing edges of n: relations where n is subject or object.
-        const auto edges_it = _left.find(n);
-        if (edges_it == _left.end()) return true;
+        const adjacency_set* const edges = find_left(n);
+        if (edges == nullptr) return true;
 
-        scanned += edges_it->second.size();
+        scanned += edges->size();
         if (scanned > scan_budget) return false;
 
-        for (const Node rel : edges_it->second)
+        for (const Node rel : *edges)
         {
             // Not an edge of the closure: nobody claimed it. Same
             // snapshot as the index build above.
             if (skip != nullptr && skip->count(rel) != 0) continue;
             if (skip2 != nullptr && skip2->count(rel) != 0) continue;
 
-            const auto rl_it = _left.find(rel);
-            if (rl_it == _left.end()) continue;
-            const adjacency_set& rel_left = rl_it->second;
+            const auto rel_it = _nodes.find(rel);
+            if (rel_it == _nodes.end() || rel_it->second.left.is_absent()) continue;
+            const adjacency_set& rel_left = rel_it->second.left;
             if (rel_left.count(predicate) == 0) continue;
 
-            const auto rr_it = _right.find(rel);
-            if (rr_it == _right.end()) continue;
-            const adjacency_set& rel_right = rr_it->second;
+            if (rel_it->second.right.is_absent()) continue;
+            const adjacency_set& rel_right = rel_it->second.right;
 
             // One pass over the incoming side splits it into the
             // objects and the bidirectional nodes. The SUBJECT is

@@ -157,7 +157,7 @@ namespace zelph::network
             // output handler is user code, and format/log lock).
 
             if (outgoing == nullptr) outgoing = scope.try_right(fact);
-            if (outgoing == nullptr) return false; // no _left entry IS "gone"
+            if (outgoing == nullptr) return false; // no left side IS "gone"
 
             // Zelph Topology:
             // S <-> F (Subject is bidirectional)
@@ -190,7 +190,7 @@ namespace zelph::network
                     for (Node s : right)
                     {
                         // s == p is the fact whose SUBJECT IS its predicate.
-                        // insert_fact writes _left[fact] = {subject,
+                        // insert_fact stores the fact's left side as {subject,
                         // predicate}, so the two roles share a single entry
                         // and skipping the candidate left such a fact with no
                         // reading at all. Since unification reads every

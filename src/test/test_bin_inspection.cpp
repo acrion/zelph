@@ -747,3 +747,110 @@ TEST_CASE("load-partial: a partial load marks the label index incomplete")
     fs::remove(file);
     remove_dump(dump);
 }
+
+// A file holds the outgoing edges of its nodes (the left section) apart from
+// their incoming edges (the right section), and a partial load can read either
+// section independently, while the engine keeps both sides of a node within a
+// single entry in one map (Network::node_entry). The definition of a node is
+// determined by its left side: a node is considered present when that side has
+// been read, which is precisely what `.stat` counts and what `.list` lists,
+// and a side that was not read contains no edges to report. Consequently, a
+// view comprising only the right sections contains edges but no node; counting
+// the entries in the map would instead tally every node present in the file.
+//
+// A statement entered within a view of one side is rejected, because an edge
+// needs both of its endpoints: if written into a side that was never read, it
+// would be treated as the whole of that side once the view is saved.
+TEST_CASE("load-partial: a node exists where its left side was read")
+{
+    const Fixtures f = build();
+
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+    interactive.process(".load \"" + f.good.string() + "\"");
+    const std::size_t nodes = node_count(collector, interactive);
+    REQUIRE(nodes > 0);
+
+    const auto shows = [&](const std::string& command, const std::string& text)
+    {
+        collector.clear();
+        interactive.process(command);
+        return any_output_contains(collector, text);
+    };
+
+    SUBCASE("the left sections alone")
+    {
+        interactive.process(".load-partial \"" + f.good.string() + "\" right=none");
+        CHECK(node_count(collector, interactive) == nodes);
+        CHECK(shows(".list 1000", "Displayed " + std::to_string(nodes) + " nodes."));
+        CHECK(shows(".out a", "(first 1 of 1"));
+        CHECK(shows(".in a", "(first 0 of 0"));
+        CHECK_THROWS_AS(interactive.process("q1 q2 q3"), std::runtime_error);
+    }
+
+    SUBCASE("the right sections alone")
+    {
+        interactive.process(".load-partial \"" + f.good.string() + "\" left=none");
+        CHECK(node_count(collector, interactive) == 0);
+        CHECK(shows(".list 1000", "Displayed 0 nodes."));
+        CHECK(shows(".in a", "(first 1 of 1"));
+        CHECK(shows(".out a", "(first 0 of 0"));
+        CHECK_THROWS_AS(interactive.process("q1 q2 q3"), std::runtime_error);
+    }
+
+    fs::remove_all(f.root);
+}
+
+// The REPL rejects `.save` within a partial view, yet a program utilizing the
+// library is not bound by this restriction: it loads a selection of chunks and
+// saves the resulting state (Zelph::load_from_file, Zelph::save_to_file). A
+// save writes each side of the entries that hold it, so the file of a
+// one-sided view contains one empty section, and loading that file as a whole
+// gives the identical view back: a node of which only the right side was read
+// is still no node.
+TEST_CASE("load-partial: a saved view writes the sides it read")
+{
+    const Fixtures f          = build();
+    const fs::path left_only  = f.root / "left-only.bin";
+    const fs::path right_only = f.root / "right-only.bin";
+
+    std::size_t nodes = 0;
+    {
+        zelph::io::OutputCollector  collector;
+        zelph::console::Interactive interactive(collector.sink());
+        interactive.process(".load \"" + f.good.string() + "\"");
+        nodes = node_count(collector, interactive);
+    }
+
+    for (const auto& [file, keep_left] : {std::pair{left_only, true}, std::pair{right_only, false}})
+    {
+        zelph::network::Zelph                    z([](const zelph::io::OutputEvent&) {});
+        zelph::network::Zelph::BinChunkSelection selection;
+        selection.left_explicit  = !keep_left; // an explicit, empty selection is `=none`
+        selection.right_explicit = keep_left;
+        z.load_from_file(f.good.string(), selection);
+        z.save_to_file(file.string());
+    }
+
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+    const auto                  shows = [&](const std::string& command, const std::string& text)
+    {
+        collector.clear();
+        interactive.process(command);
+        return any_output_contains(collector, text);
+    };
+
+    CHECK(shows(".stat-file \"" + left_only.string() + "\"", "Left Chunks: 1"));
+    CHECK(shows(".stat-file \"" + left_only.string() + "\"", "Right Chunks: 0"));
+    CHECK(shows(".stat-file \"" + right_only.string() + "\"", "Left Chunks: 0"));
+    CHECK(shows(".stat-file \"" + right_only.string() + "\"", "Right Chunks: 1"));
+
+    interactive.process(".load \"" + left_only.string() + "\"");
+    CHECK(node_count(collector, interactive) == nodes);
+    interactive.process(".load \"" + right_only.string() + "\"");
+    CHECK(node_count(collector, interactive) == 0);
+    CHECK(shows(".in a", "(first 1 of 1"));
+
+    fs::remove_all(f.root);
+}

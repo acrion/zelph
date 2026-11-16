@@ -17,20 +17,18 @@ Currently, I offer the following Wikidata variants:
 | `wikidata-20260309-all.bin`               | Current full Wikidata dump: all statements between entities   | 983,424,620 |    82 GiB | 223.7 GiB |         119,231,266 / 83,261,799 |   23m 23s |
 | `wikidata-20260309-all-P11260.bin`        | The same, plus the _list item_ qualifier layer                 | 983,435,690 |    82 GiB | 221.7 GiB |         119,232,787 / 83,261,799 |         — |
 | `wikidata-20260309-all-pruned-medium.bin` | Pruned, **keeps people**                                       | 114,477,445 |   9.0 GiB |  25.9 GiB |          21,015,182 / 14,668,496 |    2m 08s |
-| `wikidata-20260309-all-pruned-small.bin`  | Pruned further, no people — fits an ordinary laptop            |  26,533,048 |   2.2 GiB |   6.0 GiB |            7,106,526 / 4,316,673 |       25s |
+| `wikidata-20260309-all-pruned-small.bin`  | Pruned further, no people — fits an ordinary laptop            |  26,533,048 |   2.2 GiB |   5.5 GiB |            7,106,526 / 4,316,673 |       25s |
 | `wikidata-20260309-all-pruned-small-P279.bin` | The `P279` slice of `-small`: the class hierarchy alone     |   2,005,552 |  0.21 GiB |   0.6 GiB |              890,779 /   775,631 |     2.2s |
 | `wikidata-20171227.bin`                   | Historic full Wikidata dump from 2017                          | 203,190,311 |    18 GiB |  44.6 GiB |          42,187,613 / 27,960,315 |    3m 20s |
-| `wikidata-20171227-pruned.bin`            | Historic pruned Wikidata dump from 2017                        |  17,407,259 |   1.3 GiB |   3.8 GiB |            4,307,749 / 2,324,957 |     14.0s |
+| `wikidata-20171227-pruned.bin`            | Historic pruned Wikidata dump from 2017                        |  17,407,259 |   1.3 GiB |   3.4 GiB |            4,307,749 / 2,324,957 |     14.0s |
 
 The values above reflect observed loading statistics from zelph on my system. Actual loading times and memory usage may vary depending on hardware and build configuration.
 
 ### Which one do you want?
 
-**RAM decides, and it is the RAM column, not the file size.** A `.bin` roughly
-triples when it is loaded, because the graph is reconstructed as adjacency maps and
-name tables rather than mapped from the file.
+**RAM decides, and it is the RAM column, not the file size.** A `.bin` needs two and a half to three times its size once it is loaded, as the graph is reconstructed into a node map and name tables instead of being directly mapped from the file.
 
-* **`-small`** (6.0 GiB) is the one to begin with. It loads in 25 seconds and
+* **`-small`** (5.5 GiB) is the one to begin with. It loads in 25 seconds and
   leaves room to work on a 16 GiB machine; on 8 GiB it fits, though not with
   much to spare.
 * **`-medium`** (25.9 GiB) is the same network with **people** still in it, and
@@ -191,11 +189,11 @@ zelph-> .stat
 Network Statistics:
 ------------------------
 Nodes: 3000000
-RAM Usage: 2.6 GiB
+RAM Usage: 2.7 GiB
 ...
 ```
 
-With only 7 out of 54 adjacency chunks loaded, RAM usage dropped from 6.0 GiB to 2.6 GiB. The floor is the name maps: they are loaded whole here, and at 7.1 M `wikidata` plus 4.3 M `en` entries they are most of what remains. `nameOfNode=none` drops them as well, at the cost of being unable to look a node up by name.
+With only 7 out of 54 adjacency chunks loaded, RAM usage dropped from 5.5 GiB to 2.7 GiB. The floor is the name maps: they are loaded whole here, and at 7.1 M `wikidata` plus 4.3 M `en` entries they are most of what remains. `nameOfNode=none` drops them as well, at the cost of being unable to look a node up by name.
 
 ## Manifest-Based Loading
 

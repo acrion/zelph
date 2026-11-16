@@ -108,8 +108,8 @@ TEST_CASE("genuine store: a subject == predicate fact decomposes like any other"
     const Node b   = z.node("b");
     const Node op3 = z.node("op3");
 
-    // insert_fact writes _left[fact] = {subject, predicate}, so when the two
-    // are the same node both roles share ONE entry. The walk used to read
+    // insert_fact writes fact's left side as {subject, predicate}, so when the
+    // two are the same node both roles share ONE entry. The walk used to read
     // that as "subject, hence not the predicate" and returned no reading at
     // all -- and since unification reads every candidate through this
     // decomposition, such a fact answered no query and matched no rule.

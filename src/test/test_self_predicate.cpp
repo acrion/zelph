@@ -25,9 +25,9 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 // A fact whose SUBJECT IS its predicate.
 //
-// insert_fact writes _left[fact] = {subject, predicate}, so when the two are
-// the same node both roles collapse into a single entry and the back edge can
-// no longer tell them apart. Every candidate filter in the engine read that
+// insert_fact writes fact's left side as {subject, predicate}, so when the two
+// are the same node both roles collapse into a single entry and the back edge
+// can no longer tell them apart. Every candidate filter in the engine read that
 // single entry as "subject, hence not the predicate", which left such a fact
 // undecomposable: stored, printable and explainable, but matched by nothing.
 //

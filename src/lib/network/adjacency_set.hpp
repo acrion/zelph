@@ -111,6 +111,10 @@ namespace zelph::network
         Storage _storage{};
         Mode    _mode = Mode::Empty;
 
+        // The storage word of an empty set holding this value marks the set
+        // as absent (see absent()). It is never read as a node.
+        static constexpr Node absent_marker = ~Node{0};
+
         static uint32_t next_growth_capacity(uint32_t current) noexcept
         {
             if (current >= VECTOR_TO_SET_THRESHOLD) return VECTOR_TO_SET_THRESHOLD;
@@ -378,6 +382,25 @@ namespace zelph::network
                 other._storage.single_node = 0;
             }
             return *this;
+        }
+
+        // A side of a node that a partial load did not read (see
+        // Network::node_entry). It appears as an empty set to every reader,
+        // and only is_absent() tells it from one: no operation reads the
+        // storage word of an empty set, which is where the mark resides, so
+        // it costs neither space nor work. An insertion terminates it, as
+        // does assigning a set that is not absent; a copy is an ordinary
+        // empty set.
+        static adjacency_set absent() noexcept
+        {
+            adjacency_set set;
+            set._storage.single_node = absent_marker;
+            return set;
+        }
+
+        bool is_absent() const noexcept
+        {
+            return _mode == Mode::Empty && _storage.single_node == absent_marker;
         }
 
         bool empty() const noexcept

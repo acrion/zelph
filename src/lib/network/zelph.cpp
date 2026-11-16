@@ -174,7 +174,7 @@ Zelph::Zelph(const io::OutputHandler& output)
     fact(core.Cons, core.IsA, {core.RelationTypeCategory});
     fact(core.PartOf, core.IsA, {core.RelationTypeCategory});
 
-    for (const auto& entry : _pImpl->_left)
+    for (const auto& entry : _pImpl->_nodes)
         _pImpl->_core_graph.push_back(entry.first);
 
     advance_content_epoch();
@@ -672,9 +672,9 @@ adjacency_set Zelph::get_facts_of_predicate(const Node relation) const
     // one use for a predicate nothing had ever used.
     //
     // A fact whose subject IS its predicate carries both roles in ONE edge,
-    // so the back edge cannot separate them: _left[fact] = {subject,
-    // predicate} then has a single entry, and the relation is the predicate
-    // after all. `~ ~ ->` is that fact, and every network has it.
+    // so the back edge cannot separate them: the left side of the fact,
+    // {subject, predicate}, then has a single entry, and the relation is the
+    // predicate after all. `~ ~ ->` is that fact, and every network has it.
     // A COMPOSITE relation -- a fact or a cons cell in predicate position --
     // is pointed at by its own subject and objects as well, and those passed
     // both tests above: the subject through the single-outgoing-edge
@@ -2456,7 +2456,7 @@ bool Zelph::holds_only_core() const
 
 Zelph::AllNodeView Zelph::get_all_nodes_view() const
 {
-    return AllNodeView(_pImpl->_left);
+    return AllNodeView(_pImpl->_nodes);
 }
 
 Zelph::LangNodeView Zelph::get_lang_nodes_view(const std::string& lang) const

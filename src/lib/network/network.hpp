@@ -47,7 +47,29 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 namespace zelph::network
 {
-    using adjacency_map = ankerl::unordered_dense::segmented_map<Node, adjacency_set>;
+    // The two sides of a node's adjacency, captured in a single entry within
+    // one map: `left` holds the edges departing from the node (read by
+    // get_right), `right` contains the edges arriving at it (read by
+    // get_left). Every node includes both sides, hence one map stores each
+    // key alongside its bucket just once: 40 bytes per entry, whereas
+    // maintaining a map per side would have required 24 bytes per entry twice
+    // and a second bucket array.
+    //
+    // A partial load reads the two sides from separate chunks and can read
+    // one side of a node without accessing the other. The side it omitted is
+    // adjacency_set::absent(), appearing as an empty set to every reader, so
+    // a lookup that reads edges needs no test. When the existence of a side
+    // determines an outcome, is_absent() tells it apart: find_left() and
+    // find_right() return null for it, just as a lookup in a map restricted
+    // to that side would find no entry; exists(), count(), and traversal
+    // across all nodes proceed according to the left side, and a save writes
+    // each side of the entries that hold it.
+    struct node_entry
+    {
+        adjacency_set left;
+        adjacency_set right;
+    };
+    using node_map = ankerl::unordered_dense::segmented_map<Node, node_entry>;
 
     class Network
     {
@@ -56,15 +78,15 @@ namespace zelph::network
         {
             std::unique_lock<std::shared_mutex> lock_left(_smtx_left);
             std::unique_lock<std::shared_mutex> lock_right(_smtx_right);
-            auto                                leftIt  = _left.find(a);
-            auto                                rightIt = _right.find(b);
+            adjacency_set* const                leftIt  = find_left(a);
+            adjacency_set* const                rightIt = find_right(b);
 
-            if (leftIt == _left.end())
+            if (leftIt == nullptr)
             {
                 throw std::runtime_error("Network::connect: requested left node " + std::to_string(a) + " does not exist");
             }
 
-            if (rightIt == _right.end())
+            if (rightIt == nullptr)
             {
                 throw std::runtime_error("Network::connect: requested right node " + std::to_string(b) + " does not exist");
             }
@@ -100,8 +122,8 @@ namespace zelph::network
                 }
             }
 
-            leftIt->second.insert(b);
-            rightIt->second.insert(a);
+            leftIt->insert(b);
+            rightIt->insert(a);
         }
 
         // The `foreign` flag is set when the node associated with the triple
@@ -121,19 +143,25 @@ namespace zelph::network
             std::unique_lock<std::shared_mutex> lock_left(_smtx_left);
             std::unique_lock<std::shared_mutex> lock_right(_smtx_right);
 
-            if (_left.find(subject) == _left.end())
+            // The entries remain in place as the relation's entry is
+            // inserted below: a segmented map never moves its values.
+            adjacency_set* const subj_left = find_left(subject);
+            if (subj_left == nullptr)
                 throw std::runtime_error("Network::insert_fact_single_object_trusted: subject does not exist");
-            if (_left.find(object) == _left.end())
+            adjacency_set* const obj_left = find_left(object);
+            if (obj_left == nullptr)
                 throw std::runtime_error("Network::insert_fact_single_object_trusted: object does not exist");
-            if (_right.find(subject) == _right.end())
+            adjacency_set* const subj_right = find_right(subject);
+            if (subj_right == nullptr)
                 throw std::runtime_error("Network::insert_fact_single_object_trusted: subject right-side entry does not exist");
-            if (_right.find(predicate) == _right.end())
+            adjacency_set* const pred_right = find_right(predicate);
+            if (pred_right == nullptr)
                 throw std::runtime_error("Network::insert_fact_single_object_trusted: predicate right-side entry does not exist");
 
-            auto [rel_left_it, inserted_left] =
-                _left.try_emplace(relation, adjacency_set{subject, predicate});
+            auto [rel_it, inserted] = _nodes.try_emplace(relation);
+            node_entry& rel         = rel_it->second;
 
-            if (!inserted_left)
+            if (!inserted && !rel.left.is_absent())
             {
                 // The node is present. Typically, it is precisely this same
                 // triple once more: the Wikidata importer types a property
@@ -150,39 +178,34 @@ namespace zelph::network
                 // mention it, meaning the subject and predicate edges, along
                 // with the object edge, are looked up individually, rather
                 // than being compared as whole sets.
-                const auto to = _right.find(relation);
-                foreign       = rel_left_it->second.count(subject) == 0
-                             || rel_left_it->second.count(predicate) == 0
-                             || to == _right.end()
-                             || to->second.count(object) == 0;
+                foreign = rel.left.count(subject) == 0
+                       || rel.left.count(predicate) == 0
+                       || rel.right.count(object) == 0;
                 return relation;
             }
 
+            // An entry that was already there has only a right side, read
+            // by a partial load: the left side is written, and the
+            // statement is subsequently rejected due to inconsistency.
+            if (!inserted) --_absent_left;
+            rel.left = adjacency_set{subject, predicate};
+
             note_created(relation);
 
-            auto [rel_right_it, inserted_right] =
-                (subject == object)
-                    ? _right.try_emplace(relation, adjacency_set{subject})
-                    : _right.try_emplace(relation, adjacency_set{subject, object});
-
-            if (!inserted_right)
+            if (!inserted)
             {
                 throw std::runtime_error("Network::insert_fact_single_object_trusted: inconsistent state, relation exists only on right side");
             }
 
-            // Re-fetch after insertion
-            auto subj_left  = _left.find(subject);
-            auto subj_right = _right.find(subject);
-            auto pred_right = _right.find(predicate);
+            rel.right = (subject == object) ? adjacency_set{subject} : adjacency_set{subject, object};
 
-            subj_left->second.insert(relation);
-            subj_right->second.insert(relation);
-            pred_right->second.insert(relation);
+            subj_left->insert(relation);
+            subj_right->insert(relation);
+            pred_right->insert(relation);
 
             if (subject != object)
             {
-                auto obj_left = _left.find(object);
-                obj_left->second.insert(relation);
+                obj_left->insert(relation);
             }
 
             return relation;
@@ -198,16 +221,16 @@ namespace zelph::network
                 note_removal(b);
             }
 
-            auto leftIt = _left.find(a);
-            if (leftIt != _left.end())
+            auto leftIt = _nodes.find(a);
+            if (leftIt != _nodes.end())
             {
-                leftIt->second.erase(b);
+                leftIt->second.left.erase(b);
             }
 
-            auto rightIt = _right.find(b);
-            if (rightIt != _right.end())
+            auto rightIt = _nodes.find(b);
+            if (rightIt != _nodes.end())
             {
-                rightIt->second.erase(a);
+                rightIt->second.right.erase(a);
             }
 
             // Remove probability if exists
@@ -232,11 +255,11 @@ namespace zelph::network
         // the worst thing there is, since it touches every byte of the source
         // and then writes a second one.
         //
-        // Walking the live sets is safe because neither loop writes the map it
-        // reads: erasing `node` from a NEIGHBOUR's entry touches the OTHER
-        // map, and no entry is erased from `_left`/`_right` themselves until
-        // both loops are done. A self-loop needs no special case for the same
-        // reason -- `_left[node]` and `_right[node]` go wholesale at the end.
+        // Walking the live sets is safe because neither loop writes the side
+        // it reads: erasing `node` from a NEIGHBOUR's entry touches the OTHER
+        // side, and no entry is erased from the map until both loops are done.
+        // A self-loop needs no special case for the same reason -- `node`'s
+        // entry is removed in full at the end.
         //
         // The lock order is disconnect's own (left, right, weights), so the
         // two remain interchangeable for any caller holding neither.
@@ -256,34 +279,31 @@ namespace zelph::network
                 if (it != _weights.end()) _weights.erase(it);
             };
 
-            // Incoming: every `from` that has `node` among its outgoing edges.
-            const auto incoming = _right.find(node);
-            if (incoming != _right.end())
+            const auto entry = _nodes.find(node);
+            if (entry != _nodes.end())
             {
-                for (const Node from : incoming->second)
+                // Incoming: every `from` that has `node` among its outgoing edges.
+                for (const Node from : entry->second.right)
                 {
-                    const auto it = _left.find(from);
-                    if (it != _left.end()) it->second.erase(node);
+                    const auto it = _nodes.find(from);
+                    if (it != _nodes.end()) it->second.left.erase(node);
                     drop_weight(from, node);
                     if (watching) note_removal(from);
                 }
-            }
 
-            // Outgoing: every `to` that has `node` among its incoming edges.
-            const auto outgoing = _left.find(node);
-            if (outgoing != _left.end())
-            {
-                for (const Node to : outgoing->second)
+                // Outgoing: every `to` that has `node` among its incoming edges.
+                for (const Node to : entry->second.left)
                 {
-                    const auto it = _right.find(to);
-                    if (it != _right.end()) it->second.erase(node);
+                    const auto it = _nodes.find(to);
+                    if (it != _nodes.end()) it->second.right.erase(node);
                     drop_weight(node, to);
                     if (watching) note_removal(to);
                 }
-            }
 
-            _left.erase(node);
-            _right.erase(node);
+                if (entry->second.left.is_absent()) --_absent_left;
+                if (entry->second.right.is_absent()) --_absent_right;
+                _nodes.erase(entry);
+            }
 
             // Each deletion of a node goes through this point, making it
             // the sole location that prevents annotations from surviving
@@ -392,10 +412,10 @@ namespace zelph::network
             std::vector<Node> all_nodes;
             {
                 std::shared_lock<std::shared_mutex> lock_left(_smtx_left);
-                all_nodes.reserve(_left.size());
-                for (const auto& p : _left)
+                all_nodes.reserve(_nodes.size() - _absent_left);
+                for (const auto& p : _nodes)
                 {
-                    all_nodes.push_back(p.first);
+                    if (!p.second.left.is_absent()) all_nodes.push_back(p.first);
                 }
             }
 
@@ -461,7 +481,7 @@ namespace zelph::network
         bool exists(Node a) const
         {
             std::shared_lock<std::shared_mutex> lock(_smtx_left);
-            return _left.find(a) != _left.end();
+            return find_left(a) != nullptr;
         }
 
         long double probability(Node a, Node b)
@@ -472,8 +492,8 @@ namespace zelph::network
             }
 
             std::shared_lock<std::shared_mutex> lock(_smtx_left);
-            auto                                itLeft = _left.find(a);
-            if (itLeft != _left.end() && itLeft->second.count(b) == 1)
+            auto                                itLeft = _nodes.find(a);
+            if (itLeft != _nodes.end() && itLeft->second.left.count(b) == 1)
             {
                 Node             hash;
                 std::shared_lock lock3(_mtx_weights);
@@ -500,7 +520,7 @@ namespace zelph::network
             std::unique_lock<std::shared_mutex> lock_left(_smtx_left);
             std::unique_lock<std::shared_mutex> lock_right(_smtx_right);
 
-            while (_left.find(++_last) != _left.end())
+            while (find_left(++_last) != nullptr)
                 ;
 
             // The identifiers from value_set_pattern_class onward are set
@@ -518,8 +538,7 @@ namespace zelph::network
                 throw std::logic_error("Network::var: Exceeded maximum number of " + std::to_string(_last - 1) + " nodes.");
             }
 
-            _left[_last]  = adjacency_set{};
-            _right[_last] = adjacency_set{};
+            create_entry(_last);
             if (record == Record::yes) note_created(_last);
             return _last;
         }
@@ -542,7 +561,7 @@ namespace zelph::network
             Node id = 0;
             do
             {
-                while (_left.find(++_last) != _left.end())
+                while (find_left(++_last) != nullptr)
                     ;
 
                 // The payload contains the 59 bits below construction_bit,
@@ -554,10 +573,9 @@ namespace zelph::network
                 }
 
                 id = recipe_floor | template_class | _last;
-            } while (_left.find(id) != _left.end());
+            } while (find_left(id) != nullptr);
 
-            _left[id]  = adjacency_set{};
-            _right[id] = adjacency_set{};
+            create_entry(id);
             note_created(id);
             return id;
         }
@@ -578,7 +596,7 @@ namespace zelph::network
             Node id = 0;
             do
             {
-                while (_left.find(++_last) != _left.end())
+                while (find_left(++_last) != nullptr)
                     ;
 
                 if (_last >= value_set_pattern_class)
@@ -587,10 +605,9 @@ namespace zelph::network
                 }
 
                 id = value_set_pattern_class | _last;
-            } while (_left.find(id) != _left.end());
+            } while (find_left(id) != nullptr);
 
-            _left[id]  = adjacency_set{};
-            _right[id] = adjacency_set{};
+            create_entry(id);
             note_created(id);
             return id;
         }
@@ -598,7 +615,7 @@ namespace zelph::network
         Node count() const
         {
             std::shared_lock<std::shared_mutex> lock_left(_smtx_left);
-            return _left.size();
+            return _nodes.size() - _absent_left;
         }
 
         Node var()
@@ -606,7 +623,7 @@ namespace zelph::network
             std::unique_lock<std::shared_mutex> lock_left(_smtx_left);
             std::unique_lock<std::shared_mutex> lock_right(_smtx_right);
 
-            if (_left.find(--_last_var) != _left.end())
+            if (find_left(--_last_var) != nullptr)
             {
                 throw std::runtime_error("Network::var: Node " + std::to_string(_last_var) + " already in use");
             }
@@ -616,8 +633,7 @@ namespace zelph::network
                 throw std::logic_error("Network::var: Exceeded maximum number of " + std::to_string(std::numeric_limits<Node>::max() - _last_var) + " variables.");
             }
 
-            _left[_last_var]  = adjacency_set{};
-            _right[_last_var] = adjacency_set{};
+            create_entry(_last_var);
             note_created(_last_var);
 
             return _last_var;
@@ -705,7 +721,7 @@ namespace zelph::network
             std::unique_lock<std::shared_mutex> lock_left(_smtx_left);
             std::unique_lock<std::shared_mutex> lock_right(_smtx_right);
 
-            if (_left.find(a) != _left.end())
+            if (find_left(a) != nullptr)
             {
                 throw std::runtime_error("Network::create: requested node " + std::to_string(a) + " already in use");
             }
@@ -715,8 +731,7 @@ namespace zelph::network
                 throw std::runtime_error("Network::create: requested node " + std::to_string(a) + " conflicts with variable values");
             }
 
-            _left[a]  = adjacency_set{};
-            _right[a] = adjacency_set{};
+            create_entry(a);
             if (record == Record::yes) note_created(a);
         }
 
@@ -797,9 +812,9 @@ namespace zelph::network
             return (current_hash & mask_node) | mark_hash;
         }
 
-        // ReadScope::subject_is_predicate applied to the two adjacency sets
-        // of `fact`, as the raw maps hold them (`to` = _right[fact], `from` =
-        // _left[fact]), for a caller that already holds both locks.
+        // ReadScope::subject_is_predicate applied to the two adjacency sets of
+        // `fact`, as its map entry holds them (`to` = its right side, `from` =
+        // its left side), for a caller that already holds both locks.
         static bool subject_is_predicate(const Node fact, const Node relation, const adjacency_set& to, const adjacency_set& from)
         {
             adjacency_set objects;
@@ -820,15 +835,15 @@ namespace zelph::network
             std::shared_lock<std::shared_mutex> lock_left(_smtx_left);
             std::shared_lock<std::shared_mutex> lock_right(_smtx_right);
 
-            const auto lr = _left.find(relation);
-            if (lr == _left.end()) return false; // relation node does not exist
-            const auto rr = _right.find(relation);
-            if (rr == _right.end()) return false;
+            // A side that a partial load did not read is empty, and the
+            // subject test below fails on it.
+            const auto rel = _nodes.find(relation);
+            if (rel == _nodes.end()) return false; // relation node does not exist
 
             // Naming follows check_fact: "from" = edges out of the relation
-            // node (_left[relation]), "to" = edges into it (_right[relation]).
-            const adjacency_set& from = lr->second;
-            const adjacency_set& to   = rr->second;
+            // node (its left side), "to" = edges into it (its right side).
+            const adjacency_set& from = rel->second.left;
+            const adjacency_set& to   = rel->second.right;
 
             if (from.count(subject) != 1 || to.count(subject) != 1) return false; // subject must be bidirectional
 
@@ -843,23 +858,23 @@ namespace zelph::network
         bool has_left_edge(Node b, Node a) const
         {
             std::shared_lock<std::shared_mutex> lock(_smtx_right);
-            auto                                it = _right.find(b);
-            return it != _right.end() && it->second.count(a) == 1;
+            auto                                it = _nodes.find(b);
+            return it != _nodes.end() && it->second.right.count(a) == 1;
         }
 
         bool has_right_edge(Node a, Node b) const
         {
             std::shared_lock<std::shared_mutex> lock(_smtx_left);
-            auto                                it = _left.find(a);
-            return it != _left.end() && it->second.count(b) == 1;
+            auto                                it = _nodes.find(a);
+            return it != _nodes.end() && it->second.left.count(b) == 1;
         }
 
         bool snapshot_left_of(Node b, adjacency_set& out) const
         {
             std::shared_lock<std::shared_mutex> lock(_smtx_right);
-            auto                                it = _right.find(b);
-            if (it == _right.end()) return false;
-            out = it->second;
+            const adjacency_set* const          in = find_right(b);
+            if (in == nullptr) return false;
+            out = *in;
             return true;
         }
 
@@ -873,11 +888,11 @@ namespace zelph::network
         {
             out.clear();
             std::shared_lock<std::shared_mutex> lock(_smtx_right);
-            auto                                it = _right.find(b);
-            if (it == _right.end()) return 0;
-            for (const Node n : it->second)
+            auto                                it = _nodes.find(b);
+            if (it == _nodes.end()) return 0;
+            for (const Node n : it->second.right)
                 if (n > after) out.push_back(n);
-            return it->second.size();
+            return it->second.right.size();
         }
 
         // Size-only counterpart of snapshot_left_of: the number of incoming
@@ -887,46 +902,46 @@ namespace zelph::network
         size_t left_count_of(Node b) const
         {
             std::shared_lock<std::shared_mutex> lock(_smtx_right);
-            auto                                it = _right.find(b);
-            return it == _right.end() ? 0 : it->second.size();
+            auto                                it = _nodes.find(b);
+            return it == _nodes.end() ? 0 : it->second.right.size();
         }
 
         size_t right_count_of(Node b) const
         {
             std::shared_lock<std::shared_mutex> lock(_smtx_left);
-            auto                                it = _left.find(b);
-            return it == _left.end() ? 0 : it->second.size();
+            auto                                it = _nodes.find(b);
+            return it == _nodes.end() ? 0 : it->second.left.size();
         }
 
         // get predecessors / incoming edges
         adjacency_set get_left(const Node b) const
         {
             std::shared_lock<std::shared_mutex> lock(_smtx_right);
-            auto                                it = _right.find(b);
-            if (it == _right.end())
+            auto                                it = _nodes.find(b);
+            if (it == _nodes.end())
             {
                 return {};
             }
-            return it->second;
+            return it->second.right;
         }
 
         // get successors / outgoing edges
         adjacency_set get_right(const Node b) const
         {
             std::shared_lock<std::shared_mutex> lock(_smtx_left);
-            auto                                it = _left.find(b);
-            if (it == _left.end())
+            auto                                it = _nodes.find(b);
+            if (it == _nodes.end())
             {
                 return {};
             }
-            return it->second;
+            return it->second.left;
         }
 
         // --- ReadScope: one shared lock pair for a whole read-only region ---
         //
-        // Acquires shared locks on BOTH adjacency maps (left before right --
+        // Acquires BOTH adjacency locks in shared mode (left before right --
         // the writer order of connect()) and hands out REFERENCES into the
-        // maps for its lifetime. Replaces sequences of get_right/get_left
+        // node map for its lifetime. Replaces sequences of get_right/get_left
         // calls that each paid a rwlock pair plus a full adjacency_set copy.
         //
         // HARD RULES for code running under a live scope:
@@ -955,35 +970,34 @@ namespace zelph::network
             ReadScope& operator=(ReadScope&&)      = delete;
 
             // Successors / outgoing edges of b -- the reference counterpart
-            // of Network::get_right (which reads _left; see there).
+            // of Network::get_right (which reads the left side; see there).
             const adjacency_set& right(const Node b) const
             {
-                const auto it = _n->_left.find(b);
-                return it == _n->_left.end() ? empty_set() : it->second;
+                const auto it = _n->_nodes.find(b);
+                return it == _n->_nodes.end() ? empty_set() : it->second.left;
             }
 
             // right() and exists() in ONE probe, for callers that ask both of
             // the same node -- nullptr IS "does not exist", since create()
-            // gives every node a _left entry and only removal takes it away.
+            // gives every node a left side and only removal takes it away.
             // The removal cascade asked three times per candidate (exists,
             // right, and right again inside parse_relation_scoped) while
             // do_find on these maps was 54 % of its profile.
             const adjacency_set* try_right(const Node b) const
             {
-                const auto it = _n->_left.find(b);
-                return it == _n->_left.end() ? nullptr : &it->second;
+                return _n->find_left(b);
             }
 
             // Predecessors / incoming edges of b (counterpart of get_left).
             const adjacency_set& left(const Node b) const
             {
-                const auto it = _n->_right.find(b);
-                return it == _n->_right.end() ? empty_set() : it->second;
+                const auto it = _n->_nodes.find(b);
+                return it == _n->_nodes.end() ? empty_set() : it->second.right;
             }
 
             bool exists(const Node a) const
             {
-                return _n->_left.find(a) != _n->_left.end();
+                return _n->find_left(a) != nullptr;
             }
 
             // Whether `fact`, which `relation` points to and which points
@@ -1047,14 +1061,14 @@ namespace zelph::network
         {
             {
                 std::shared_lock<std::shared_mutex> lock_left(_smtx_left);
-                if (_left.find(a) == _left.end())
+                if (find_left(a) == nullptr)
                 {
                     throw std::runtime_error("Network::set_synapse: node " + std::to_string(a) + " does not exist");
                 }
             }
             {
                 std::shared_lock<std::shared_mutex> lock_right(_smtx_right);
-                if (_right.find(b) == _right.end())
+                if (find_right(b) == nullptr)
                 {
                     throw std::runtime_error("Network::set_synapse: node " + std::to_string(b) + " does not exist");
                 }
@@ -1085,8 +1099,8 @@ namespace zelph::network
 
             {
                 std::shared_lock<std::shared_mutex> lock(_smtx_left);
-                auto                                it = _left.find(a);
-                if (it == _left.end() || it->second.count(b) == 0)
+                auto                                it = _nodes.find(a);
+                if (it == _nodes.end() || it->second.left.count(b) == 0)
                 {
                     throw std::runtime_error("Network::set_edge_weight: no synapse and no edge " + std::to_string(a) + " -> " + std::to_string(b));
                 }
@@ -1852,8 +1866,93 @@ namespace zelph::network
 #ifdef NDEBUG
     protected:
 #endif
-        adjacency_map _left;
-        adjacency_map _right;
+        // See node_entry. The map's keys are modified solely when both
+        // adjacency locks are held exclusively, and a side's sets are updated
+        // under that side's lock -- `left` under _smtx_left and `right` under
+        // _smtx_right. A load fills the map without those locks (load_left,
+        // load_right): no reads occur while a load is in progress.
+        node_map _nodes;
+
+        // The entries where either the left or right side is absent (see
+        // node_entry), written with the map: both stay 0 unless a partial
+        // load read one side of a node without the other.
+        std::size_t _absent_left{0};
+        std::size_t _absent_right{0};
+
+        // The left or the right side of `n`, or null if it lacks that side:
+        // `n` does not exist, or a partial load did not read that side. Under
+        // the lock of that side.
+        //
+        // The side itself is tested only while at least one entry lacks a
+        // side, ensuring that exists() reads no more than the key in each
+        // session that does not have a one-sided partial load.
+        adjacency_set* find_left(const Node n)
+        {
+            const auto it = _nodes.find(n);
+            return it == _nodes.end() || (_absent_left != 0 && it->second.left.is_absent()) ? nullptr : &it->second.left;
+        }
+        const adjacency_set* find_left(const Node n) const
+        {
+            const auto it = _nodes.find(n);
+            return it == _nodes.end() || (_absent_left != 0 && it->second.left.is_absent()) ? nullptr : &it->second.left;
+        }
+        adjacency_set* find_right(const Node n)
+        {
+            const auto it = _nodes.find(n);
+            return it == _nodes.end() || (_absent_right != 0 && it->second.right.is_absent()) ? nullptr : &it->second.right;
+        }
+        const adjacency_set* find_right(const Node n) const
+        {
+            const auto it = _nodes.find(n);
+            return it == _nodes.end() || (_absent_right != 0 && it->second.right.is_absent()) ? nullptr : &it->second.right;
+        }
+
+        // Gives `n` both sides, present and empty. The callers have ensured
+        // that `n` lacks a left side; a right side that a partial load read
+        // is emptied, so the node begins with no edges, just like every node
+        // created. Under both locks, held exclusively.
+        void create_entry(const Node n)
+        {
+            const auto [it, inserted] = _nodes.try_emplace(n);
+            if (inserted) return;
+            if (it->second.left.is_absent()) --_absent_left;
+            if (it->second.right.is_absent()) --_absent_right;
+            it->second.left  = adjacency_set{};
+            it->second.right = adjacency_set{};
+        }
+
+        // A side as a load reads it from the file, for a node whose entry
+        // might already hold the opposite side: a new entry holds the
+        // opposite side as absent until it is read too. A side read twice
+        // keeps the second reading.
+        void load_left(const Node n, adjacency_set&& adj)
+        {
+            const auto [it, inserted] = _nodes.try_emplace(n);
+            if (inserted)
+            {
+                it->second.right = adjacency_set::absent();
+                ++_absent_right;
+            }
+            else if (it->second.left.is_absent())
+            {
+                --_absent_left;
+            }
+            it->second.left = std::move(adj);
+        }
+        void load_right(const Node n, adjacency_set&& adj)
+        {
+            const auto [it, inserted] = _nodes.try_emplace(n);
+            if (inserted)
+            {
+                it->second.left = adjacency_set::absent();
+                ++_absent_left;
+            }
+            else if (it->second.right.is_absent())
+            {
+                --_absent_right;
+            }
+            it->second.right = std::move(adj);
+        }
 
         // Sparse edge-weight store, keyed by create_hash(a, b) of a directed edge.
         // Two interpretations share this store:

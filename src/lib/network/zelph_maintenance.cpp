@@ -3161,7 +3161,7 @@ size_t Zelph::save_predicate_slice(const std::string& filename, const std::vecto
         std::shared_lock<std::shared_mutex> lock_right(_pImpl->_smtx_right);
 
         const auto exists_unlocked = [this](const Node nd)
-        { return _pImpl->_left.find(nd) != _pImpl->_left.end(); };
+        { return _pImpl->find_left(nd) != nullptr; };
 
         std::vector<Node> pending;
 
@@ -3249,16 +3249,16 @@ size_t Zelph::save_predicate_slice(const std::string& filename, const std::vecto
 
         for (const Node p : predicates)
         {
-            const auto rels_it = _pImpl->_right.find(p);
-            if (rels_it == _pImpl->_right.end()) continue;
+            const adjacency_set* const rels_of = _pImpl->find_right(p);
+            if (rels_of == nullptr) continue;
 
-            for (const Node rel : rels_it->second)
+            for (const Node rel : *rels_of)
             {
-                const auto rel_left  = _pImpl->_left.find(rel);
-                const auto rel_right = _pImpl->_right.find(rel);
-                if (rel_left == _pImpl->_left.end() || rel_right == _pImpl->_right.end()) continue;
+                const adjacency_set* const rel_left  = _pImpl->find_left(rel);
+                const adjacency_set* const rel_right = _pImpl->find_right(rel);
+                if (rel_left == nullptr || rel_right == nullptr) continue;
 
-                if (rel_left->second.count(p) == 0) continue;
+                if (rel_left->count(p) == 0) continue;
 
                 // A query pattern is a fact of p in every structural sense and
                 // an answer to nothing, so it must not travel. The is_var test
@@ -3300,18 +3300,18 @@ size_t Zelph::save_predicate_slice(const std::string& filename, const std::vecto
                 // query candidate filters distinguish it
                 // (ReadScope::subject_is_predicate).
                 const bool is_fact_of_p =
-                    std::any_of(rel_left->second.begin(), rel_left->second.end(), [&](const Node candidate)
+                    std::any_of(rel_left->begin(), rel_left->end(), [&](const Node candidate)
                                 { return candidate != p
                                       && !Impl::is_var(candidate)
-                                      && rel_right->second.count(candidate) == 1; })
-                    || Impl::subject_is_predicate(rel, p, rel_right->second, rel_left->second);
+                                      && rel_right->count(candidate) == 1; })
+                    || Impl::subject_is_predicate(rel, p, *rel_right, *rel_left);
                 if (!is_fact_of_p) continue;
 
                 retain(rel, 0);
                 if (!refutation) ++facts;
-                for (const Node nd : rel_left->second)
+                for (const Node nd : *rel_left)
                     retain(nd, rel);
-                for (const Node nd : rel_right->second)
+                for (const Node nd : *rel_right)
                     retain(nd, rel);
             }
         }
@@ -3396,17 +3396,12 @@ size_t Zelph::save_predicate_slice(const std::string& filename, const std::vecto
             // travel in a slice of `in`.
             if (!Impl::is_hash(nd) && !is_condition_set && !is_rule_template(nd)) continue;
 
-            const auto left_it = _pImpl->_left.find(nd);
-            if (left_it != _pImpl->_left.end())
+            const auto entry = _pImpl->_nodes.find(nd);
+            if (entry != _pImpl->_nodes.end())
             {
-                for (const Node participant : left_it->second)
+                for (const Node participant : entry->second.left)
                     retain(participant, nd);
-            }
-
-            const auto right_it = _pImpl->_right.find(nd);
-            if (right_it != _pImpl->_right.end())
-            {
-                for (const Node participant : right_it->second)
+                for (const Node participant : entry->second.right)
                     retain(participant, nd);
             }
         }

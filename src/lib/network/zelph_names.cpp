@@ -1878,10 +1878,10 @@ size_t Zelph::Impl::cleanup_dangling_names()
     ankerl::unordered_dense::set<Node> valid_nodes;
     {
         std::shared_lock<std::shared_mutex> lock(_smtx_left);
-        valid_nodes.reserve(_left.size());
-        for (const auto& pair : _left)
+        valid_nodes.reserve(_nodes.size() - _absent_left);
+        for (const auto& pair : _nodes)
         {
-            valid_nodes.insert(pair.first);
+            if (!pair.second.left.is_absent()) valid_nodes.insert(pair.first);
         }
     }
 

@@ -52,7 +52,7 @@ Facts with multiple objects: may exist for every predicate (not recorded)
 ------------------------
 ```
 
-0.6 GiB of memory. The complete network the file was cut from needs 6.0 GiB, and the full dump behind that needs 223.7 GiB.
+0.6 GiB of memory. The complete network the file was cut from needs 5.5 GiB, and the full dump behind that needs 223.7 GiB.
 
 ## The first result, in three commands
 
@@ -252,7 +252,7 @@ The file is a **predicate slice**: every `P279` statement of the dump, the class
   wrong, or this network does not carry the class hierarchy.
   ```
 - English labels are missing for some classes, because the dump does not carry one for them. They appear as bare IDs (`Q30185` above).
-- The **pruned** dump has whole domains removed (biology, chemistry, astronomy and more) to keep the full network within 6.0 GiB. Its class hierarchy is correspondingly smaller: 1.11 million `P279` edges against 5.17 million in the complete dump. Numbers from a pruned file are not the numbers of Wikidata. If a slice of the complete dump is published, it is named without `-pruned` and used exactly the same way.
+- The **pruned** dump has whole domains removed (biology, chemistry, astronomy and more) to keep the full network within 5.5 GiB. Its class hierarchy is correspondingly smaller: 1.11 million `P279` edges against 5.17 million in the complete dump. Numbers from a pruned file are not the numbers of Wikidata. If a slice of the complete dump is published, it is named without `-pruned` and used exactly the same way.
 
 ## Reproducibility
 

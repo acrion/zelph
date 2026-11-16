@@ -132,9 +132,9 @@ on the walk path, which is itself faster than it was before this project.
 
 ## ReadScope: One Lock Pair per Read Region
 
-`Network::ReadScope` acquires shared locks on both adjacency maps (left
+`Network::ReadScope` acquires both adjacency locks in shared mode (left
 before right — the writer order of `connect()`) and hands out _references_
-into the maps for its lifetime, replacing sequences of `get_right`/`get_left`
+into the node map for its lifetime, replacing sequences of `get_right`/`get_left`
 calls that each paid a rwlock pair plus a full `adjacency_set` copy. Its
 hard rules are absolute for any code running under a live scope: never write
 to the network, never take another network lock (no nested scope), and never
@@ -269,7 +269,7 @@ is simply as large as the data going into it.
 
 The map, in dependency order:
 [`network.hpp`](https://github.com/acrion/zelph/blob/main/src/lib/network/network.hpp)
-(adjacency maps, `connect`, hashing, `ReadScope`, `fact_edges_hold`,
+(the node map, `connect`, hashing, `ReadScope`, `fact_edges_hold`,
 `collect_anchored_facts`);
 [`zelph.hpp`](https://github.com/acrion/zelph/blob/main/src/lib/network/zelph.hpp) /
 [`zelph.cpp`](https://github.com/acrion/zelph/blob/main/src/lib/network/zelph.cpp)

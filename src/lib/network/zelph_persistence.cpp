@@ -189,8 +189,9 @@ void Zelph::Impl::clear_loaded_state()
     std::unique_lock<std::shared_mutex> lock_node_name(_mtx_node_of_name);
     std::unique_lock<std::shared_mutex> lock_name_node(_mtx_name_of_node);
 
-    _left.clear();
-    _right.clear();
+    _nodes.clear();
+    _absent_left  = 0;
+    _absent_right = 0;
     _weights.clear();
     _name_of_node.clear();
     _node_of_name.clear();
@@ -254,7 +255,9 @@ void Zelph::Impl::loadSmallData(const ZelphImpl::Reader& impl)
 void Zelph::Impl::loadLeftRightChunks(kj::BufferedInputStreamWrapper& bufferedInput, const ::capnp::ReaderOptions& options, uint32_t leftChunkCount, uint32_t rightChunkCount, const detail::chunk_selector* leftSelection, const detail::chunk_selector* rightSelection)
 {
     #ifdef CLEAR_ON_LOAD
-    _left.clear();
+    _nodes.clear();
+    _absent_left  = 0;
+    _absent_right = 0;
     #endif
     for (uint32_t chunkIdx = 0; chunkIdx < leftChunkCount; ++chunkIdx)
     {
@@ -274,11 +277,11 @@ void Zelph::Impl::loadLeftRightChunks(kj::BufferedInputStreamWrapper& bufferedIn
                 {
                     adj.insert(n);
                 }
-                _left[pair.getNode()] = std::move(adj);
+                load_left(pair.getNode(), std::move(adj));
             }
         }
     #ifndef NDEBUG
-        io::OutputStream(_output, io::OutputChannel::Diagnostic, true) << "Loaded left chunk " << chunkIdx + 1 << "/" << leftChunkCount << ", current _left size=" << _left.size();
+        io::OutputStream(_output, io::OutputChannel::Diagnostic, true) << "Loaded left chunk " << chunkIdx + 1 << "/" << leftChunkCount << ", current left size=" << _nodes.size() - _absent_left;
     #else
         io::OutputStream(_output, io::OutputChannel::Diagnostic, false) << "." << std::flush;
     #endif
@@ -287,9 +290,6 @@ void Zelph::Impl::loadLeftRightChunks(kj::BufferedInputStreamWrapper& bufferedIn
     io::OutputStream(_output, io::OutputChannel::Diagnostic, false) << std::endl;
     #endif
 
-    #ifdef CLEAR_ON_LOAD
-    _right.clear();
-    #endif
     for (uint32_t chunkIdx = 0; chunkIdx < rightChunkCount; ++chunkIdx)
     {
         ::capnp::PackedMessageReader chunkMessage(bufferedInput, options);
@@ -308,11 +308,11 @@ void Zelph::Impl::loadLeftRightChunks(kj::BufferedInputStreamWrapper& bufferedIn
                 {
                     adj.insert(n);
                 }
-                _right[pair.getNode()] = std::move(adj);
+                load_right(pair.getNode(), std::move(adj));
             }
         }
     #ifndef NDEBUG
-        io::OutputStream(_output, io::OutputChannel::Diagnostic, true) << "Loaded right chunk " << chunkIdx + 1 << "/" << rightChunkCount << ", current _right size=" << _right.size();
+        io::OutputStream(_output, io::OutputChannel::Diagnostic, true) << "Loaded right chunk " << chunkIdx + 1 << "/" << rightChunkCount << ", current right size=" << _nodes.size() - _absent_right;
     #else
         io::OutputStream(_output, io::OutputChannel::Diagnostic, false) << "." << std::flush;
     #endif
@@ -475,11 +475,11 @@ void Zelph::Impl::loadLeftRightChunkFromPath(const std::string& source_path, uin
 
                 if (std::string_view(which_name) == "left")
                 {
-                    _left[pair.getNode()] = std::move(adj);
+                    load_left(pair.getNode(), std::move(adj));
                 }
                 else
                 {
-                    _right[pair.getNode()] = std::move(adj);
+                    load_right(pair.getNode(), std::move(adj));
                 }
             }
         }
@@ -487,7 +487,7 @@ void Zelph::Impl::loadLeftRightChunkFromPath(const std::string& source_path, uin
     #ifndef NDEBUG
         io::OutputStream(_output, io::OutputChannel::Diagnostic, true)
             << "Loaded " << which_name << " chunk " << chunk_index + 1 << "/" << section_count
-            << ", current size=" << (std::string_view(which_name) == "left" ? _left.size() : _right.size());
+            << ", current size=" << _nodes.size() - (std::string_view(which_name) == "left" ? _absent_left : _absent_right);
     #else
         io::OutputStream(_output, io::OutputChannel::Diagnostic, false) << "." << std::flush;
     #endif
@@ -1031,7 +1031,7 @@ void Zelph::Impl::saveToFile(const std::string& filename, const ankerl::unordere
         return _weights.size();
     }();
 
-    io::OutputStream(_output, io::OutputChannel::Diagnostic, true) << "Saving: probabilities size=" << weight_count << ", left size=" << _left.size() << ", right size=" << _right.size();
+    io::OutputStream(_output, io::OutputChannel::Diagnostic, true) << "Saving: probabilities size=" << weight_count << ", left size=" << _nodes.size() - _absent_left << ", right size=" << _nodes.size() - _absent_right;
     io::OutputStream(_output, io::OutputChannel::Diagnostic, true) << "Saving: name_of_node outer size=" << _name_of_node.size() << ", node_of_name outer size=" << _node_of_name.size();
     io::OutputStream(_output, io::OutputChannel::Diagnostic, true) << "Saving: string pool size=" << _string_pool.size();
 
@@ -1170,8 +1170,22 @@ void Zelph::Impl::saveToFile(const std::string& filename, const ankerl::unordere
     }
     impl.setNodeOfNameChunkCount(static_cast<uint32_t>(nodeOfNameChunkTotal));
 
-    const size_t leftKept  = count_kept(_left, _left.size(), filtering);
-    const size_t rightKept = count_kept(_right, _right.size(), filtering);
+    // A side that a partial load did not read remains unwritten: its
+    // section lacks an entry for the node, just as the file it came from
+    // contained none.
+    const auto count_kept_side = [&](adjacency_set node_entry::* const side, const size_t unfiltered)
+    {
+        if (!filtering) return unfiltered;
+        size_t n = 0;
+        for (const auto& [nd, entry] : _nodes)
+        {
+            if (kept(nd) && !(entry.*side).is_absent()) ++n;
+        }
+        return n;
+    };
+
+    const size_t leftKept  = count_kept_side(&node_entry::left, _nodes.size() - _absent_left);
+    const size_t rightKept = count_kept_side(&node_entry::right, _nodes.size() - _absent_right);
 
     size_t leftChunkCount  = (leftKept + chunkSize - 1) / chunkSize;
     size_t rightChunkCount = (rightKept + chunkSize - 1) / chunkSize;
@@ -1200,8 +1214,8 @@ void Zelph::Impl::saveToFile(const std::string& filename, const ankerl::unordere
 
     ::capnp::writePackedMessage(output, mainMessage);
 
-    // Chunk _left
-    auto leftIt = _left.begin();
+    // Chunk the left sides
+    auto leftIt = _nodes.begin();
     for (size_t chunkIdx = 0; chunkIdx < leftChunkCount; ++chunkIdx)
     {
         const size_t thisChunkSize = std::min(chunkSize, leftKept - chunkIdx * chunkSize);
@@ -1215,11 +1229,11 @@ void Zelph::Impl::saveToFile(const std::string& filename, const ankerl::unordere
         size_t pIdx     = 0;
         for (size_t i = 0; i < thisChunkSize; ++i, ++leftIt)
         {
-            while (leftIt != _left.end() && !kept(leftIt->first))
+            while (leftIt != _nodes.end() && (!kept(leftIt->first) || leftIt->second.left.is_absent()))
                 ++leftIt;
 
             pairList[pIdx].setNode(leftIt->first);
-            const std::vector<Node> sorted = kept_neighbours(leftIt->second);
+            const std::vector<Node> sorted = kept_neighbours(leftIt->second.left);
             auto                    adj    = pairList[pIdx].initAdj(sorted.size());
             for (size_t j = 0; j < sorted.size(); ++j)
             {
@@ -1230,8 +1244,8 @@ void Zelph::Impl::saveToFile(const std::string& filename, const ankerl::unordere
         ::capnp::writePackedMessage(output, chunkMessage);
     }
 
-    // Chunk _right
-    auto rightIt = _right.begin();
+    // Chunk the right sides
+    auto rightIt = _nodes.begin();
     for (size_t chunkIdx = 0; chunkIdx < rightChunkCount; ++chunkIdx)
     {
         const size_t thisChunkSize = std::min(chunkSize, rightKept - chunkIdx * chunkSize);
@@ -1245,11 +1259,11 @@ void Zelph::Impl::saveToFile(const std::string& filename, const ankerl::unordere
         size_t pIdx     = 0;
         for (size_t i = 0; i < thisChunkSize; ++i, ++rightIt)
         {
-            while (rightIt != _right.end() && !kept(rightIt->first))
+            while (rightIt != _nodes.end() && (!kept(rightIt->first) || rightIt->second.right.is_absent()))
                 ++rightIt;
 
             pairList[pIdx].setNode(rightIt->first);
-            const std::vector<Node> sorted = kept_neighbours(rightIt->second);
+            const std::vector<Node> sorted = kept_neighbours(rightIt->second.right);
             auto                    adj    = pairList[pIdx].initAdj(sorted.size());
             for (size_t j = 0; j < sorted.size(); ++j)
             {
@@ -1469,7 +1483,7 @@ bool Zelph::Impl::loadFromFile(const std::string& filename, bool& negation_condi
         // Enable predicate-index sidecar I/O for this file and take the
         // validation snapshot of the freshly loaded, unmodified graph.
         _pidx_base       = filename;
-        _pidx_node_count = _left.size();
+        _pidx_node_count = _nodes.size() - _absent_left;
         _pidx_last       = _last;
         _pidx_last_var   = _last_var;
         {

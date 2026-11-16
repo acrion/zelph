@@ -132,15 +132,43 @@ namespace zelph::network
             adjacency_set objects;
         };
 
+        // Each node, in the sequence defined by the node map. An entry of
+        // which a partial load read solely the right side is not
+        // considered a node, as exists() says (see node_entry).
         class AllNodeView
         {
         private:
-            const adjacency_map& _left_ref;
+            const node_map& _nodes;
 
         public:
-            explicit AllNodeView(const adjacency_map& left) : _left_ref(left) {}
-            auto begin() const { return _left_ref.begin(); }
-            auto end() const { return _left_ref.end(); }
+            class iterator
+            {
+            public:
+                iterator(node_map::const_iterator it, node_map::const_iterator end) : _it(it), _end(end) { skip_absent(); }
+                const node_map::value_type& operator*() const { return *_it; }
+                const node_map::value_type* operator->() const { return &*_it; }
+                iterator&                   operator++()
+                {
+                    ++_it;
+                    skip_absent();
+                    return *this;
+                }
+                bool operator==(const iterator& other) const { return _it == other._it; }
+                bool operator!=(const iterator& other) const { return _it != other._it; }
+
+            private:
+                void skip_absent()
+                {
+                    while (_it != _end && _it->second.left.is_absent())
+                        ++_it;
+                }
+                node_map::const_iterator _it;
+                node_map::const_iterator _end;
+            };
+
+            explicit AllNodeView(const node_map& nodes) : _nodes(nodes) {}
+            iterator begin() const { return {_nodes.begin(), _nodes.end()}; }
+            iterator end() const { return {_nodes.end(), _nodes.end()}; }
             // Usage: for (auto it = view.begin(); it != view.end(); ++it) { Node nd = it->first; }
         };
 

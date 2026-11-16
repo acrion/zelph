@@ -45,7 +45,7 @@ Several predicates go into one file by listing them:
 wikidata-> .save-predicates wikidata-20260309-all-pruned-small-P279-P31.bin P279 P31
 ```
 
-What this costs, measured on the small pruned network (26.5 million nodes, 6.0 GiB resident): **six seconds and a fraction of a GiB on top of the loaded network**. The pass is linear in the size of the network and the extra memory is one entry per retained node, so on the complete dump expect minutes rather than seconds, and a few gigabytes on top of the 224 — plan the slice as part of the same session that already has the network loaded, not as a separate load.
+What this costs, measured on the small pruned network (26.5 million nodes, 5.5 GiB resident): **six seconds and a fraction of a GiB on top of the loaded network**. The pass is linear in the size of the network and the extra memory is one entry per retained node, so on the complete dump expect minutes rather than seconds, and a few gigabytes on top of the 224 — plan the slice as part of the same session that already has the network loaded, not as a separate load.
 
 Which predicates are worth slicing is a content question, not a technical one. `P279` alone answers everything about the class hierarchy, which is where the documented demand is.
 
