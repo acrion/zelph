@@ -328,7 +328,7 @@ namespace zelph::network
         // fast path still writes nothing shared.
         alignas(64) mutable std::atomic<std::uint32_t> _starving{0};
 
-        alignas(64) Activation         _activation{Activation::Relu};
+        alignas(64) Activation _activation{Activation::Relu};
         std::vector<std::vector<Node>> _nodes;
 
         // Weight matrix k, and the mask beside it, hold one entry per

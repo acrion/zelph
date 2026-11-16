@@ -124,11 +124,11 @@ namespace zelph::network
 
     private:
         std::array<std::atomic<std::atomic<NeuralNet*>*>, max_chunks> _chunks{};
-        std::atomic<std::size_t>                                     _count{0};
+        std::atomic<std::size_t>                                      _count{0};
 
         // The owner's alone: the storage located behind the chunks, and
         // each net ever added, retired or not.
         std::vector<std::unique_ptr<std::atomic<NeuralNet*>[]>> _storage;
-        std::vector<std::unique_ptr<NeuralNet>>                  _nets;
+        std::vector<std::unique_ptr<NeuralNet>>                 _nets;
     };
 }

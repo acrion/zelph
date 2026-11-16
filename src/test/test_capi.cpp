@@ -1775,7 +1775,7 @@ TEST_CASE("capi: a load retires the handles a thread is evaluating without freei
     std::atomic<bool> refused{false};
     std::atomic<int>  failures{0};
     std::thread       reader([&]
-                       {
+                             {
         while (!refused.load())
         {
             zelph_node top   = 0;
@@ -1815,7 +1815,7 @@ TEST_CASE("capi: the net registry grows past a chunk while another thread evalua
     std::atomic<bool> compiling{true};
     std::atomic<int>  failures{0};
     std::thread       reader([&]
-                       {
+                             {
         while (compiling.load())
         {
             zelph_node top   = 0;
