@@ -433,11 +433,11 @@ The other three are documented:
 - **A native mention of a ground rule.** A native statement that mentions a plain single-condition
   ground rule turns that rule off, because both are one node ([Mentioning a Rule Is Not Asserting
   It](../logic.md#mentioning-a-rule-is-not-asserting-it)). `ace` builds every one-condition rule from
-  Janet as a one-element condition set, which stays in force after a typed mention of the same text,
-  unless the user typed the plain rule before: then `ace`'s rule meets that rule, and the mention takes
-  it out of force ([DEC-RECORD-SINGLE](decisions.md#dec-record-single)); a typed mention of a rule
-  with variables is another node and leaves the ACE rule in force (Z132). The general fix is the
-  category-4 item [K1-P1](prerequisites.md#k1-p1-a-mention-switches-a-typed-ground-rule-off).
+  Janet as a one-element condition set, which stays in force following a typed mention of the
+  identical text, even beside a plain ground rule the user entered earlier, which stands as an
+  independent rule ([DEC-RECORD-SINGLE](decisions.md#dec-record-single)); a typed mention of a rule
+  involving variables forms a separate node and leaves the ACE rule in force (Z132). The general fix
+  is the category-4 item [K1-P1](prerequisites.md#k1-p1-a-mention-switches-a-typed-ground-rule-off).
 
 ### Tests That Pin Interop
 
@@ -493,7 +493,7 @@ conditional ("If John waits then if Mary sleeps then Bill runs.") is flattened t
     true
     zelph> ace If John waits then every man sleeps. Bill is a man. Does Bill sleep?
 
-    (*{(John waits nil)} ~ conjunction) => ((*{(X ~ man)} ~ conjunction) => (X sleeps nil))
+    (*@{(John waits nil)} ~ conjunction) => ((*{(X ~ man)} ~ conjunction) => (X sleeps nil))
     Bill ~ man
     Answer: It is not provable that Bill sleeps.
     zelph> ace John waits. Does Bill sleep?
@@ -511,7 +511,8 @@ Every rule `ace` writes is one `=>` fact built inside `zelph/dedup-rule`; a rule
 gets a one-element condition set tagged `~ conjunction`, so that every rule `ace` writes has a
 condition set; a contradiction it meets is recorded as that of a plain single condition is
 ([DEC-RECORD-SINGLE](decisions.md#dec-record-single)); `ace/zelph-of` prints it exactly as zelph
-lists it ([DEC-ONE-CONDITION-PRINT](decisions.md#dec-one-condition-print)). The ground outer
+lists it ([DEC-ONE-CONDITION-PRINT](decisions.md#dec-one-condition-print)), with the collection
+marker `@` preceding the brace where the condition is ground, as seen in the switch above. The ground outer
 condition `John waits nil` is a rule pattern until "John waits." claims it. Rule variables are named
 `X`, `Y`, `Z`, `A`, … in order of first occurrence, conditions before conclusions; a class condition
 `X ~ man` has no variable of its own and takes no letter, so the flattened rule names its dog `Y`
@@ -522,7 +523,7 @@ the generator:
 
 ```
 zelph> .lang ace
-ace> (*{(John waits nil)} ~ conjunction) => ((*{(X ~ man)} ~ conjunction) => (X sleeps nil))
+ace> (*@{(John waits nil)} ~ conjunction) => ((*{(X ~ man)} ~ conjunction) => (X sleeps nil))
 ace> Bill ~ man
 ace> X sleeps nil
 ace> John waits nil
@@ -532,7 +533,7 @@ ace> .list-rules
 Listing all rules:
 ------------------------
 (*{(X ~ man)} ~ conjunction) => (X sleeps nil)
-(*{(John waits nil)} ~ conjunction) => ((*{(X ~ man)} ~ conjunction) => (X sleeps nil))
+(*@{(John waits nil)} ~ conjunction) => ((*{(X ~ man)} ~ conjunction) => (X sleeps nil))
 ------------------------
 ace> X sleeps nil
 Answer: Bill sleeps nil
@@ -781,7 +782,7 @@ statement without asserting it. From M8 the verb of a that-clause and the modal 
 
     believes ~ opaque
     John believes (Mary sleeps nil)
-    (*{(John believes (Mary sleeps nil))} ~ conjunction) => (John waits nil)
+    (*@{(John believes (Mary sleeps nil))} ~ conjunction) => (John waits nil)
     Answer: It is not provable that Mary sleeps.
     Answer: Yes. John waits.
     ```
@@ -1027,7 +1028,7 @@ they are written in; these rows say which parts they use and which rules they ob
 |---|---|---|---|---|---|
 | Z130 | rule builders: `zelph/dedup-rule`, the `zelph/rule` macro, `zelph/rule*`, `zelph/build-rule` | every rule | the rule idiom | M4 | **used by the front end**: every rule is one `=>` fact carrying all conclusions, built inside `zelph/dedup-rule` with every `zelph/var` created in the thunk. `dedup-rule` leaves nothing when its thunk fails, prefers a rule in force over one only mentioned when it looks for a duplicate, and refuses a thunk that returns no `=>` node (P-rule-api, built). The other builders have no `ace` use: `zelph/rule` does no deduplication and returns the condition set rather than the `=>` node |
 | Z131 | refusals inside a rule build | — | an invariant of the modules | M4 | **constraint**: inside a rule-building thunk `zelph/query`, `zelph/cluster` (even without an argument), `zelph/cluster-drop`, `zelph/import`, `zelph/load`, `zelph/save`, the run functions and every nested rule builder are refused; `zelph/exists`, `zelph/resolve` and `zelph/var` are allowed. So `ace` never probes, queries or imports while a rule is built, and a generator's inner rule is a `=>` fact written in the same thunk |
-| Z132 | `zelph/rule-text` | — | — | — | **no direct use**: the parser wraps every `=>` that stands inside another statement in it, so a native mention of a rule claims none of its parts; a generator's inner rule is marked by `dedup-rule` itself, and mentions from M8 go through `zelph/mention`. A native mention of a plain single-condition ground rule turns that rule off (one hash-consed node, documented); `ace`'s one-element set form stays in force after a typed mention of the same text (unless it met a plain rule typed before, [Traps](#traps)), a ground comma-list rule is a new node per statement, and a typed mention of a rule with variables is another node |
+| Z132 | `zelph/rule-text` | — | — | — | **no direct use**: the parser wraps every `=>` that stands inside another statement in it, so a native mention of a rule claims none of its parts; a generator's inner rule is marked by `dedup-rule` itself, and mentions from M8 go through `zelph/mention`. A native mention of a plain single-condition ground rule turns that rule off (one hash-consed node, documented); `ace`'s one-element set form stays in force following a typed mention of the identical text, a ground comma-list rule is a new node per statement, and a typed mention of a rule containing variables is a distinct node |
 | Z133 | writes on the main thread only | — | — | — | **constraint**: every graph write, rule build and engine state change is main-thread only; `ace` writes only from the main thread (its handlers and API calls) and starts no threads; it reads names with `zelph/lookup` (P-lookup, built), which never creates |
 | Z134 | `zelph/refute`, `zelph/negate`, `zelph/path`, `zelph/path-guard`, `zelph/set`, `zelph/list`, `zelph/collection` | the plan's refutations, NAF conditions, paths, `!=` guards, sets, lists, condition sets | plan terms ([Terms](api.md#terms)) | M1-M7 | **used by the front end** as the Janet side of the plan's terms. A keyword handler's `zelph/fact` claims the marked parts it contains (P-claim, built); `zelph/refute` claims its marking and nothing of its fact, which it writes as a mention when it creates it (DEC-REFUTE-ROUTES) |
 
@@ -1166,13 +1167,12 @@ Decision DEC-MODAL; host items P-opaque and P-set-match, both built. The mapping
 - An opaque position holds a mention, also when a rule's firing writes it, and a rule condition
   matches inside it by deep unification; a refutation or a refuted fact inside an opaque argument is a
   mention and contradicts nothing.
-- A plain single-condition ground rule that is both asserted and mentioned is one node and not in
-  force; a ground comma-list rule and `ace`'s one-element-set ground rule, built from Janet, stay in
-  force after a typed mention of the same text, unless `ace`'s rule met a plain rule typed before
-  ([Traps](#traps)). A rule written through `zelph/mention` is a mention:
-  not in force until something claims it, and no data for a rule over rules (DEC-MENTION-RULE). A natively typed plain
-  ground rule is still one node with its plain mention (K1-P1), so `:sub/ground-conditional` stays
-  refused until the asserted-rule record exists.
+- A plain single-condition ground rule that is both asserted and mentioned forms a single node and
+  is not in force; a ground comma-list rule and `ace`'s one-element-set ground rule, built from
+  Janet, stay in force following a typed mention of the identical text. A rule written through
+  `zelph/mention` is a mention: not in force until something claims it, and no data for a rule over
+  rules (DEC-MENTION-RULE). A natively typed plain ground rule is still one node with its plain
+  mention (K1-P1), so `:sub/ground-conditional` stays refused until the asserted-rule record exists.
 - A statement whose object is a rule with variables is rule text: no query sees it, so "John believes
   that every man waits." is stored, but the question whether John believes it is not provable until
   zelph can quote rules (Z145). A rule condition holding a rule with variables binds the parts of a

@@ -25,6 +25,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #include "node_to_string.hpp"
 
+#include "network/container_reading.hpp"
 #include "network/fact_structure.hpp"
 #include "network/rule_identity.hpp"
 #include "network/zelph.hpp"
@@ -1027,7 +1028,38 @@ void zelph::string::node_to_string(const network::Zelph* const z, std::string& r
         // not enclosed in a set, a different rule, and one where contradictions
         // are never recorded. The set is displayed in its explicit form,
         // `(*{(X p Y)} ~ conjunction)`, which builds that set again.
-        const bool explicit_set = as_list && sorted_elements.size() == 1;
+        //
+        // So is a set of conditions that is a set constant, which the explicit
+        // form builds from ground conditions: the comma list read back builds a
+        // collection, a distinct node, and the rule over it is a rule in its
+        // own right (rule_identity.cpp reads the set constant via its node,
+        // just as a variable bound at the subject of a ground rule does).
+        // `(*{(c q d) (a p b)} ~ conjunction) => (e f g)` builds the identical
+        // set constant, which is hash-consed, and the identical rule.
+        const bool explicit_set = as_list && (sorted_elements.size() == 1 || z->is_set_constant(resolved));
+
+        // The explicit form names the set through the literal that builds it,
+        // and the brace builds a collection solely when a member holds a
+        // variable (Zelph::set). A collection consisting of a single ground
+        // condition, which a program builds for a rule with one condition,
+        // printed as `(*{(a p b)} ~ conjunction)`, and that line, when read
+        // back, built the set constant of the condition, a distinct node: the
+        // rule over it stood beside the rule that was printed, functioning as
+        // a second rule that fires alike. Such a collection prints with its
+        // marker, `(*@{(a p b)} ~ conjunction)`, which builds a collection
+        // once more, and the line read back is the rule that was printed. The
+        // members asked are those the collection holds, not the ones a binding
+        // resolves them to: a premise prints a pattern using its bindings, and
+        // that pattern matched a set of conditions of either kind via its
+        // members.
+        const bool marked_collection = explicit_set && !network::Zelph::is_hash(resolved) && [&]
+        {
+            const std::vector<network::Node>        held = network::container_members(z, resolved);
+            const std::unordered_set<network::Node> members(held.begin(), held.end());
+            return !z->kind_unknowable(members)
+                && std::none_of(members.begin(), members.end(), [&](const network::Node m)
+                                { return z->set_pattern_variables(m) != nullptr; });
+        }();
 
         // A COLLECTION prints with its own marker, because that is what it
         // is: a container with an identity, which `{...}` re-entered would
@@ -1055,7 +1087,7 @@ void zelph::string::node_to_string(const network::Zelph* const z, std::string& r
         const bool bare_brace = z->is_set_constant(resolved) || is_conjunction
                              || (z->is_rule_template(resolved) ? as_consequence() && z->is_set_pattern(resolved) : z->is_set_pattern(resolved));
 
-        result     = as_typed_conditions ? "" : (explicit_set ? "(*{" : (as_list ? "(" : (bare_brace ? "{" : "@{")));
+        result     = as_typed_conditions ? "" : (explicit_set ? (marked_collection ? "(*@{" : "(*{") : (as_list ? "(" : (bare_brace ? "{" : "@{")));
         bool first = true;
 
         // A rendering that already carries a scheme's own delimiters is
@@ -1067,7 +1099,7 @@ void zelph::string::node_to_string(const network::Zelph* const z, std::string& r
 
         for (network::Node e : sorted_elements)
         {
-            if (!first) result += comma_list ? ", " : " ";
+            if (!first) result += comma_list && !explicit_set ? ", " : " ";
             std::string elem_str;
             elem_ctx.self_delimited = false;
             node_to_string(z, elem_str, lang, e, max_objects, variables, resolved, child_history, &elem_ctx);

@@ -1013,14 +1013,16 @@ since 2026-10-15 the engine records a contradiction of a rule with a plain singl
 records one of a rule whose single condition stands in a one-element condition set, the condition
 counting as the only member, so a denial, a conclusion that meets a refuted fact and a refused
 consequence are recorded once in either form. Such a rule lists and prints as `(*{(X ~ man)} ~ conjunction) => …`, which
-re-enters as the same rule ([DEC-ONE-CONDITION-PRINT](decisions.md#dec-one-condition-print)); `((X ~ man)) => …` or `(X ~ man) => …` typed natively on a graph that lacks the rule builds the
+re-enters as the same rule ([DEC-ONE-CONDITION-PRINT](decisions.md#dec-one-condition-print)); with a ground condition, it lists and prints with the collection
+marker, `(*@{(John waits nil)} ~ conjunction) => …`, where the brace by itself would construct a set constant; `((X ~ man)) => …` or `(X ~ man) => …` typed natively on a graph that lacks the rule builds the
 plain rule instead (the parentheses only group), which `.list-rules` shows as `(X ~ man) => …`;
 `ace/zelph-of` prints what `.list-rules` shows for the rule `ace` builds, so it never prints those forms. This
 holds for every rule `ace` writes: rules, denials, helper rules and the inner rules of a generator.
 On a graph that already holds a one-condition rule in force, in either form, each of these spellings, and the
-idiom too, meets that rule and adds nothing: a rule typed natively in the plain form before stays
-plain, and its contradictions are recorded as those of the set form are
-([DEC-RECORD-SINGLE](decisions.md#dec-record-single)).
+idiom as well, meets that rule and adds nothing when the condition holds a variable: a rule typed
+natively in the plain form before remains plain, and its contradictions are recorded just as those of
+the set form are ([DEC-RECORD-SINGLE](decisions.md#dec-record-single)). With a ground condition, the
+plain rule and the set form represent two distinct rules, which fire alike and are recorded alike.
 The thunk returns the `=>` node. `ace` never uses `zelph/rule`, because it does no deduplication and
 returns the condition set rather than the `=>` node, and it never writes a fact that names a rule
 node, which would take the rule out of force. A head whose predicate is a variable is bound by a
@@ -1138,7 +1140,7 @@ nested conditional is flattened.
 
 | Shape | `:switch` (default) | `:generator` (tests) | `:flatten` |
 |---|---|---|---|
-| `(:imp A {(:imp B C)})`, a switch ("If John waits then every man sleeps.") | the head `(:imp {:if Pats(B) :then Heads(C)})`: `(*{(John waits nil)} ~ conjunction) => ((*{(X ~ man)} ~ conjunction) => (X sleeps nil))`; applied recursively, so a chain of switches is a generator of generators | as `:switch` | `(:imp A∪B C)` |
+| `(:imp A {(:imp B C)})`, a switch ("If John waits then every man sleeps.") | the head `(:imp {:if Pats(B) :then Heads(C)})`: `(*@{(John waits nil)} ~ conjunction) => ((*{(X ~ man)} ~ conjunction) => (X sleeps nil))`; applied recursively, so a chain of switches is a generator of generators | as `:switch` | `(:imp A∪B C)` |
 | `(:imp A {(:imp B C)})`, A declares a referent and the inner rule uses none of the then-box's referents ("Every man sees every dog.", corpus 84; 88 accepted corpus cases, all with an outer referent) | `(:imp A∪B C)`: B's referents and conditions merged into A → `((X ~ man), (Y ~ dog)) => (X sees Y)` | the generator `(A) => ((B) => C)`, one generated rule per outer binding | as `:switch` |
 | `(:imp A {(:imp B C)})`, the inner rule fully ground ("If John waits then if Mary sleeps then Bill runs.") | flattened in every mode: a ground generator never fires (typed natively, it also takes an identical ground rule typed earlier out of force, the two being one hash-consed node; built from Janet, as `ace` would build it, it leaves that rule in force) | flattened | flattened |
 | a then-box with other conditions beside an inner implication that uses none of the then-box's referents | under a switch: one `=>` fact whose heads are the atoms of the rest and the inner rule (a mixed head); otherwise split into `(:imp A {rest})` and `(:imp A∪B C)` | mixed head | split |
@@ -1163,7 +1165,7 @@ so such a conditional is flattened.
     zelph> ace If John waits then every man sleeps. Bill is a man. John waits.
     Does Bill sleep?
 
-    (*{(John waits nil)} ~ conjunction) => ((*{(X ~ man)} ~ conjunction) => (X sleeps nil))
+    (*@{(John waits nil)} ~ conjunction) => ((*{(X ~ man)} ~ conjunction) => (X sleeps nil))
     Bill ~ man
     John waits nil
     Answer: Yes. Bill sleeps.
@@ -1173,7 +1175,7 @@ The same generator in today's zelph: before John waits, nothing sleeps; the clai
 puts the inner rule in force, which then fires for Bill.
 
 ```
-zelph> (*{(John waits nil)} ~ conjunction) => ((*{(X ~ man)} ~ conjunction) => (X sleeps nil))
+zelph> (*@{(John waits nil)} ~ conjunction) => ((*{(X ~ man)} ~ conjunction) => (X sleeps nil))
 zelph> Bill ~ man
 zelph> X sleeps nil
 zelph> John waits nil
@@ -1824,7 +1826,7 @@ the tests use, are on [Constructs and Refusals](constructs.md#the-construct-tabl
 | `data/real`, `data/measured` | John's height is 1.8. | refused, no route | — |
 | `rule/horn` | Every man is a human. | `(*{(X ~ man)} ~ conjunction) => (X ~ human)` | M4 |
 | `rule/generative-head` | Every man owns a dog. | `(*{(X ~ man)} ~ conjunction) => (X owns Y) (Y ~ dog)` | M4 |
-| `rule/nested` | Every man sees every dog. If John waits then every man sleeps. | flattened `((X ~ man), (Y ~ dog)) => (X sees Y)`; the generator `(*{(John waits nil)} ~ conjunction) => ((*{(X ~ man)} ~ conjunction) => (X sleeps nil))` | M4 |
+| `rule/nested` | Every man sees every dog. If John waits then every man sleeps. | flattened `((X ~ man), (Y ~ dog)) => (X sees Y)`; the generator `(*@{(John waits nil)} ~ conjunction) => ((*{(X ~ man)} ~ conjunction) => (X sleeps nil))` | M4 |
 | `rule/negated`, `neg/not-every` | Not every man waits. | `Man-<h> ~ man`, `¬(Man-<h> waits nil)` | M4 |
 | `rule/in-body` | If every cat sleeps then a bird sings. | refused (DEC-STRATA) | — |
 | `rule/in-question` | Is it true that every dog is an animal? | a guarded hypothetical check in `ace:q` | M4 |
@@ -1836,7 +1838,7 @@ the tests use, are on [Constructs and Refusals](constructs.md#the-construct-tabl
 | `neg/fact` | John does not wait. | `¬(John waits nil)` | M4 |
 | `neg/statement` | There is no woman. | `(*{(X ~ woman)} ~ conjunction) => !` | M4 |
 | `neg/in-head` | No man waits. | `(*{(X ~ man)} ~ conjunction) => ((X waits nil) ~ refuted)` | M4 |
-| `neg/atom-in-body` | If John does not wait then Mary sleeps. | `(*{((John waits nil) ~ refuted)} ~ conjunction) => (Mary sleeps nil)` | M4 |
+| `neg/atom-in-body` | If John does not wait then Mary sleeps. | `(*@{((John waits nil) ~ refuted)} ~ conjunction) => (Mary sleeps nil)` | M4 |
 | `neg/complex-in-body` | If John does not own a car then John walks. | refused, hint "does not provably" | — |
 | `neg/atom-in-question` | Who does not wait? | `((X waits nil) ~ refuted)` in the query | M4 |
 | `neg/complex-in-question` | Is there no laundry? | refused, hint "not provably" | — |
@@ -2189,7 +2191,7 @@ Each is recorded with its question, the alternatives and the milestone on [Desig
 | [DEC-NAF-RECORDS](decisions.md#dec-naf-records) | a defeated "not provably" conclusion is reported, never withdrawn; records on from the first such rule | the warning must work at the REPL default; sessions without such a rule pay nothing |
 | [DEC-REFUTED](decisions.md#dec-refuted) | (ii) a derived refutation of a claimed fact is a reported contradiction | nothing disappears silently |
 | [DEC-RECORD-SINGLE](decisions.md#dec-record-single) | one-condition rules as one-element condition sets | every rule `ace` builds has a condition set, in the form zelph lists; since 2026-10-15 records no longer depend on it |
-| [DEC-ONE-CONDITION-PRINT](decisions.md#dec-one-condition-print) | `ace/zelph-of` prints a one-condition rule as `(*{(X ~ man)} ~ conjunction) => …` | exactly what `.list-rules` shows for the rule `ace` builds, and the form [RT-3](tests.md#rt-3-native-equivalence-of-the-shown-zelph) enters natively; every spelling re-enters as the same rule and records alike |
+| [DEC-ONE-CONDITION-PRINT](decisions.md#dec-one-condition-print) | `ace/zelph-of` prints a one-condition rule as `(*{(X ~ man)} ~ conjunction) => …`, with a ground condition as `(*@{(John waits nil)} ~ conjunction) => …` | exactly what `.list-rules` shows for the rule `ace` builds, and the form [RT-3](tests.md#rt-3-native-equivalence-of-the-shown-zelph) enters natively; when the condition holds a variable, every spelling re-enters as the same rule; every spelling records alike |
 | [DEC-VAR-LETTERS](decisions.md#dec-var-letters) | letters in order of first occurrence; a class pattern takes one only where it has a variable of its own | a printed rule reads as a user would type it, in either profile |
 | [DEC-NUMERIC-REFERENT](decisions.md#dec-numeric-referent) | a referent the math typing makes numeric gets no class pattern from a relational noun | a number is no instance of the noun |
 | [DEC-YESNO-WIDER](decisions.md#dec-yesno-wider) | a yes/no atom is probed exactly, then plainly on a miss | a native fact with several objects answers as a rule condition reads it |

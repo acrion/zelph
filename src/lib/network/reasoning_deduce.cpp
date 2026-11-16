@@ -25,6 +25,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #include "reasoning.hpp"
 
+#include "container_reading.hpp"
 #include "contradiction_error.hpp"
 #include "fact_structure.hpp"
 #include "rule_identity.hpp"
@@ -173,32 +174,59 @@ std::unordered_set<Node> Reasoning::rule_variables(const Node rule, const Node p
         collect_variables(self, c, vars, depth, history);
     }
 
+    // The conditions of every rule that this one writes, and of every rule
+    // that such a rule writes in turn, are likewise read: each is brought
+    // into being when the rule that writes it fires, and the construction
+    // rebuilds its conditions as its firing reads them (Place::written).
+    // collect_variables does not enter any container, so a rule whose sole
+    // variables stood in a set of conditions of a rule it writes was
+    // considered to be in the ground corner, and a switch over it left it as
+    // a mention. A rule inside a statement is quoted, a term, and is not
+    // read.
+    std::vector<Node> pending{condition};
+    {
+        std::vector<Node>        written(consequences.begin(), consequences.end());
+        std::unordered_set<Node> read;
+        while (!written.empty())
+        {
+            const Node c = written.back();
+            written.pop_back();
+            if (Zelph::is_var(c) || !Zelph::is_hash(c) || !read.insert(c).second) continue;
+
+            const FactStructure fs = get_preferred_structure(self, c, depth);
+            if (fs.subject == 0 || fs.predicate != core.Causes) continue;
+            pending.push_back(fs.subject);
+            written.insert(written.end(), fs.objects.begin(), fs.objects.end());
+        }
+    }
+
     // A conjunction set node carries no structure a variable walk could
     // follow -- Zelph::set creates it, and its members hang off it as
     // separate PartOf facts. Without this step the variables of a
     // multi-condition rule would be invisible.
     //
-    // Only a set tagged as a conjunction is entered. A data collection is a
-    // value that the rebuild preserves unchanged, and counting its variables
-    // would make a switch over it rename them on every run and leave fresh ones
-    // behind. A collection of the rule's own text is rebuilt, yet it
-    // is not entered either, so a switch whose rule has such a collection as
-    // its sole condition and a ground consequence leaves that rule as a
-    // mention. Every set is entered once: a set that holds itself, either
-    // directly or via another set, would otherwise be retrieved again and
-    // again.
-    std::vector<Node>        pending{condition};
+    // What the firing reads as a set of conditions is entered
+    // (read_container, ReadAt::Conditions): a tagged set, or an untagged set
+    // consisting of a single condition of any identifier, a data collection
+    // included, which the construction reconstructs using the member it
+    // renames (container_plan in reasoning.cpp). Read solely by the tag, a
+    // switch whose rule has such a set as its only condition and a ground
+    // consequence left that rule as a mention. An untagged container with
+    // multiple members holds no conditions and serves as a value. Every set
+    // is entered once: a set that holds itself, either directly or via
+    // another set, would otherwise be retrieved again and again.
     std::unordered_set<Node> entered;
     while (!pending.empty())
     {
         const Node cond = pending.back();
         pending.pop_back();
+        if (entered.count(cond) != 0) continue;
 
-        if (check_fact(cond, core.IsA, {core.Conjunction}).is_known())
+        adjacency_set members;
+        if (read_container(this, cond, ReadAt::Conditions, &members).reading == Reading::Conditions)
         {
-            if (!entered.insert(cond).second) continue;
-            for (const Node m : conjunction_members(this, cond))
-                pending.push_back(m);
+            entered.insert(cond);
+            pending.insert(pending.end(), members.begin(), members.end());
             continue;
         }
 
@@ -209,12 +237,15 @@ std::unordered_set<Node> Reasoning::rule_variables(const Node rule, const Node p
     return vars;
 }
 
-// NOTE on the tag checks in this file: rebuilding a rule REPRODUCES what was
-// written, so the `~ conjunction` tag is the right discriminator here and
-// Zelph::is_condition_set is not. That helper answers "does the engine read
-// this container as a set of conditions", which is deliberately wider -- a
-// single untagged member counts -- and applying it here turned a one-element
-// container in a generated CONSEQUENCE into a conjunction set.
+// NOTE on reading sets in this file: rebuilding a rule REPRODUCES what was
+// written, and the place decides how a container is read. When it holds the
+// conditions of a rule that the construction brings into being, it is read
+// as the firing reads it (read_container, ReadAt::Conditions), and an
+// untagged set consisting of one condition is rebuilt as that set, its
+// member located at the place of a condition. Anywhere else it is a term: a
+// one-element container within a generated CONSEQUENCE stays a container,
+// whereas reading it as a set of conditions had turned it into a conjunction
+// set.
 Node Reasoning::rebuild_condition(const Node pattern, const Variables& variables, const int depth, const Recipe* const recipe)
 {
     // A conjunction nested inside the condition forms a distinct set, the
@@ -223,7 +254,7 @@ Node Reasoning::rebuild_condition(const Node pattern, const Variables& variables
     // rule nested within a generated rule takes the outer binding in its
     // conditions as well.
     std::vector<Node> history;
-    return instantiate_fact(this, pattern, variables, depth, history, recipe, Place{Position::Value, true, 0});
+    return instantiate_fact(this, pattern, variables, depth, history, recipe, Place{Position::Value, true, true});
 }
 
 namespace
@@ -394,11 +425,12 @@ Node Reasoning::rebuild_rule(const Node pattern, const Variables& variables, con
     std::vector<Node> made;
     const Recipe      recipe{pattern, &variables, RecipeMode::Construction, parent, &made};
 
-    // A rule lacking any variable outside its containers, under a binding
-    // that substitutes nothing, is the rule the generator mentions: the
-    // ground corner Zelph::is_mentioned names. It is built as the
-    // generator wrote it, each container preserved, and settles upon the
-    // mention.
+    // A rule that contains no variable outside its containers, except for
+    // the sets that hold its conditions or those of a rule it writes
+    // (rule_variables), under a binding that substitutes nothing, is the
+    // rule the generator mentions: the ground corner Zelph::is_mentioned
+    // names. It is built as the generator wrote it, each container
+    // preserved, and settles upon the mention.
     const Node key    = recipe_key(this, recipe, depth);
     const bool corner = key == Zelph::Impl::recipe_key({}) && rule_variables(pattern, parent, depth).empty();
 
@@ -438,18 +470,24 @@ Node Reasoning::build_rule(const Node pattern, const Variables& variables, const
     const Node    var_condition = parse_fact(pattern, var_consequences, parent);
     if (var_condition == 0 || var_consequences.empty()) return 0;
 
+    // A consequence is what the rule writes: a rule there is brought into
+    // being in turn when this one fires, and its conditions are rebuilt as
+    // the firing reads them too (Place::written).
     adjacency_set consequences;
     for (const Node c : var_consequences)
     {
         std::vector<Node> history;
-        const Node        inst = instantiate_fact(this, c, variables, depth, history, recipe);
+        const Node        inst = instantiate_fact(this, c, variables, depth, history, recipe, Place{Position::Value, false, false, true});
         if (inst == 0) return 0;
         consequences.insert(inst);
     }
 
     Node condition = 0;
 
-    if (check_fact(var_condition, core.IsA, {core.Conjunction}).is_known())
+    // The subject is read as the firing reads it: a tagged set of conditions
+    // is reconstructed one member at a time here, anything else as a whole.
+    const ContainerReading subject = read_container(this, var_condition, ReadAt::Conditions);
+    if (subject.reading == Reading::Conditions && subject.tagged)
     {
         std::unordered_set<Node> members;
         for (const Node m : conjunction_members(this, var_condition))
@@ -478,9 +516,10 @@ Node Reasoning::build_rule(const Node pattern, const Variables& variables, const
     }
     else
     {
-        // A single-condition rule has no set node at all -- its `=>` subject
-        // is the condition itself, and that one is hash-consed, so the
-        // check_fact below deduplicates it without any help.
+        // A single condition: a statement, which is hash-consed, meaning
+        // the check_fact below eliminates duplicates automatically, or an
+        // untagged set containing one condition, rebuilt as the set it is
+        // (container_plan in reasoning.cpp, Plan::SetOfOne).
         condition = rebuild_condition(var_condition, variables, depth, recipe);
         if (condition == 0) return 0;
     }
@@ -582,25 +621,26 @@ Node Reasoning::existing_rule(const Node pattern, const Variables& variables, co
     const bool    corner = recipe_key(this, recipe, depth) == Zelph::Impl::recipe_key({}) && rule_variables(pattern, parent, depth).empty();
     const Recipe* used   = corner ? nullptr : &recipe;
 
-    // Inner variables stay variables, exactly as build_rule
-    // leaves them.
+    // Inner variables stay variables, exactly as build_rule leaves them,
+    // and each part stands at the place build_rule gives it.
     adjacency_set consequences;
     for (const Node c : var_consequences)
     {
         std::vector<Node> history;
-        const Node        inst = ground_instance(this, c, variables, depth, history, used, Place{}, true);
+        const Node        inst = ground_instance(this, c, variables, depth, history, used, Place{Position::Value, false, false, true}, true);
         if (inst == 0) return 0;
         consequences.insert(inst);
     }
 
-    Node condition = 0;
-    if (check_fact(var_condition, core.IsA, {core.Conjunction}).is_known())
+    Node                   condition = 0;
+    const ContainerReading subject   = read_container(this, var_condition, ReadAt::Conditions);
+    if (subject.reading == Reading::Conditions && subject.tagged)
     {
         std::unordered_set<Node> members;
         for (const Node m : conjunction_members(this, var_condition))
         {
             std::vector<Node> history;
-            const Node        inst = ground_instance(this, m, variables, depth, history, used, Place{Position::Value, true, 0}, true);
+            const Node        inst = ground_instance(this, m, variables, depth, history, used, Place{Position::Value, true, true}, true);
             if (inst == 0) return 0;
             members.insert(inst);
         }
@@ -614,7 +654,7 @@ Node Reasoning::existing_rule(const Node pattern, const Variables& variables, co
     else
     {
         std::vector<Node> history;
-        condition = ground_instance(this, var_condition, variables, depth, history, used, Place{Position::Value, true, 0}, true);
+        condition = ground_instance(this, var_condition, variables, depth, history, used, Place{Position::Value, true, true}, true);
     }
     if (condition == 0) return 0;
 
@@ -840,20 +880,10 @@ bool Reasoning::enters_kept_list(const ConsequenceText& text, const Node node) c
     if (node == 0 || Zelph::is_var(node) || Zelph::is_hash(node) || is_rule_template(node)) return false;
     if (const auto it = text.kept_lists.find(node); it != text.kept_lists.end()) return it->second;
 
-    bool enters = check_fact(node, core.IsA, {core.Conjunction}).is_known();
-    if (enters)
-    {
-        for (const Node rel : get_right(node))
-        {
-            if (parse_relation(rel) != core.Causes) continue;
-            adjacency_set consequences;
-            if (parse_fact(rel, consequences, 0) == node)
-            {
-                enters = false;
-                break;
-            }
-        }
-    }
+    // The rule identity reads the set via the identical function, so that it
+    // takes two sets for a single term solely when this claim treats them as
+    // alike.
+    const bool enters = read_container(this, node, ReadAt::Written).reading == Reading::ConditionsInTerm;
     text.kept_lists.emplace(node, enters);
     return enters;
 }
@@ -928,7 +958,7 @@ std::optional<Reasoning::ConsequenceParts> Reasoning::predict_consequence(const 
 
     if (parts.source == 0 || parts.relation == 0 || var_targets.empty()) return std::nullopt;
 
-    const Place targets_at{parts.relation == core.PartOf ? Position::Into : Position::Value, false, 0};
+    const Place targets_at{parts.relation == core.PartOf ? Position::Into : Position::Value, false};
     for (const Node var_t : var_targets)
     {
         history      = {deduction};
@@ -1507,7 +1537,7 @@ void Reasoning::deduce(const Variables& variables, const Node parent, const int 
                 // for every firing -- the accumulator idiom -- and a
                 // conjunction set its data term. In any other location, a
                 // container of the rule's text is a value of this binding.
-                const Place targets_at{rel == core.PartOf ? Position::Into : Position::Value, false, 0};
+                const Place targets_at{rel == core.PartOf ? Position::Into : Position::Value, false};
                 for (Node var_t : var_targets)
                 {
                     history = {deduction};

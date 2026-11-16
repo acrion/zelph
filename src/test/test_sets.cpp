@@ -2239,7 +2239,9 @@ TEST_CASE("sets: a conjunction set that is a set constant is bound as the other 
     // collection: the typed rule keeps its two conditions and fires on them,
     // and the generated rule's firing on `k s y` writes k into the term. Had
     // it been written into the set, X would have served as a third condition
-    // of the typed rule.
+    // of the typed rule. The typed rule prints in the explicit form, which
+    // builds the identical set constant once more, whereas the comma list
+    // would instead generate a collection and a rule of its own.
     run_both_modes([](auto& collector, auto& interactive)
                    {
         process_lines(interactive, R"(
@@ -2248,7 +2250,7 @@ TEST_CASE("sets: a conjunction set that is a set constant is bound as the other 
 )");
         interactive.run(true, false, false);
         const auto rules = listed_rule_lines(collector, interactive);
-        CHECK(std::ranges::count(rules, "((c q d), (a p b)) => (e r f)") == 1);
+        CHECK(std::ranges::count(rules, "(*{(c q d) (a p b)} ~ conjunction) => (e r f)") == 1);
         CHECK(std::ranges::count_if(rules, [](const std::string& rule)
                                     { return rule.starts_with("(X s y) => (X in @{"); })
               == 1);

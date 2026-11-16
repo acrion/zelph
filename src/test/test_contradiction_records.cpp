@@ -865,11 +865,11 @@ v p u
 // A rule featuring a SINGLE condition lacks a condition set to reference, and
 // it was not recorded in any way: announced on each run, and absent from the
 // count. The engine reads a condition set containing a single member as that
-// condition itself, so the plain spelling and the one-element set are one
-// rule (rule_identity.cpp), with the graph holding whichever was entered
-// first. The condition now becomes part of the record as-is, and the record
-// is the one the one-element set leaves: the matched fact, isolated within a
-// refuted set.
+// condition directly, so the plain spelling and the one-element set fire
+// alike, and when the condition holds a variable they are one rule
+// (rule_identity.cpp), with the graph holding whichever was entered first. The
+// condition now becomes part of the record as-is, and the record is the one
+// the one-element set leaves: the matched fact, isolated within a refuted set.
 TEST_CASE("contradiction record: a single-condition rule is recorded once, like any other")
 {
     zelph::io::OutputCollector  collector;
@@ -888,11 +888,11 @@ x p y
 }
 
 // The case that made the distinction apparent: a program builds its
-// one-condition rules as one-element sets to ensure they are recorded, yet on
-// a graph that already holds the plain spelling, its rule is the plain one,
+// one-condition rules as one-element sets to guarantee their recording, yet on
+// a graph that already holds the plain spelling, its rule is the plain one
+// (the condition holds a variable, so the two spellings constitute one rule),
 // and the contradictions reappeared with every run. Both spellings are now
-// recorded identically, so it no longer matters which version the graph
-// holds.
+// recorded identically, so it no longer matters which version the graph holds.
 TEST_CASE("contradiction record: a one-element set that meets the plain rule entered first is recorded once")
 {
     zelph::io::OutputCollector  collector;

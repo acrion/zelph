@@ -1089,7 +1089,7 @@ condition later changes what the graph says without adding a node:
 
 ```
 zelph> .lang ace
-ace> (*{(John waits nil)} ~ conjunction) => (Mary sleeps nil)
+ace> (*@{(John waits nil)} ~ conjunction) => (Mary sleeps nil)
 ace> %(zelph/exists "John" "waits" "nil" :exact)
 false
 ace> %(zelph/mentioned "John" "waits" "nil" :exact)

@@ -44,21 +44,39 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 // under SOME bijection of their variables -- alpha-equivalence, as in the
 // lambda calculus.
 //
-// What "structurally identical" covers is what the reasoner interprets (see
-// collect_conditions / Reasoning::evaluate): membership in a set, the
-// Conjunction tag, and the subject / predicate / object set for each condition.
-// Predicate identity is what separates a != guard, an ≈ neural condition and a
-// negation from an ordinary pattern, so those need no special case. In a term,
-// the subject of a rule quoted in a consequence or named or quoted by a
-// condition included, a set of conditions is read by its node. Two such sets
-// that are not named are compared by their members, as terms, where the new
-// rule's statement has just made its set and takes it back with the rule
-// (NewRuleNodes), and always during the claim search of a construction, which
-// involves no new rule. Every container met in a term corresponds to one
+// What "structurally identical" covers is what the reasoner interprets:
+// membership within a set, the Conjunction tag, and the subject / predicate /
+// object set for each condition. Predicate identity is what separates a !=
+// guard, an ≈ neural condition and a negation from an ordinary pattern, so
+// those need no special case. Each node of both rules is read as the reasoner
+// reads it in a term (read_container, ReadAt::Term), including the rule's own
+// set of conditions and its members: a rule pattern pairs the members of a
+// rule's set by node, a variable bound at the subject of a ground rule binds
+// the set's node, and the membership of a ground member answers a query. A rule
+// that a rule writes is a term of the rule that writes it until a construction
+// builds it; a rule quoted in a consequence, or named or quoted by a condition,
+// remains a term throughout. At a rule's own subject, a set of one member that
+// only the firing reads, apart from a tag it carries, is that member
+// (ReadAt::OwnSubject): its member holds a variable, or is a rule's set holding
+// one, and the set does not appear elsewhere in the rule. Where a firing writes
+// a set of conditions as it stands, in a consequence outside a `=>`, it is also
+// read as the firing writes it (ReadAt::Written), and so it is in the
+// consequences of a rule that the rule writes, at any depth, which that rule's
+// own firing writes: a list the statement writes, whose members the firing's
+// claim asserts, is not the same term as a rule's set or one a construction
+// built, which the firing writes via its node. A set of conditions is read by
+// its node; two distinct ones that are not named are compared by their members,
+// as terms, where the new rule's statement has just made its set and takes it
+// back with the rule (NewRuleNodes), and always during the claim search of a
+// construction, which involves no new rule. Every container corresponds to one
 // container of the other rule at every place. Thus, two rules that a comparison
 // with a new rule determines to be alike derive the same outcome, up to
 // renaming of elements that only the new rule's statement made, which is the
-// property enabling the safety of skipping the second rule.
+// property enabling the safety of skipping the second rule. One cost is
+// accepted: the tag of a set that ReadAt::OwnSubject reads through answers a
+// query, so what a rule over the tag derives from the tagged spelling is lost
+// when that spelling is entered after another, a fact over named atoms included
+// where nothing else carries the tag (read_container).
 
 #include "adjacency_set.hpp"
 #include "network_types.hpp"
@@ -79,30 +97,32 @@ namespace zelph::network
     // rule over cycles exhausts its allocated budget of rendered positions (see
     // Matcher in rule_identity.cpp); sharing this fingerprint does not imply
     // alpha-equivalence (`(A p B) (B p C)` and `(A p B) (C p D)` collide, and so do
-    // two rules over distinct sets of conditions in a term that are alike in their
-    // members), which is why it functions as a filter prior to the real test and
-    // never serves as a standalone decision. Empty if `rule` is not a rule.
+    // two rules over distinct sets of conditions that are alike in their members),
+    // which is why it functions as a filter prior to the real test and never serves
+    // as a standalone decision. Empty if `rule` is not a rule.
     std::string rule_shape(const Zelph* z, Node rule);
 
     // Which nodes the statement that built the new rule of a comparison, its
     // first rule, created and reclaims when the rule is determined to be a
-    // duplicate. In a term, a set of conditions is treated as a constant by the
-    // reasoner: a firing keeps its node and records facts concerning that node.
-    // The comparison reads the subject of a rule that a condition names or
-    // quotes as such a term as well (subject_role). Two distinct sets of
-    // conditions there are considered the same term solely
-    // when the new rule's set is one of those nodes and neither set bears a
-    // name: nothing beyond the rule retains a set that the rollback reclaims,
-    // thus omitting the new rule results in no loss. A construction holds none
+    // duplicate. A set of conditions is treated as a constant by the reasoner,
+    // including the rule's own set of conditions: a firing keeps its node and
+    // records facts concerning that node, a variable bound at the subject of a
+    // ground rule binds it, and the membership of a ground member answers a
+    // query. Two distinct sets of conditions are deemed identical only when the
+    // new rule's set is one of those nodes and neither set bears a name:
+    // nothing outside the rule maintains a set that the rollback reclaims,
+    // hence excluding the new rule entails no loss. A construction holds none
     // of its nodes as the new rule's own: it finds a set it reconstructs via
-    // its members (instantiate_container), so a second rule from the
-    // same firing might reuse a set created by the first, and upon rolling back
-    // the first rule and reclaiming its set, the second rule generated a set of
-    // its own, and a join over the shared set was lost. Empty when neither rule
-    // is new (the claim search of a construction); two distinct sets of
-    // conditions that are not named then match by their members, and the rule
-    // the search identifies may refer to a different set than the rule it was
-    // searching for.
+    // its members (instantiate_container), so a second rule from the same
+    // firing might reuse a set created by the first, and upon rolling back the
+    // first rule and reclaiming its set, the second rule generated a set of its
+    // own, and a join over the shared set was lost. A typed twin entered before
+    // a generator therefore remains beside the rule the generator constructs,
+    // regardless of whether the set is that rule's conditions or stands in its
+    // terms. Empty when neither rule is new (the claim search of a
+    // construction); two distinct sets of conditions that are not named then
+    // match by their members, and the rule the search identifies may refer to a
+    // different set than the rule it was searching for.
     using NewRuleNodes = std::function<bool(Node)>;
 
     // The decision: identical rule up to a bijective renaming of the variables,
@@ -156,12 +176,14 @@ namespace zelph::network
     // allowing a test to hold that shape without requiring a quiet machine.
     ZELPH_EXPORT uint64_t rule_statement_climb_steps();
 
-    // The number of times rule_shape and the comparison of two rules have read
-    // a node -- as single_condition and classify read it -- or the members of a
-    // container during this process. Beginning with its first cycle, a
-    // rendering or a comparison reads each node once in every role it meets the
-    // node in, and the members of each container once; before that, it reads
-    // them at every encounter. Similar to the climb steps, it lets a test hold
+    // The number of times rule_shape and the comparison between two rules have
+    // read a node -- as classify reads it, the subject of each rule as
+    // read_container reads it at ReadAt::OwnSubject, and a set of conditions a
+    // firing writes as read_container reads it at ReadAt::Written -- or the
+    // members of a container during this procedure. Starting with its first
+    // cycle, a rendering or a comparison reads each node once at each of these
+    // places, and the members of each container once; before that, it reads
+    // them at every occurrence. Similar to the climb steps, it lets a test hold
     // that shape without requiring a quiet machine.
     ZELPH_EXPORT uint64_t rule_identity_reads();
 

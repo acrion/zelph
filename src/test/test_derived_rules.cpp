@@ -4646,11 +4646,14 @@ TEST_CASE("derived rules: a rule written over a set that holds itself fires and 
         CHECK(collect_answers(collector) == std::vector<std::string>{"a q b"}); });
 }
 
-// The variables of a rule activated by a switch are read from the sets tagged as
-// conjunctions. A data collection, which `zelph/collection` builds, is a value that
-// the rebuild preserves unchanged: interpreted as a set of conditions, it would
-// make the switch over `@{(X p Y)}` with a ground consequence rename the variables within it on each run
-// and leave behind two new ones each time.
+// A data collection, which `zelph/collection` builds, holding a single
+// condition is read in place, at the conditions of the rule the switch brings
+// into being, as the firing reads it: the switch's binding substitutes nothing,
+// so the construction lands on the rule the switch mentions and puts a copy in
+// force, over a set of the condition with its variables renamed. Read as a
+// value, the collection left that rule a mention. A rerun finds the copy again
+// via the claim and adds nothing; taken as a new rule on every run, the
+// renaming would leave two new variables behind each time.
 TEST_CASE("derived rules: a switch over an untagged collection leaves no variable behind")
 {
     run_both_modes([](auto& collector, auto& interactive)
@@ -4663,7 +4666,435 @@ TEST_CASE("derived rules: a switch over an untagged collection leaves no variabl
 a p b
 feature is on
 )");
-        rerun_adds_no_node(collector, interactive); });
+        // The switch, and the rule that it puts in force.
+        collector.clear();
+        interactive.process(".list-rules");
+        CHECK(listed_rules(collector) == 2);
+
+        rerun_adds_no_node(collector, interactive);
+        collector.clear();
+        interactive.process(".list-rules");
+        CHECK(listed_rules(collector) == 2); });
+}
+
+// A construction reads the conditions of a rule it brings into being in the same
+// way that the firing of that rule reads them (read_container,
+// ReadAt::Conditions): an untagged set containing a single condition is that
+// condition itself, and it is rebuilt as the set it is, with its member
+// positioned as a condition. This holds true for the subject of the rule a
+// generator builds and for every rule that rule writes in turn. Read by the tag
+// alone, such a set functioned as a term there: a switch over it left its rule
+// as a mention, a membership in it wrote into its collection rather than naming
+// it, and a data collection kept the generator's variable, so the rule built
+// derived nothing, or a wrong fact. Each subcase counts the rules over two runs:
+// a construction that does not find again what it built writes it again.
+TEST_CASE("derived rules: a construction reads an untagged set of one condition at the conditions of a rule it brings into being as the firing does")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        const auto rules_over_two_runs = [&]
+        {
+            std::vector<std::size_t> counts;
+            for (int run = 0; run < 2; ++run)
+            {
+                interactive.run(true, false, false);
+                collector.clear();
+                interactive.process(".list-rules");
+                counts.push_back(listed_rules(collector));
+            }
+            return counts;
+        };
+        // Sorted: in parallel mode, the order of the answers varies across
+        // runs.
+        const auto answers = [&](const std::string& query)
+        {
+            collector.clear();
+            interactive.process(query);
+            std::vector<std::string> result = collect_answers(collector);
+            std::ranges::sort(result);
+            return result;
+        };
+        const auto members_of_the_collection_answer = [&](const std::string& query)
+        {
+            CHECK(answers(query).size() == 2);
+            CHECK(answers_contain(collector, "k ok k"));
+            CHECK(answers_contain(collector, "z ok k"));
+        };
+        // .explain finds the generator of a rule via the prediction of the
+        // construction (Reasoning::existing_rule), which reads every part at
+        // the place where the construction reads it.
+        const auto explained_by = [&](const std::string& rule, const std::string& premise)
+        {
+            collector.clear();
+            interactive.process(".explain " + rule + " 0");
+            return last_out_text(collector).find("\n   └─ " + premise + "  [axiom]\n") != std::string::npos;
+        };
+
+        SUBCASE("a switch over a set of one condition with a ground consequence puts its rule in force")
+        {
+            // The binding substitutes nothing, so the construction lands on
+            // the rule the switch mentions and puts a copy in force, its
+            // variable renamed. Read by the tag, the set held no variable of
+            // the rule, which was then built as written and stayed a mention.
+            process_lines(interactive, "(K is on) => ({(X p b)} => (e f u))\nk is on\nx p b");
+            CHECK(rules_over_two_runs() == std::vector<std::size_t>{2, 2});
+            CHECK(answers("e f O") == std::vector<std::string>{"e f u"});
+            CHECK(explained_by("({(X p b)} => (e f u))", "k is on"));
+            rerun_adds_no_node(collector, interactive);
+        }
+        SUBCASE("a generator whose binding makes the condition ground builds the set constant of it")
+        {
+            // The literal `{(a p H)}` holds a variable, thus it could not tell
+            // its kind, and under H = h its condition is ground: the
+            // construction builds the set constant `{(a p h)}`, just as it does
+            // for a collection of the rule's text within a term
+            // (becomes_set_constant), and the rule it brings into being is the
+            // one the typed line below writes. The observer's variable binds
+            // the set constant, which `{(a p h)} noted yes` names. Rebuilt as a
+            // collection of the construction, `@{(a p h)}`, the rule stood
+            // beside the typed one as a second rule, and `z ok yes` was never
+            // derived. .explain finds the generator via the prediction of the
+            // construction, which predicts the identical set constant.
+            process_lines(interactive, R"(
+g go h
+a p h
+(S => (y q h)) => (S noted yes)
+({(a p h)} noted yes) => (z ok yes)
+(G go H) => ({(a p H)} => (y q H))
+)");
+            CHECK(rules_over_two_runs() == std::vector<std::size_t>{4, 4});
+            CHECK(answers("z ok O") == std::vector<std::string>{"z ok yes"});
+            CHECK(explained_by("({(a p h)} => (y q h))", "g go h"));
+            interactive.process("{(a p h)} => (y q h)");
+            CHECK(rules_over_two_runs() == std::vector<std::size_t>{4, 4});
+        }
+        SUBCASE("a generator whose binding makes the condition of a data collection ground builds the set constant of it")
+        {
+            // As above, for a data collection containing a single condition
+            // that a program placed where the conditions of the written rule
+            // stand: the construction reads it there, just as the firing does,
+            // treating it as its condition, and under K = k1 that condition is
+            // ground, so the rule it brings into being is over the set
+            // constant `{(a p k1)}`, just as a firing makes `{k}` of `@{Y}`.
+            // The observers and the typed line meet that rule in the same way
+            // they meet the one over a literal of the rule's text. Rebuilt as
+            // a collection of the construction, the rule would stand beside
+            // the typed one as a second rule, and `z ok yes` would never be
+            // derived.
+            process_lines(interactive, R"(
+k1 is on
+a p k1
+(S => (x r k1)) => (S noted yes)
+({(a p k1)} noted yes) => (z ok yes)
+%(def k (zelph/var "K"))
+%(zelph/fact (zelph/fact k "is" "on") "=>" (zelph/fact (zelph/collection (zelph/fact "a" "p" k)) "=>" (zelph/fact "x" "r" k)))
+)");
+            CHECK(rules_over_two_runs() == std::vector<std::size_t>{4, 4});
+            CHECK(answers("x r O") == std::vector<std::string>{"x r k1"});
+            CHECK(answers("z ok O") == std::vector<std::string>{"z ok yes"});
+            CHECK(explained_by("({(a p k1)} => (x r k1))", "k1 is on"));
+            interactive.process("{(a p k1)} => (x r k1)");
+            CHECK(rules_over_two_runs() == std::vector<std::size_t>{4, 4});
+        }
+        SUBCASE("a generator rebuilds a membership in a set of one condition at the place of a condition")
+        {
+            // At the place of a condition, the membership names the
+            // collection, which loses the member X that the condition itself
+            // writes into it: the rule is over the set constant of k and z. At
+            // the place of a term, X stayed a member of a collection of the
+            // rule, which then matched nothing.
+            process_lines(interactive, "(K is on) => ({(X in @{K z})} => (X ok K))\nk is on");
+            CHECK(rules_over_two_runs() == std::vector<std::size_t>{2, 2});
+            CHECK((any_output_contains(collector, "@{(X in {z k})} => (X ok k)") || any_output_contains(collector, "@{(X in {k z})} => (X ok k)")));
+            members_of_the_collection_answer("S ok O");
+        }
+        SUBCASE("a generator substitutes into a data collection of one condition")
+        {
+            // Only a program puts a data collection where a rule's conditions
+            // stand. The firing reads it as its condition, so the construction
+            // rebuilds it under the binding. Kept as a value, it held the
+            // generator's variable K, and the rule fired on `a p m`, deriving
+            // the wrong fact `a r k`.
+            process_lines(interactive, R"(
+%(def x (zelph/var "X"))
+%(def k (zelph/var "K"))
+%(zelph/fact (zelph/fact k "is" "on") "=>" (zelph/fact (zelph/collection (zelph/fact x "p" k)) "=>" (zelph/fact x "r" k)))
+k is on
+a p m
+b p k
+)");
+            CHECK(rules_over_two_runs() == std::vector<std::size_t>{2, 2});
+            CHECK(answers("S r O") == std::vector<std::string>{"b r k"});
+            CHECK(explained_by("((X p k) => (X r k))", "k is on"));
+        }
+        SUBCASE("a generator of generators rebuilds the set of one condition of the rule its rule writes")
+        {
+            // The rule that the construction builds writes a rule whose subject
+            // is a set containing one condition. That rule is brought into
+            // being when the built one fires, so its subject holds conditions
+            // already where the first construction rebuilds it. Rebuilt as a
+            // term there, the innermost rule was over `@{(X in @{z k X})}` and
+            // derived nothing.
+            process_lines(interactive, "(K is on) => ((J is up) => ({(X in @{K z})} => (X ok K)))\nk is on\nj is up");
+            CHECK(rules_over_two_runs() == std::vector<std::size_t>{3, 3});
+            members_of_the_collection_answer("S ok O");
+            CHECK(explained_by("((J is up) => ({(X in {z k})} => (X ok k)))", "k is on"));
+        }
+        SUBCASE("a rule written two rules further down is rebuilt alike")
+        {
+            // As previously stated, the place is passed down through two rules,
+            // each of which writes the next.
+            process_lines(interactive, "(K is on) => ((J is up) => ((L is in) => ({(X in @{K z})} => (X ok K))))\nk is on\nj is up\nl is in");
+            CHECK(rules_over_two_runs() == std::vector<std::size_t>{4, 4});
+            members_of_the_collection_answer("S ok O");
+        }
+        SUBCASE("a data collection of one condition is rebuilt under each binding")
+        {
+            // Only the member of the collection holds K, so the key that tells
+            // the terms of two constructions apart holds K solely because the
+            // walk that reads the key meets the collection at the point where
+            // it holds the rule's conditions. Met as a value there, K would be
+            // excluded: the two bindings of K would share a single recipe, the
+            // second switch would find the first one's rule, and `b r k` would
+            // never be derived.
+            process_lines(interactive, R"(
+%(def x (zelph/var "X"))
+%(def k (zelph/var "K"))
+%(zelph/fact (zelph/fact k "is" "on") "=>" (zelph/fact (zelph/collection (zelph/fact x "p" k)) "=>" (zelph/fact x "r" "k")))
+k1 is on
+k2 is on
+a p k1
+b p k2
+)");
+            CHECK(rules_over_two_runs() == std::vector<std::size_t>{3, 3});
+            CHECK(answers("S r O") == std::vector<std::string>{"a r k", "b r k"});
+        }
+        SUBCASE("a data collection of one condition that a consequence also names is rebuilt under each binding")
+        {
+            // As above, with the collection also serving as a term in a
+            // consequence. The walk that reads the key meets each node
+            // exactly once at every location: met solely once, within the
+            // consequence where the collection acts as a value, it would fail
+            // to be met where it holds the rule's conditions, and K would
+            // once more be excluded from the key. Kept as a value at the
+            // subject as well, the collection kept K, and the single rule
+            // both switches built derived neither fact.
+            process_lines(interactive, R"(
+%(def x (zelph/var "X"))
+%(def k (zelph/var "K"))
+%(def c (zelph/collection (zelph/fact x "p" k)))
+%(zelph/fact (zelph/fact k "is" "on") "=>" (zelph/fact c "=>" (zelph/fact x "r" "k") (zelph/fact "j" "notes" c)))
+k1 is on
+k2 is on
+a p k1
+b p k2
+)");
+            CHECK(rules_over_two_runs() == std::vector<std::size_t>{3, 3});
+            CHECK(answers("S r O") == std::vector<std::string>{"a r k", "b r k"});
+        } });
+}
+
+// A construction reads the subject of a rule it brings into being in the same
+// manner as the firing does (read_container, ReadAt::Conditions), and a node
+// that holds no condition is not a set of conditions, regardless of the tag
+// it carries: it stays the node it is, and the switch writes `x => (e f k)`
+// exactly as typing writes it, which a rule over rules then reads alike. Read
+// by its tag exclusively, `x` functioned as a set of conditions lacking any
+// member, and the construction wrote nothing.
+TEST_CASE("derived rules: a construction writes a rule over a tagged node with no member as typing writes it")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, "x ~ conjunction\n(S => C) => (S heads C)");
+        SUBCASE("typed")
+        {
+            interactive.process("x => (e f k)");
+        }
+        SUBCASE("written by a switch")
+        {
+            process_lines(interactive, "(K is on) => (x => (e f K))\nk is on");
+        }
+        interactive.run(true, false, false);
+        collector.clear();
+        interactive.process("S heads O");
+        CHECK(collect_answers(collector) == std::vector<std::string>{"x heads (e f k)"}); });
+}
+
+// The variables of a rule constructed by a construction encompass those
+// present in the conditions of every rule it writes
+// (Reasoning::rule_variables): such a rule is brought into being when the
+// built rule fires, and its conditions are rebuilt as its firing reads them.
+// A switch over a rule whose own condition is ground and whose written rule
+// holds its variables solely within a set of conditions lands on the rule it
+// mentions and puts a renamed copy in force. Read without those conditions,
+// the rule held no variable and was treated as the ground corner: it stayed a
+// mention and nothing was derived, while the plain spelling, whose variable
+// stands outside every container, put both rules in force. Each subcase
+// counts the rules over two runs: a construction that does not find again
+// what it built writes it again.
+TEST_CASE("derived rules: a switch over a rule that writes a rule over a set of conditions puts it in force")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        const auto rules_over_two_runs = [&]
+        {
+            std::vector<std::size_t> counts;
+            for (int run = 0; run < 2; ++run)
+            {
+                interactive.run(true, false, false);
+                collector.clear();
+                interactive.process(".list-rules");
+                counts.push_back(listed_rules(collector));
+            }
+            return counts;
+        };
+        const auto answers = [&](const std::string& query)
+        {
+            collector.clear();
+            interactive.process(query);
+            return collect_answers(collector);
+        };
+        // .explain finds the switch via the prediction generated by the
+        // construction (Reasoning::existing_rule), which takes the ground
+        // corner from the identical reading of the rule's variables.
+        const auto explained_by_the_switch = [&](const std::string& rule)
+        {
+            collector.clear();
+            interactive.process(".explain " + rule + " 0");
+            return last_out_text(collector).find("\n   └─ k is on  [axiom]\n") != std::string::npos;
+        };
+
+        SUBCASE("an untagged set of one condition")
+        {
+            process_lines(interactive, "(K is on) => ((j is up) => ({(X p b)} => (e f u)))\nk is on\nj is up\nx p b");
+            CHECK(rules_over_two_runs() == std::vector<std::size_t>{3, 3});
+            CHECK(answers("e f O") == std::vector<std::string>{"e f u"});
+            CHECK(explained_by_the_switch("((j is up) => ({(X p b)} => (e f u)))"));
+            rerun_adds_no_node(collector, interactive);
+        }
+        SUBCASE("a tagged set of one condition")
+        {
+            process_lines(interactive, "(K is on) => ((j is up) => ((*{(X p b)} ~ conjunction) => (e f u)))\nk is on\nj is up\nx p b");
+            CHECK(rules_over_two_runs() == std::vector<std::size_t>{3, 3});
+            CHECK(answers("e f O") == std::vector<std::string>{"e f u"});
+            CHECK(explained_by_the_switch("((j is up) => ((*{(X p b)} ~ conjunction) => (e f u)))"));
+            rerun_adds_no_node(collector, interactive);
+        }
+        SUBCASE("a set of two conditions")
+        {
+            process_lines(interactive, "(K is on) => ((j is up) => ((X p b, X q c) => (e f u)))\nk is on\nj is up\nx p b\nx q c");
+            CHECK(rules_over_two_runs() == std::vector<std::size_t>{3, 3});
+            CHECK(answers("e f O") == std::vector<std::string>{"e f u"});
+            CHECK(explained_by_the_switch("((j is up) => ((X p b, X q c) => (e f u)))"));
+            rerun_adds_no_node(collector, interactive);
+        }
+        SUBCASE("a set of one condition two rules further down")
+        {
+            // The rule the switch writes writes a rule over the set in turn,
+            // brought into being alike when it fires.
+            process_lines(interactive, "(K is on) => ((j is up) => ((n is in) => ({(X p b)} => (e f u))))\nk is on\nj is up\nn is in\nx p b");
+            CHECK(rules_over_two_runs() == std::vector<std::size_t>{4, 4});
+            CHECK(answers("e f O") == std::vector<std::string>{"e f u"});
+            CHECK(explained_by_the_switch("((j is up) => ((n is in) => ({(X p b)} => (e f u))))"));
+        }
+        SUBCASE("the plain spelling")
+        {
+            // The control: its variable resides outside every container,
+            // thus the rule never served as the ground corner.
+            process_lines(interactive, "(K is on) => ((j is up) => ((X p b) => (e f u)))\nk is on\nj is up\nx p b");
+            CHECK(rules_over_two_runs() == std::vector<std::size_t>{3, 3});
+            CHECK(answers("e f O") == std::vector<std::string>{"e f u"});
+            CHECK(explained_by_the_switch("((j is up) => ((X p b) => (e f u)))"));
+        } });
+}
+
+// A rule contained within a statement that a generated rule writes is quoted:
+// a term, which the construction reads as a term, so that the firing writes
+// it exactly as the generator wrote it. Only a rule that constitutes a whole
+// consequence is brought into being, and only its conditions are read as the
+// firing reads them. A set of a single condition that the binding makes
+// ground becomes the set constant of that condition under either reading, so
+// the first subcase holds the count and the fact, and the second tells the
+// two readings apart.
+TEST_CASE("derived rules: a rule that a generated rule quotes keeps its set of one condition as written")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        const auto rules_over_two_runs = [&]
+        {
+            std::vector<std::size_t> counts;
+            for (int run = 0; run < 2; ++run)
+            {
+                interactive.run(true, false, false);
+                collector.clear();
+                interactive.process(".list-rules");
+                counts.push_back(listed_rules(collector));
+            }
+            return counts;
+        };
+
+        SUBCASE("a condition that the binding makes ground")
+        {
+            // The generator's `{(a q H)}` stands for the set constant
+            // `{(a q h)}`, which the firing writes in the manner the
+            // generator wrote it.
+            process_lines(interactive, "(G go H) => ((X p H) => (X says ({(a q H)} => (e f u))))\ng go h\nx p h");
+            CHECK(rules_over_two_runs() == std::vector<std::size_t>{2, 2});
+
+            collector.clear();
+            interactive.process("x says O");
+            CHECK(collect_answers(collector) == std::vector<std::string>{"x says ({(a q h)} => (e f u))"});
+        }
+        SUBCASE("a membership in a collection of the generator")
+        {
+            // In a term, the collection referenced by the membership retains
+            // the quoted rule's variable Y as a member, and the firing writes
+            // the quoted rule about a collection of z and h. Read as
+            // conditions, as in a rule that is brought into being, the
+            // membership would name the set constant of z and h, the
+            // generated rule would quote `(Y in {z h})`, and its firing would
+            // write no fact.
+            process_lines(interactive, "(G go H) => ((X p H) => (X says ({(Y in @{H z})} => (Y ok H))))\ng go h\nx p h");
+            CHECK(rules_over_two_runs() == std::vector<std::size_t>{2, 2});
+            CHECK(any_output_contains(collector, "(Y in @{"));
+            CHECK_FALSE(any_output_contains(collector, "(Y in {"));
+
+            collector.clear();
+            interactive.process("x says O");
+            CHECK(collect_answers(collector).size() == 1);
+        } });
+}
+
+// A rule inside a statement is quoted: a term, whose set of conditions no
+// firing reads, so its variable is bound by no firing and is not a variable
+// of the rule that writes the statement (Reasoning::rule_variables reads the
+// conditions of the rules a rule writes, not those of a rule it quotes). A
+// switch over a rule whose sole variable stands there has nothing to rename:
+// the construction settles on the rule the switch mentions, which stays a
+// mention, as originally written. Read as a rule brought into being, the
+// quoted rule would give that rule a variable, and a renamed copy of it
+// would come into force and write the quote.
+TEST_CASE("derived rules: the set of conditions of a quoted rule gives the rule a switch writes no variable")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        std::string lines;
+        SUBCASE("a rule quoted by the rule the switch writes")
+        {
+            lines = "(K is on) => ((j is up) => (m says ({(X p b)} => (e f u))))\nk is on\nj is up";
+        }
+        SUBCASE("a rule quoted by the rule that rule writes")
+        {
+            lines = "(K is on) => ((j is up) => ((n is in) => (m says ({(X p b)} => (e f u)))))\nk is on\nj is up\nn is in";
+        }
+        process_lines(interactive, lines);
+        for (int run = 0; run < 2; ++run)
+        {
+            interactive.run(true, false, false);
+            collector.clear();
+            interactive.process(".list-rules");
+            CHECK(listed_rules(collector) == 1);
+        } });
 }
 
 // A rule over `in` writes into what a firing derived:

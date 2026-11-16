@@ -415,6 +415,8 @@ add_library(zelph_lib ${ZELPH_LIB_TYPE}
     network/adjacency_set.hpp
     network/answer.cpp
     network/answer.hpp
+    network/container_reading.cpp
+    network/container_reading.hpp
     network/contradiction_error.hpp
     network/fact_structure.hpp
     network/fact_structure_types.hpp

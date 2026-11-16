@@ -90,6 +90,15 @@ namespace zelph::network
     // container.
     bool holds_set_pattern(const Zelph* n, Node node);
 
+    // Whether the membership of `member` in a set answers nothing due to
+    // being rule text: `member` holds a variable (the candidate filter used
+    // by Unification::extract_bindings), or it is one of a rule's sets
+    // holding a variable (the bookkeeping filter employed during the same
+    // scan). Creates nothing. The rule identity reads a rule's own set of one
+    // such member as that member (read_container, ReadAt::OwnSubject):
+    // altering either filter changes that decision.
+    bool member_is_rule_text(const Zelph* n, Node member);
+
     // Whether a node distinct from the concrete `node` itself can match it
     // inside a condition: `node` is a statement, and either it or a
     // statement contained within its parts, at any level of depth, possesses

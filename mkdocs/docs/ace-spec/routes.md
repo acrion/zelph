@@ -450,20 +450,20 @@ Every other nested conditional is flattened.
 The first block writes a rule that writes a rule, and the fact `Bill ~ man`:
 
 ```
-(*{(John waits nil)} ~ conjunction) => ((*{(X ~ man)} ~ conjunction) => (X sleeps nil))
+(*@{(John waits nil)} ~ conjunction) => ((*{(X ~ man)} ~ conjunction) => (X sleeps nil))
 Bill ~ man
 ```
 
-Every rule the front end writes with a single condition takes the form of a one-element condition set, `*{…} ~ conjunction`, so that every rule it builds has a condition set ([DEC-RECORD-SINGLE](decisions.md#dec-record-single)). zelph reads a one-member condition set as its single condition, so this form and the plain spelling are one rule, and since 2026-10-15 zelph records a contradiction of a rule with a plain single condition exactly as it records one of the one-member set: the form no longer decides whether a contradiction is recorded. `ace/zelph-of` prints it as zelph lists it ([DEC-ONE-CONDITION-PRINT](decisions.md#dec-one-condition-print)), and this form, typed, builds the same rule; `(X ~ man) => …` and `((X ~ man)) => …`, typed into a graph that does not hold the rule yet, build the plain rule, since the parentheses only group, and its contradictions are recorded alike ([What ace/zelph-of Prints](semantics.md#what-acezelph-of-prints)). The same lines in zelph today, with a second man added after the switch:
+Every rule the front end writes with a single condition takes the form of a one-element condition set, `*{…} ~ conjunction`, so that every rule it builds has a condition set ([DEC-RECORD-SINGLE](decisions.md#dec-record-single)). The switch’s set is expressed as `*@{…}`: the front end builds each such set as a collection, and when the condition is ground, as in `John waits nil`, the brace alone would build a set constant, another node, so zelph lists the set using the collection marker `@`. zelph reads a one-member condition set as its single condition when that condition holds a variable, meaning this form and the plain spelling of the inner rule above represent a single rule; in contrast, the two spellings of the switch, whose condition `John waits nil` is ground, constitute two distinct rules that fire alike, and since 2026-10-15 zelph records a contradiction of a rule with a plain single condition exactly as it records one of the one-member set: the form no longer decides whether a contradiction is recorded. `ace/zelph-of` prints it as zelph lists it ([DEC-ONE-CONDITION-PRINT](decisions.md#dec-one-condition-print)), and this form, typed, builds the same rule; `(X ~ man) => …` and `((X ~ man)) => …`, typed into a graph that does not hold the rule yet, build the plain rule, since the parentheses only group, and its contradictions are recorded alike ([What ace/zelph-of Prints](semantics.md#what-acezelph-of-prints)). The same lines in zelph today, with a second man added after the switch:
 
 ```
-zelph> (*{(John waits nil)} ~ conjunction) => ((*{(X ~ man)} ~ conjunction) => (X sleeps nil))
+zelph> (*@{(John waits nil)} ~ conjunction) => ((*{(X ~ man)} ~ conjunction) => (X sleeps nil))
 zelph> Bill ~ man
 zelph> X sleeps nil
 zelph> .list-rules
 Listing all rules:
 ------------------------
-(*{(John waits nil)} ~ conjunction) => ((*{(X ~ man)} ~ conjunction) => (X sleeps nil))
+(*@{(John waits nil)} ~ conjunction) => ((*{(X ~ man)} ~ conjunction) => (X sleeps nil))
 ------------------------
 zelph> John waits nil
 ((*{(X ~ man)} ~ conjunction) => (X sleeps nil)) ⇐ {(John waits nil)}
@@ -474,7 +474,7 @@ zelph> .list-rules
 Listing all rules:
 ------------------------
 (*{(X ~ man)} ~ conjunction) => (X sleeps nil)
-(*{(John waits nil)} ~ conjunction) => ((*{(X ~ man)} ~ conjunction) => (X sleeps nil))
+(*@{(John waits nil)} ~ conjunction) => ((*{(X ~ man)} ~ conjunction) => (X sleeps nil))
 ------------------------
 zelph> Tom ~ man
 (Tom sleeps nil) ⇐ {(Tom ~ man)}

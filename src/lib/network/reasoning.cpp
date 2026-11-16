@@ -26,6 +26,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include "reasoning.hpp"
 
 #include "chrono/stopwatch.hpp"
+#include "container_reading.hpp"
 #include "contradiction_error.hpp"
 #include "fact_structure.hpp"
 #include "rule_identity.hpp"
@@ -41,6 +42,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include <set>
 #include <sstream>
 #include <thread>
+#include <tuple>
 #include <type_traits>
 #include <unordered_set>
 #include <vector>
@@ -254,10 +256,12 @@ Reasoning::ContradictionRecord Reasoning::record_contradiction(const contradicti
     std::vector<Node> members = condition_elements(condition);
 
     // A rule featuring a solitary condition situated outside a set contains
-    // no members, and the condition joins as itself: the resulting record
-    // is the one a condition set holding that condition alone produces. The
-    // two formulations represent a single rule (rule_identity.cpp keeps
-    // whichever was entered first), thus they must record alike.
+    // no members, and the condition joins as itself: the resulting record is
+    // the one a condition set holding that condition alone produces. The two
+    // expressions constitute a single rule where the condition holds a
+    // variable (rule_identity.cpp keeps whichever was entered first), and
+    // two rules that fire alike when it is ground; either way they must
+    // record alike.
     if (members.empty()) members.push_back(condition);
 
     // A refutation achieved via derivation that met a claimed fact: the
@@ -2070,31 +2074,37 @@ namespace
         return Zelph::Impl::create_hash(hashed);
     }
 
-    // When an instantiation processes a node lacking a fact structure: an
-    // atom, a value, or a constant remains unchanged (Keep); a set constant
-    // of the rule's text is rebuilt whenever one of its members undergoes a
-    // change; a collection originating from the rule's own text --
-    // specifically, a Skolem function symbol -- is substituted with its
-    // corresponding term; a conjunction set is rebuilt through a
-    // construction; and during a firing, the collection that a consequence
-    // writes into -- the rule's bucket -- becomes the bucket's term
-    // (bucket_term below), while a conjunction set that is written into
-    // becomes its data term (data_term below).
+    // When an instantiation processes a node without a fact structure: an
+    // atom, a value, or a constant stays unaltered (Keep); a set constant of
+    // the rule's text is rebuilt whenever one of its members changes; a
+    // collection originating from the rule's own text -- specifically, a
+    // Skolem function symbol -- is replaced by its corresponding term; a
+    // conjunction set is rebuilt via a construction, and so is an untagged
+    // set containing a single condition when it holds the conditions of a
+    // rule the construction brings into being (SetOfOne); and during a
+    // firing, the collection that a consequence writes into -- the rule's
+    // bucket -- transforms into the bucket's term (bucket_term below), while
+    // a conjunction set that is written into becomes its data term (data_term
+    // below).
     enum class Plan
     {
         Keep,
         SetConstantTemplate,
         CollectionTemplate,
         ConjunctionSet,
+        SetOfOne,
         BucketTerm,
         DataTerm
     };
 
     // The sole location that determines how an instantiation interacts with a
-    // container. instantiate_container, ground_instance, and the instance
-    // walk all ask it, ensuring that the instantiation, its prediction, and
-    // the key of a term remain aligned. `members` receives the members it has
-    // read; it reads none for a node it keeps via its id or its tag.
+    // container. instantiate_container, ground_instance, and the instance walk
+    // all ask it, ensuring that the instantiation, its prediction, and the key of
+    // a term remain aligned. The nature of the container is read just as the rule
+    // identity reads it (read_container), and when a construction rebuilds the
+    // conditions of a rule, as the firing reads them; what to build from it is
+    // decided here. `members` receives the members it has read; it reads none for
+    // a node it keeps through its id, its tag, or its name.
     //
     // Whether a collection belongs to the rule is determined by its identifier
     // (Zelph::is_rule_template): a single-bit examination. No name, no claim, and
@@ -2109,21 +2119,17 @@ namespace
         if (recipe == nullptr) return Plan::Keep;
 
         const bool firing = recipe->mode == RecipeMode::Firing;
+        const bool hash   = Zelph::is_hash(node);
+        const bool own    = !hash && z->is_rule_template(node);
 
         // A node that is neither a hash nor a rule's own collection -- an
         // atom, a value, a term a firing built, a typed rule's conjunction
-        // set -- stays itself, unless a construction meets a conjunction set
-        // or a firing writes into one. Thus, the id decides before a member
-        // is read: an atom is a member of every term built over a literal
-        // that holds it, and reading its adjacency during each firing made a
-        // run quadratic in the number of firings.
-        if (!Zelph::is_hash(node) && !z->is_rule_template(node))
-        {
-            if (firing && place.position == Position::Value) return Plan::Keep;
-            if (!is_conjunction(z, node)) return Plan::Keep;
-            if (firing) return Plan::DataTerm;
-            return collect_container_members(z, node, members) ? Plan::ConjunctionSet : Plan::Keep;
-        }
+        // set -- remains unchanged wherever a firing names it. Thus, the id
+        // determines before a member or the tag is read: an atom is a member
+        // of every term built upon a literal that holds it, and reading its
+        // adjacency during each firing made a run quadratic in the number of
+        // firings.
+        if (!hash && !own && firing && place.position == Position::Value) return Plan::Keep;
 
         // A firing writes into what it names, meaning that among all nodes
         // located at that position, only the rule text undergoes
@@ -2135,75 +2141,125 @@ namespace
         // since a rule's text is immutable after being written. A term that
         // a firing in this run has filled is found without reading the
         // bucket's members or its tag.
-        if (firing && place.position != Position::Value)
+        const bool written_into = firing && place.position != Position::Value;
+        if (own && written_into && recipe->filled != nullptr && recipe->filled->count(Zelph::bucket_term_id(node)) != 0) return Plan::BucketTerm;
+
+        // When a construction rebuilds the conditions of a rule, it reads them
+        // as the rule's firing will: an untagged set containing one condition
+        // is that condition itself (Zelph::condition_set_members), regardless
+        // of its identifier. Read as a term, its member occupied the place of a
+        // term, where a membership writes into its collection instead of naming
+        // it, and a data collection was kept with the generator's variables
+        // inside: the rule built derived nothing, or a fact that is wrong. A
+        // tagged set is rebuilt below; everything else there is read as a term.
+        // There is never a firing at such a place.
+        if (!firing && place.conditions)
         {
-            if (!Zelph::is_hash(node) && recipe->filled != nullptr && recipe->filled->count(Zelph::bucket_term_id(node)) != 0) return Plan::BucketTerm;
-            if (is_conjunction(z, node)) return Plan::DataTerm;
-            if (Zelph::is_hash(node)) return Plan::Keep;
-            if (z->exists(Zelph::bucket_term_id(node))) return Plan::BucketTerm;
-            if (!collect_container_members(z, node, members)) return Plan::Keep;
-            return Plan::BucketTerm;
+            adjacency_set          read;
+            const ContainerReading reading = read_container(z, node, ReadAt::Conditions, &read);
+            if (reading.reading == Reading::Conditions && !reading.tagged)
+            {
+                members.insert(read.begin(), read.end());
+                return Plan::SetOfOne;
+            }
         }
 
-        // A conjunction set -- either a generated rule's or a set constant
-        // tagged as such -- is a rule structure: a firing keeps it,
-        // a construction rebuilds it.
-        if (is_conjunction(z, node))
+        switch (read_container(z, node, ReadAt::Term).reading)
         {
-            if (firing) return Plan::Keep;
+        case Reading::ConditionsInTerm:
+            // A conjunction set -- a typed rule's, a generated rule's or a set
+            // constant tagged as such -- constitutes a rule structure: a
+            // firing keeps it, or writes into its data term, and a
+            // construction rebuilds it.
+            if (firing) return written_into ? Plan::DataTerm : Plan::Keep;
             return collect_container_members(z, node, members) ? Plan::ConjunctionSet : Plan::Keep;
-        }
-        if (!collect_container_members(z, node, members)) return Plan::Keep;
 
-        // In a construction, a variable is not considered a member of a set
-        // constant, just as Zelph::set_constant_members does not include it
-        // in its count: the membership `X in {c d}` appearing in the
-        // generator's text is rule text that names the set, regardless of
-        // whether the rule being constructed treats it as a consequence or a
-        // condition, or whether the generator writes it beside that rule.
-        // Counted as a member, it rebuilt the set as `{a c d}` under the
-        // binding X = a, a set that no one authored, which a subsequent
-        // condition then matched: `(X p Y) => ((X in {c d}) => (X ok Y))`
-        // derived `a ok b`. The built rule now refers to `{c d}` exactly as
-        // originally written, and fact() refuses the membership
-        // `a in {c d}`, just as it would in a standalone rule.
-        //
-        // A firing reads the set in the same way. It met the set as a
-        // value beside its rule's own consequence `X in {c d}`, and
-        // `(X p Y) => (z has {c d}) (X in {c d})` derived `z has {a c d}`
-        // before refusing that consequence.
-        //
-        // A statement that holds a variable is interpreted identically
-        // (Zelph::is_pattern_member): next to a rule's condition `(X p z) in
-        // {(x p z) c}`, `(X q Y) => (z has {(x p z) c})` derived `z has @{(X p
-        // z)}`.
-        if (Zelph::is_hash(node))
+        case Reading::OwnCollection:
+            if (written_into) return z->exists(Zelph::bucket_term_id(node)) || collect_container_members(z, node, members) ? Plan::BucketTerm : Plan::Keep;
+            return collect_container_members(z, node, members) ? Plan::CollectionTemplate : Plan::Keep;
+
+        case Reading::SetConstant:
+            if (written_into || !collect_container_members(z, node, members)) return Plan::Keep;
+
+            // In a construction, a variable is not considered a member of a set
+            // constant, just as Zelph::set_constant_members does not include it
+            // in its count: the membership `X in {c d}` appearing in the
+            // generator's text is rule text that names the set, regardless of
+            // whether the rule being constructed treats it as a consequence or a
+            // condition, or whether the generator writes it beside that rule.
+            // Counted as a member, it rebuilt the set as `{a c d}` under the
+            // binding X = a, a set that no one authored, which a subsequent
+            // condition then matched: `(X p Y) => ((X in {c d}) => (X ok Y))`
+            // derived `a ok b`. The built rule now refers to `{c d}` exactly as
+            // originally written, and fact() refuses the membership
+            // `a in {c d}`, just as it would in a standalone rule.
+            //
+            // A firing reads the set in the same way. It met the set as a
+            // value beside its rule's own consequence `X in {c d}`, and
+            // `(X p Y) => (z has {c d}) (X in {c d})` derived `z has {a c d}`
+            // before refusing that consequence.
+            //
+            // A statement that holds a variable is interpreted identically
+            // (Zelph::is_pattern_member): next to a rule's condition `(X p z) in
+            // {(x p z) c}`, `(X q Y) => (z has {(x p z) c})` derived `z has @{(X p
+            // z)}`.
             std::erase_if(members, [z](const Node m)
                           { return z->is_pattern_member(m); });
 
-        // A set constant is its members, thus it is rebuilt whenever any of
-        // them undergoes a change; a named one is a constant. What remains
-        // is a collection of the rule's own text.
-        if (Zelph::is_hash(node)) return z->is_named_any(node) ? Plan::Keep : Plan::SetConstantTemplate;
-        return Plan::CollectionTemplate;
+            // A set constant is its members, thus it is rebuilt each time any
+            // of them undergoes alteration.
+            return Plan::SetConstantTemplate;
+
+        default:
+            // An atom, a value, a collection that is not the rule's own and
+            // carries no tag, and a named set constant, which is a constant.
+            return Plan::Keep;
+        }
     }
 
     // Where the parts of a fact are located, beneath the fact itself at
     // `place`: the subject of a `=>` fact is a condition, and its
-    // consequences are none; the objects of a membership are written
-    // into, unless a construction meets the membership within a condition,
-    // which writes nothing.
+    // consequences are none; the objects of a membership are written into,
+    // unless a construction meets the membership within a condition, which
+    // writes nothing. A `=>` fact that is the entirety of a consequence of a
+    // rule a construction brings into being is a rule that rule writes,
+    // brought into being in turn: its subject holds conditions, and its
+    // consequences are its own. A rule elsewhere is quoted, a term.
     Place subject_place(const FactStructure& fs, const Zelph* const z, const Place& place)
     {
-        return Place{Position::Value, fs.predicate == z->core.Causes || place.condition, 0};
+        const bool rule = fs.predicate == z->core.Causes;
+        return Place{Position::Value, rule || place.condition, rule && place.written};
     }
 
     Place object_place(const FactStructure& fs, const Node relation, const Zelph* const z, const Recipe* const recipe, const Place& place)
     {
-        const bool condition = fs.predicate != z->core.Causes && place.condition;
-        if (relation != z->core.PartOf) return Place{Position::Value, condition, 0};
-        if (condition && recipe != nullptr && recipe->mode == RecipeMode::Construction) return Place{Position::Member, true, fs.subject};
-        return Place{Position::Into, condition, 0};
+        const bool rule      = fs.predicate == z->core.Causes;
+        const bool condition = !rule && place.condition;
+        if (relation != z->core.PartOf) return Place{Position::Value, condition, false, rule && place.written};
+        if (condition && recipe != nullptr && recipe->mode == RecipeMode::Construction) return Place{Position::Member, true, false, false, fs.subject};
+        return Place{Position::Into, condition};
+    }
+
+    // The nodes the instance walk has met, each with the factor determining
+    // how they are read at that point: during a firing, the position. A
+    // construction also meets a node when it rebuilds the conditions of a
+    // rule, or as the rule's whole consequence (Place::conditions,
+    // Place::written), where a single-condition set is rebuilt using its
+    // member and a rule is brought into being. Having met it previously as a
+    // term, the walk would skip what only that place rebuilds, and the
+    // construction's key (recipe_key) would fail to capture the variables
+    // within it: two bindings would end up sharing one recipe.
+    using MetInFiring       = std::set<std::pair<Node, Position>>;
+    using MetInConstruction = std::set<std::tuple<Node, Position, bool, bool>>;
+
+    bool meets_first(MetInFiring& met, const Node n, const Place& place)
+    {
+        return met.insert({n, place.position}).second;
+    }
+
+    bool meets_first(MetInConstruction& met, const Node n, const Place& place)
+    {
+        return met.insert({n, place.position, place.conditions, place.written}).second;
     }
 
     // The instance walk: what the instantiation of `n` at `place` meets,
@@ -2226,8 +2282,8 @@ namespace
     // An `on_container` returning a bool decides whether the walk proceeds
     // into what the plan rebuilds; one returning nothing allows it to
     // proceed.
-    template <class OnVariable, class OnContainer>
-    void walk_instantiation(const Zelph* const z, const Node n, const Recipe& recipe, const Place& place, const int depth, std::set<std::pair<Node, Position>>& seen, const OnVariable& on_variable, const OnContainer& on_container)
+    template <class Met, class OnVariable, class OnContainer>
+    void walk_instantiation(const Zelph* const z, const Node n, const Recipe& recipe, const Place& place, const int depth, Met& seen, const OnVariable& on_variable, const OnContainer& on_container)
     {
         if (n == 0) return;
         if (Zelph::is_var(n))
@@ -2235,7 +2291,7 @@ namespace
             on_variable(n);
             return;
         }
-        if (!seen.insert({n, place.position}).second) return;
+        if (!meets_first(seen, n, place)) return;
 
         if (Zelph::is_hash(n))
         {
@@ -2243,7 +2299,7 @@ namespace
             if (fs.subject != 0)
             {
                 walk_instantiation(z, fs.subject, recipe, subject_place(fs, z, place), depth, seen, on_variable, on_container);
-                walk_instantiation(z, fs.predicate, recipe, Place{Position::Value, place.condition, 0}, depth, seen, on_variable, on_container);
+                walk_instantiation(z, fs.predicate, recipe, Place{Position::Value, place.condition}, depth, seen, on_variable, on_container);
                 const Node relation = Zelph::is_var(fs.predicate) ? zelph::string::get(*recipe.binding, fs.predicate, fs.predicate) : fs.predicate;
                 const bool open     = recipe.mode == RecipeMode::Firing && Zelph::is_var(relation);
                 for (const Node o : fs.objects)
@@ -2267,7 +2323,8 @@ namespace
         }
         if (plan == Plan::Keep || plan == Plan::BucketTerm || plan == Plan::DataTerm) return;
 
-        const Place member_place{Position::Value, plan == Plan::ConjunctionSet, 0};
+        const bool  sets = plan == Plan::ConjunctionSet || plan == Plan::SetOfOne;
+        const Place member_place{Position::Value, sets, sets && place.conditions};
         for (const Node m : members)
             walk_instantiation(z, m, recipe, member_place, depth, seen, on_variable, on_container);
     }
@@ -2275,17 +2332,18 @@ namespace
     // The statement read as its instantiation reads it: during a firing,
     // the consequence as deduce takes it apart (its subject, its
     // relation, and its targets), whereas in a construction, the rule
-    // being written, its consequences and its condition.
+    // being written, its consequences and its condition, at the places
+    // Reasoning::build_rule gives them.
     template <class OnVariable, class OnContainer>
     void walk_statement(const Zelph* const z, const Recipe& recipe, const int depth, const OnVariable& on_variable, const OnContainer& on_container)
     {
-        std::set<std::pair<Node, Position>> seen;
-        adjacency_set                       parts;
-        const Node                          head = z->parse_fact(recipe.statement, parts, recipe.parent);
+        adjacency_set parts;
+        const Node    head = z->parse_fact(recipe.statement, parts, recipe.parent);
         if (head == 0) return;
 
         if (recipe.mode == RecipeMode::Firing)
         {
+            MetInFiring         seen;
             const adjacency_set relations = z->relation_types_of(recipe.statement);
             const Node          rel       = relations.size() == 1 ? *relations.begin() : Node{0};
             const Node          relation  = Zelph::is_var(rel) ? zelph::string::get(*recipe.binding, rel, rel) : rel;
@@ -2293,15 +2351,16 @@ namespace
             walk_instantiation(z, rel, recipe, Place{}, depth, seen, on_variable, on_container);
             for (const Node t : parts)
             {
-                walk_instantiation(z, t, recipe, Place{relation == z->core.PartOf ? Position::Into : Position::Value, false, 0}, depth, seen, on_variable, on_container);
-                if (Zelph::is_var(relation)) walk_instantiation(z, t, recipe, Place{Position::Into, false, 0}, depth, seen, on_variable, on_container);
+                walk_instantiation(z, t, recipe, Place{relation == z->core.PartOf ? Position::Into : Position::Value, false}, depth, seen, on_variable, on_container);
+                if (Zelph::is_var(relation)) walk_instantiation(z, t, recipe, Place{Position::Into, false}, depth, seen, on_variable, on_container);
             }
             return;
         }
 
+        MetInConstruction seen;
         for (const Node c : parts)
-            walk_instantiation(z, c, recipe, Place{}, depth, seen, on_variable, on_container);
-        walk_instantiation(z, head, recipe, Place{Position::Value, true, 0}, depth, seen, on_variable, on_container);
+            walk_instantiation(z, c, recipe, Place{Position::Value, false, false, true}, depth, seen, on_variable, on_container);
+        walk_instantiation(z, head, recipe, Place{Position::Value, true, true}, depth, seen, on_variable, on_container);
     }
 
     // The members of a collection of the rule's text that its instance holds,
@@ -2448,9 +2507,10 @@ namespace
 
         if (plan == Plan::CollectionTemplate) without_member_of_condition(place, members);
 
-        // A conjunction set holds conditions; every other container holds
-        // terms.
-        const Place member_place{Position::Value, plan == Plan::ConjunctionSet, 0};
+        // A set of conditions, whether tagged or consisting of a single
+        // condition, holds conditions; every other container holds terms.
+        const bool  sets = plan == Plan::ConjunctionSet || plan == Plan::SetOfOne;
+        const Place member_place{Position::Value, sets, sets && place.conditions};
 
         std::unordered_set<Node> instances;
         bool                     changed = false;
@@ -2460,6 +2520,38 @@ namespace
             if (im == 0) return node;
             if (im != m) changed = true;
             instances.insert(im);
+        }
+
+        // An untagged set containing a single condition is rebuilt as a set of
+        // the instantiated condition, without the tag, which constitutes data a
+        // rule can read; find_conjunction_set locates only tagged sets.
+        // Unchanged, it remains the set as written, just as a tagged set or a
+        // statement is, and a switch whose binding substitutes nothing lands on
+        // the rule it mentions (Reasoning::build_rule). When the binding makes
+        // its condition ground and the literal fails to determine its kind
+        // (becomes_set_constant), it becomes the set constant of that
+        // condition, as a collection of the rule's text turns into one within a
+        // term: `{(a p H)}` under H = h turns into `{(a p h)}`, the set a typed
+        // `{(a p h)} => C` holds. Built as a collection, the rule stood beside
+        // that typed rule as a second one, a mention of `{(a p h)} => C` left
+        // it in force, and a fact that a variable bound at its subject wrote
+        // was about the collection, which a condition naming `{(a p h)}` does
+        // not match. Otherwise it is a collection the construction builds under
+        // its recipe.
+        if (plan == Plan::SetOfOne)
+        {
+            if (!changed) return node;
+            if (becomes_set_constant(z, *recipe, place, members, instances))
+            {
+                const bool fresh = !z->exists(set_constant_id(instances));
+                const Node built = z->set(instances);
+                if (fresh) record(built);
+                return built;
+            }
+            bool       created = false;
+            const Node id      = z->recipe_collection(Zelph::Impl::recipe_id(node, recipe_key(z, *recipe, depth), true), instances, created, recipe->created);
+            if (created) record(id);
+            return id;
         }
 
         if (plan == Plan::ConjunctionSet)
@@ -2510,7 +2602,8 @@ namespace
         if (plan == Plan::BucketTerm || plan == Plan::DataTerm) return Zelph::bucket_term_id(node);
 
         if (plan == Plan::CollectionTemplate) without_member_of_condition(place, members);
-        const Place member_place{Position::Value, plan == Plan::ConjunctionSet, 0};
+        const bool  sets = plan == Plan::ConjunctionSet || plan == Plan::SetOfOne;
+        const Place member_place{Position::Value, sets, sets && place.conditions};
 
         std::unordered_set<Node> instances;
         bool                     changed = false;
@@ -2522,6 +2615,12 @@ namespace
             instances.insert(im);
         }
 
+        if (plan == Plan::SetOfOne)
+        {
+            if (!changed) return node;
+            if (becomes_set_constant(z, *recipe, place, members, instances)) return set_constant_id(instances);
+            return Zelph::Impl::recipe_id(node, recipe_key(z, *recipe, depth), true);
+        }
         if (plan == Plan::ConjunctionSet)
         {
             if (const Node found = find_conjunction_set(z, instances); found != 0) return found;
@@ -2552,7 +2651,7 @@ namespace
                 rule_variables_within(z, o, recipe, depth, read, vars);
             return;
         }
-        std::set<std::pair<Node, Position>> seen;
+        MetInFiring seen;
         walk_instantiation(z, n, recipe, Place{}, depth, seen, [&](const Node v)
                            { vars.insert(v); },
                            [](Node, Plan, const std::unordered_set<Node>&) {});
@@ -2572,7 +2671,7 @@ bool zelph::network::container_members_met(const Zelph* const z, const Node node
 {
     rebuilt         = false;
     const Plan plan = container_plan(z, node, &recipe, Place{}, members);
-    if (plan == Plan::SetConstantTemplate || plan == Plan::CollectionTemplate || plan == Plan::ConjunctionSet)
+    if (plan == Plan::SetConstantTemplate || plan == Plan::CollectionTemplate || plan == Plan::ConjunctionSet || plan == Plan::SetOfOne)
     {
         rebuilt = true;
         return !members.empty();
@@ -2739,7 +2838,7 @@ Node zelph::network::instantiate_fact(Zelph* z, Node pattern, const Variables& v
     }
 
     Node inst_subject  = instantiate_fact(z, fs.subject, variables, depth, history, recipe, subject_place(fs, z, place));
-    Node inst_relation = instantiate_fact(z, fs.predicate, variables, depth, history, recipe, Place{Position::Value, place.condition, 0});
+    Node inst_relation = instantiate_fact(z, fs.predicate, variables, depth, history, recipe, Place{Position::Value, place.condition});
 
     adjacency_set inst_objects;
     bool          changed = (inst_subject != fs.subject) || (inst_relation != fs.predicate);
@@ -2841,7 +2940,7 @@ Node zelph::network::ground_instance(const Zelph* z, const Node pattern, const V
     }
 
     const Node subject   = ground_instance(z, fs.subject, variables, depth, history, recipe, subject_place(fs, z, place), keep_variables);
-    const Node predicate = ground_instance(z, fs.predicate, variables, depth, history, recipe, Place{Position::Value, place.condition, 0}, keep_variables);
+    const Node predicate = ground_instance(z, fs.predicate, variables, depth, history, recipe, Place{Position::Value, place.condition}, keep_variables);
 
     adjacency_set objects;
     bool          ground     = subject != 0 && predicate != 0;

@@ -136,10 +136,15 @@ namespace zelph::network
         Member
     };
 
+    // `conditions` and `written` are a construction's: a firing never sets
+    // them, and it writes a rule inside a consequence exactly as the rule
+    // stands.
     struct Place
     {
         Position position{Position::Value};
-        bool     condition{false}; // under a condition of a rule the statement holds
+        bool     condition{false};  // under a condition of a rule the statement holds
+        bool     conditions{false}; // where the conditions of a rule the construction brings into being are located: its subject, and each member of a set of conditions read there, read as the firing reads them (read_container, ReadAt::Conditions)
+        bool     written{false};    // a whole consequence of such a rule: a rule there is one that rule writes, brought into being in turn, while a rule within a statement is quoted and keeps the reading of a term
         Node     member{0};
     };
 
@@ -1047,7 +1052,9 @@ namespace zelph::network
         // Every variable of a rule, conditions and consequences alike. Unlike
         // collect_variables this descends through the conjunction SET node,
         // which carries no structure of its own -- so the variables of a
-        // multi-condition rule are reachable at all.
+        // multi-condition rule are reachable at all. It enters the sets of
+        // conditions of every rule the rule writes too, at any depth, but
+        // excludes those of a rule a statement quotes.
         std::unordered_set<Node> rule_variables(Node rule, Node parent, int depth) const;
 
         // A condition inside a derived rule, with the specified bindings:
@@ -1259,9 +1266,10 @@ namespace zelph::network
         // matches what the firing claims. A rule's condition set that the
         // text names by node is not entered, because a typed statement does
         // not enter a comma list it holds by node: if it were entered, it
-        // would turn that rule's conditions into data. The answer is kept
-        // per node in `text`, since the adjacency of a comma list grows with
-        // each fact that holds it.
+        // would turn that rule's conditions into data. read_container decides
+        // at ReadAt::Written, just as it does for the rule identity. The
+        // answer is kept per node in `text`, since the adjacency of a comma
+        // list grows with each fact that holds it.
         bool enters_kept_list(const ConsequenceText& text, Node node) const;
         // Whether this firing writes a fact with an opaque predicate: `rel`,
         // the predicate it binds at the top, or any of the

@@ -536,14 +536,16 @@ a p b
             // Two conditions fail to exit the corner via their number: a
             // set constant hash-conses, thus this typed rule and the
             // mention constitute a single node as well, and the typed rule
-            // stops firing.
+            // stops firing. The rule prints in the explicit form, which
+            // builds that set constant again; the comma list would build a
+            // collection, and with it another rule.
             process_lines(interactive, R"(
 (*{(a p b) (a r b)} ~ conjunction) => (c q d)
 ((*{(a p b) (a r b)} ~ conjunction) => (c q d)) is odd
 )");
             collector.clear();
             interactive.process(".explain ((*{(a p b) (a r b)} ~ conjunction) => (c q d)) 0");
-            CHECK(explained(collector) == "((a p b), (a r b)) => (c q d)  [rule mentioned; not in force]");
+            CHECK(explained(collector) == "(*{(a p b) (a r b)} ~ conjunction) => (c q d)  [rule mentioned; not in force]");
 
             collector.clear();
             interactive.process(".list-rules");

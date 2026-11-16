@@ -34,26 +34,41 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include <map>
 #include <set>
 #include <string>
+#include <utility>
 #include <vector>
 
 using namespace zelph::test;
 
 // ---------------------------------------------------------------------------
-// The property for which rule identity exists, across generated programs: when
-// the identity takes a new rule for one currently in force and rolls it back,
-// no outcome that rule would have derived is lost.
+// The property that rule identity serves, across generated programs: when the
+// identity takes a new rule for one already in force and rolls the new rule
+// back, no outcome that the new rule would have derived is lost.
 //
 // A program here is positive (no negation; a guard `!=` only compares what is
 // bound), so it does not derive fewer facts when it holds one additional line,
 // unless a rule is rolled back due to being a duplicate of a rule that derives
 // something different. For every rule line of a program, the program without
 // that line must therefore derive no fact that the whole program does not. The
-// facts compared are answers whose terms are named atoms: observer rules carry
-// into such facts what a set of conditions in a term relates, which the
-// identity of that set determines. A rule a statement types twice is a single
-// rule, and the second statement's set of conditions differs from the first's
-// only as a node that nothing but the rolled-back rule would have held, which
-// no observer can distinguish.
+// facts under comparison are answers over named atoms: observer rules transfer
+// to such facts what a set of conditions in a term connects, determined by the
+// identity of that set. A rule a statement types twice is a single rule, and
+// the second statement's set of conditions differs from the first's only as a
+// node that nothing but the rolled-back rule would have held, which no observer
+// can distinguish.
+//
+// Beside its firing, a ground rule possesses three readers: a rule pattern that
+// quotes it, a variable bound at the subject of a rule, and the membership of a
+// member within a rule's set of conditions. Every program holds the last two
+// among its observers, and a rule pattern for each typed rule line in the pair
+// and for each rule its shape quotes (Shape::quotes); a shape whose two lines
+// are Janet and that quotes none holds no rule pattern of the pair, and the
+// rules of such a pair hold variables, which no rule pattern sees. A rule
+// holding a variable is visible to none of the three, which is why a set
+// consisting of one condition holding a variable can be read as that condition
+// at a rule's own subject. The tag of such a set, when it bears one, answers a
+// query, so a rule over the tag would lose what it derives from the tagged
+// spelling entered after another (read_container); no program here holds a rule
+// over the tag.
 //
 // Each program holds one pair of rule lines of a known shape, a shape the
 // identity once took for one rule wrongly or must take for one, in either
@@ -91,6 +106,10 @@ sa is special
 (C => (e f g)) => (C is gset)
 (C => (e f h)) => (C is hset))";
 
+    // The last two read a ground rule as no firing does: a variable bound at
+    // the subject of a rule binds the node present at that location, and the
+    // membership of a ground member within a rule's set of conditions answers
+    // as data.
     const char* const observers = R"((L noted X, L noted Y) => (X with Y)
 (sa noted X) => (X under sa)
 (sb noted X) => (X under sb)
@@ -102,9 +121,15 @@ sa is special
 ((C => (e f k)) noted X, C is hset) => (X quoted h)
 ((C => (e f k)) noted X, C is special) => (X quoted special)
 (L got X, L is noted) => (X hit noted)
-(S q L, X in L) => (S qin X))";
+(S q L, X in L) => (S qin X)
+(S => C) => (S heads C)
+(M in S, S => C) => (M opens C))";
 
-    const std::vector<std::string> queries = {"X with Y", "X under Y", "X hit Y", "S qin O", "X distinct Y", "X both Y", "X quoted Y"};
+    // `e f O` reads the output that the data block's two rules derive once a
+    // firing's claim asserts their conditions: a typed list of those conditions
+    // asserts them, while a rule written over the set of one of those rules
+    // does not.
+    const std::vector<std::string> queries = {"X with Y", "X under Y", "X hit Y", "S qin O", "X distinct Y", "X both Y", "X quoted Y", "S heads O", "S opens O", "e f O"};
 
     struct Shape
     {
@@ -112,6 +137,10 @@ sa is special
         std::vector<std::string> setup;
         std::string              a;
         std::string              b;
+        // Rule patterns that quote a rule which the pair brings into force,
+        // without any typed line from the pair stating it: a rule a Janet
+        // line builds, or a rule a generator writes.
+        std::vector<std::string> quotes = {};
     };
 
     std::string janet_rule(const std::string& consequence)
@@ -123,6 +152,20 @@ sa is special
     std::string janet_thunk(const std::string& body)
     {
         return R"js(%(zelph/dedup-rule (fn [] (def x (zelph/var "X")) )js" + body + "))";
+    }
+
+    // A rule that notes X regarding its own set of conditions, and a rule over
+    // a second set of the same conditions that notes X concerning a third.
+    std::string noting_its_own_set(const std::string& conditions)
+    {
+        return janet_thunk(R"js((def y (zelph/var "Y")) (def s (zelph/collection )js" + conditions
+                           + R"js()) (zelph/fact s "~" "conjunction") (zelph/fact s "=>" (zelph/fact s "noted" x)) )js");
+    }
+
+    std::string noting_another_set(const std::string& conditions)
+    {
+        return janet_thunk(R"js((def y (zelph/var "Y")) (def d (zelph/collection )js" + conditions + R"js()) (zelph/fact d "~" "conjunction") (def e (zelph/collection )js"
+                           + conditions + R"js()) (zelph/fact e "~" "conjunction") (zelph/fact d "=>" (zelph/fact e "noted" x)) )js");
     }
 
     std::vector<Shape> shapes()
@@ -139,6 +182,11 @@ sa is special
             "u1 q k",
             R"js(%(def f (zelph/collection (zelph/fact "a" "p" "b"))) )js",
             R"js(%(zelph/fact f "~" "conjunction") )js"};
+        const std::vector<std::string> collections = {
+            R"js(%(def c1 (zelph/collection (zelph/fact "a" "p" "b") (zelph/fact "c" "q" "d"))) )js",
+            R"js(%(def c2 (zelph/collection (zelph/fact "a" "p" "b") (zelph/fact "c" "q" "d"))) )js"};
+        const std::string two_conditions = R"js((zelph/fact x "p" y) (zelph/fact x "r" y))js";
+        const std::string one_condition  = R"js((zelph/fact x "p" y))js";
         return {
             {"a literal typed twice, ground", {}, "(X q k1) => ((a p b, c r d) noted X)", "(X q k1) => ((a p b, c r d) noted X)"},
             {"a literal typed twice, with variables", {}, "(X q k1) => ((X p Y, X r Y) noted X)", "(X q k1) => ((X p Y, X r Y) noted X)"},
@@ -161,6 +209,47 @@ sa is special
             {"a set of one condition and that condition, in a rule a condition names", {"(a p b) => (e f u1)", R"js(%(let [c (zelph/collection (zelph/fact "a" "p" "b"))] (zelph/fact c "~" "conjunction") (zelph/fact c "=>" (zelph/fact "e" "f" "u2"))) )js"}, janet_thunk(R"js((def c (zelph/collection (zelph/fact "a" "p" "b"))) (zelph/fact c "~" "conjunction") (zelph/fact (zelph/fact c "=>" (zelph/fact "e" "f" x)) "=>" (zelph/fact x "hit" "yes")) )js"), "((a p b) => (e f X)) => (X hit yes)"},
             {"a named set among the conditions of a rule a condition names", {"(a p b, sa) => (e f u1)", "(a p b, sb) => (e f u2)"}, "((a p b, sa) => (e f X)) => (X hit yes)", "((a p b, sb) => (e f X)) => (X hit yes)"},
             {"one own set and two", {"u1 q k"}, janet_thunk(R"js((def s (zelph/collection (zelph/fact "a" "p" "b"))) (zelph/fact s "~" "conjunction") (zelph/fact (zelph/fact x "q" "k") "=>" (zelph/fact s "noted" x) (zelph/fact s "seen" x)) )js"), janet_thunk(R"js((def s1 (zelph/collection (zelph/fact "a" "p" "b"))) (zelph/fact s1 "~" "conjunction") (def s2 (zelph/collection (zelph/fact "a" "p" "b"))) (zelph/fact s2 "~" "conjunction") (zelph/fact (zelph/fact x "q" "k") "=>" (zelph/fact s1 "noted" x) (zelph/fact s2 "seen" x)) )js")},
+            // The other readers, excluding the firing, distinguish the ground
+            // rules of these pairs (within the last pair, the rules the
+            // generators write). Read as the firing reads them, the second
+            // rule entered was the first one's duplicate, and what a reader
+            // derived from it was lost. The consequences remain separate from
+            // the rules over rules within the data block.
+            {"a named set among the rule's own conditions", {}, "(a p b, sa) => (e f u1)", "(a p b, sb) => (e f u1)"},
+            {"a named set as the whole of the rule's conditions", {}, "sa => (e f u1)", "sb => (e f u1)"},
+            {"a collection of one ground condition and that condition", {}, "@{(a p b)} => (e f u1)", "(a p b) => (e f u1)"},
+            {"a generator over a set of one condition and over that condition", {"x p h", "g go h"}, R"js(%(let [g (zelph/var "G") h (zelph/var "H") condition (zelph/collection (zelph/fact "x" "p" h))] (zelph/fact condition "~" "conjunction") (zelph/dedup-rule (fn [] (zelph/fact (zelph/fact g "go" h) "=>" (zelph/fact condition "=>" (zelph/fact "y" "q" h)))))) )js", "(G go H) => ((x p H) => (y q H))", {"((*{(x p h)} ~ conjunction) => Q) => (Q quoted a)", "((x p h) => Q) => (Q quoted b)"}},
+            // Only a program makes an untagged collection of several
+            // conditions: a rule over one never fires, and a rule pattern meets
+            // it by node. Read through their members, the two collections made
+            // whichever rule was entered second a duplicate of the first.
+            {"two untagged collections of the same members as the whole of the rule's conditions", collections, R"js(%(zelph/dedup-rule (fn [] (zelph/fact c1 "=>" (zelph/fact "e" "f" "u1")))) )js", R"js(%(zelph/dedup-rule (fn [] (zelph/fact c2 "=>" (zelph/fact "e" "f" "u1")))) )js", {R"js(%(zelph/dedup-rule (fn [] (def q (zelph/var "Q")) (zelph/fact (zelph/fact c1 "=>" q) "=>" (zelph/fact q "quoted" "a")))) )js", R"js(%(zelph/dedup-rule (fn [] (def q (zelph/var "Q")) (zelph/fact (zelph/fact c2 "=>" q) "=>" (zelph/fact q "quoted" "b")))) )js"}},
+            // A rule a switch writes is considered a rule solely after a
+            // construction has built it, and the construction reads its set of
+            // one condition in the same way the firing does. Read as that
+            // condition, the set made whichever switch was entered second a
+            // duplicate of the first, while the switch over the set built a
+            // rule that derived nothing. Now, each switch builds a rule that
+            // derives alone, so these shapes lose nothing regardless of which
+            // switch the identity keeps. They lose an answer solely when both
+            // faults reappear: the identity takes one switch as the duplicate
+            // of the other, and the rule constructed by the switch over the
+            // set derives nothing.
+            {"a switch over a set of one condition and over that condition", {"a p b"}, "(K is on) => ({(X p b)} => (b hit yes))", "(K is on) => ((X p b) => (b hit yes))"},
+            {"a generator over a membership in a set of one condition and over that membership", {}, "(K is on) => ({(X in @{K z})} => (X hit K))", "(K is on) => ((X in @{K z}) => (X hit K))"},
+            // One set at a rule's conditions and in its consequence, which only
+            // a program makes. Compared outside the pairing of the sets, or read
+            // as its single condition, it made the rule over two sets a
+            // duplicate of the rule over one, whose firing writes about its own
+            // set, which no observer meets.
+            {"a set that is a rule's conditions and a term of its consequence, over two conditions", {"u p v", "u r v"}, noting_its_own_set(two_conditions), noting_another_set(two_conditions)},
+            {"a set that is a rule's conditions and a term of its consequence, over one condition", {"u p v", "u r v"}, noting_its_own_set(one_condition), noting_another_set(one_condition)},
+            // The member holds a variable, so only the firing reads these sets,
+            // apart from the tag of the first shape's set, and it reads each as
+            // its own member: the two lines constitute a single rule, which
+            // loses nothing here, as no observer reads the tag.
+            {"a set of one condition with a variable and that condition", {"a p b"}, "(*{(X p Y)} ~ conjunction) => (X hit Y)", "(X p Y) => (X hit Y)"},
+            {"a set of one set of conditions and that set", {"a p b", "a r b"}, "{(X p Y, X r Y)} => (X hit Y)", "(X p Y, X r Y) => (X hit Y)"},
         };
     }
 
@@ -178,12 +267,10 @@ sa is special
         std::string text;
     };
 
-    // Whether a line states a rule: a typed line featuring `=>` outside every
-    // bracket, or a Janet line constructing a `=>` fact. A typed fact that
-    // encloses a rule within a set constant states none.
-    bool states_rule(const std::string& text)
+    // The location where a typed line features `=>` outside every bracket, or
+    // npos.
+    std::size_t top_level_arrow(const std::string& text)
     {
-        if (text.rfind("%", 0) == 0) return text.find("\"=>\"") != std::string::npos;
         int depth = 0;
         for (std::size_t i = 0; i < text.size(); ++i)
         {
@@ -192,9 +279,71 @@ sa is special
             else if (text[i] == ')' || text[i] == '}')
                 --depth;
             else if (depth == 0 && text.compare(i, 2, "=>") == 0)
-                return true;
+                return i;
         }
-        return false;
+        return std::string::npos;
+    }
+
+    // Whether a line states a rule: a typed line featuring `=>` outside every
+    // bracket, or a Janet line constructing a `=>` fact. A typed fact that
+    // encloses a rule within a set constant states none.
+    bool states_rule(const std::string& text)
+    {
+        if (text.rfind('%', 0) == 0) return text.find("\"=>\"") != std::string::npos;
+        return top_level_arrow(text) != std::string::npos;
+    }
+
+    // The rule patterns that quote the rules belonging to a shape's pair: for
+    // every typed line `<subject> => <consequences>`,
+    // `(<subject> => Q) => (Q quoted a)` (`b` for the second line), and the
+    // shape's own. Q is a variable that no subject of a pair holds.
+    std::vector<std::string> quotes(const Shape& shape)
+    {
+        std::vector<std::string> result;
+        for (const auto& [line, label] : {std::pair{&shape.a, "a"}, std::pair{&shape.b, "b"}})
+        {
+            const std::size_t arrow = line->rfind("%", 0) == 0 ? std::string::npos : top_level_arrow(*line);
+            if (arrow == std::string::npos) continue;
+            std::string subject = line->substr(0, arrow);
+            while (subject.ends_with(' '))
+                subject.pop_back();
+            result.push_back("(" + subject + " => Q) => (Q quoted " + label + ")");
+        }
+        result.insert(result.end(), shape.quotes.begin(), shape.quotes.end());
+        return result;
+    }
+
+    // A set prints its members following the order of their node ids, and a
+    // line removed before a member was created shifts that id. The members of
+    // every set an answer prints are arranged in sorted order, so that the set
+    // compares by them.
+    std::string sorted_sets(const std::string& text)
+    {
+        std::string result;
+        for (std::size_t i = 0; i < text.size(); ++i)
+        {
+            result += text[i];
+            if (text[i] != '{') continue;
+            std::vector<std::string> members(1);
+            for (int depth = 0; ++i < text.size() && (depth > 0 || text[i] != '}');)
+            {
+                if (text[i] == '(' || text[i] == '{')
+                    ++depth;
+                else if (text[i] == ')' || text[i] == '}')
+                    --depth;
+                if (depth == 0 && text[i] == ' ')
+                    members.emplace_back();
+                else
+                    members.back() += text[i];
+            }
+            for (std::string& member : members)
+                member = sorted_sets(member);
+            std::ranges::sort(members);
+            for (std::size_t m = 0; m < members.size(); ++m)
+                result += (m == 0 ? "" : " ") + members[m];
+            if (i < text.size()) result += '}';
+        }
+        return result;
     }
 
     struct Outcome
@@ -234,8 +383,9 @@ sa is special
         {
             collector.clear();
             interactive.process(query);
-            const std::vector<std::string> answers = collect_answers(collector);
-            outcome.answers[query]                 = std::set<std::string>(answers.begin(), answers.end());
+            std::set<std::string>& answers = outcome.answers[query];
+            for (const std::string& answer : collect_answers(collector))
+                answers.insert(sorted_sets(answer));
         }
         return outcome;
     }
@@ -278,6 +428,8 @@ TEST_CASE("rule identity: a rule line added to a positive program loses no fact 
                     lines.push_back({true, true, second});
                     if (with_context && shift % 2 != 0) lines.push_back({true, true, context[(shape + static_cast<std::size_t>(shift)) % context.size()]});
                     add_block(observers);
+                    for (const std::string& quote : quotes(all[shape]))
+                        lines.push_back({true, false, quote});
 
                     const bool    every_rule_line = shift == 0 && with_context;
                     const Outcome whole           = run_program(lines, lines.size());

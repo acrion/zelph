@@ -768,11 +768,11 @@ A derived marking of an already refuted fact is accepted and changes nothing; in
 
 **Decision.** The engine is changed (decided 2026-10-15): it records a contradiction of a rule with a single plain condition as it records that of the one-member condition set – the condition counts as the only member, and the record is the same set constant. This holds for a denial, a conclusion that meets a refuted fact, a derived refutation that meets a claimed fact (that fact joins the record, as before) and a consequence the engine refuses to build; the first run that meets one announces it, and later runs find it recorded. The front end still builds every one-condition rule as a one-element tagged condition set inside `zelph/dedup-rule`. Such a rule prints as `(*{(X ~ man)} ~ conjunction) => …`, which re-enters as the same rule ([Rules and Inference](../rules.md)); records no longer depend on the form. Tests pin both spellings.
 
-**Why.** Rule identity reads a one-member condition set as its single condition, so the two spellings are one rule, and that rule must record its contradictions whichever spelling the graph holds. The change accepts its consequences: a one-fact record can silence a second, different contradiction resting on the same fact, exactly as records over several facts already do; refusals of single-condition rules are recorded like those of rules with a condition set; and a bare record answers no query ([DEC-BOOKKEEPING](#dec-bookkeeping)), so its memberships never answer `S in O`. For the front end the record only keeps later runs silent; completeness comes from the quiet run's return value ([DEC-QUIET](#dec-quiet)), which no record can mask. The front end keeps the set form because it gives every rule the front end builds a condition set, as a rule with several conditions has one; `ace/zelph-of` prints it as zelph lists it ([DEC-ONE-CONDITION-PRINT](#dec-one-condition-print)).
+**Why.** Rule identity reads a one-member condition set as its single condition when that condition holds a variable, meaning the two spellings constitute a single rule, and that rule must record its contradictions regardless of which spelling the graph holds; with a ground condition, they are distinct rules, which fire alike and are recorded alike. The change accepts its consequences: a one-fact record can silence a second, different contradiction resting on the same fact, exactly as records over several facts already do; refusals of single-condition rules are recorded like those of rules with a condition set; and a bare record answers no query ([DEC-BOOKKEEPING](#dec-bookkeeping)), so its memberships never answer `S in O`. For the front end the record only keeps later runs silent; completeness comes from the quiet run's return value ([DEC-QUIET](#dec-quiet)), which no record can mask. The front end keeps the set form because it gives every rule the front end builds a condition set, as a rule with several conditions has one; `ace/zelph-of` prints it as zelph lists it ([DEC-ONE-CONDITION-PRINT](#dec-one-condition-print)).
 
 **Not taken.** Leaving the engine as it was (the decision until 2026-10-15): a plain single-condition rule typed natively reported its contradictions again on every run, a derived refutation of a claimed fact excepted, and so did the front end's rule wherever it met such a rule typed earlier.
 
-Open for M4: rule identity reads a one-member condition set as its single condition. So on a graph that already holds the rule in the plain form, because a user typed `(X ~ man) => …` natively before, the front end's one-condition rule meets that rule and adds nothing; its contradictions are recorded all the same. But when the rule the user typed is ground, a native mention of it, which takes a typed ground rule out of force ([K1-P1](prerequisites.md#k1-p1-a-mention-switches-a-typed-ground-rule-off)), takes the front end's rule out of force with it (entering the sentence again builds a set-form rule of its own, which is in force). This is an open point on zelph's side, not a defect of the front end; it is answered by the record that a rule was asserted (K1-P1).
+Rule identity reads a one-member condition set as its single condition when that condition holds a variable. So on a graph that already holds the rule in the plain form, because a user typed `(X ~ man) => …` natively before, the front end's one-condition rule meets that rule and adds nothing; its contradictions are recorded all the same. A ground rule entered by the user in plain form stays a distinct rule alongside the front end's version, so a native mention of it, which takes a typed ground rule out of force ([K1-P1](prerequisites.md#k1-p1-a-mention-switches-a-typed-ground-rule-off)), leaves the front end's rule in force; before 2026-11-14, the two were considered a single rule, and the mention took the front end's rule out of force as well, leaving the point open for M4.
 
 **Milestone.** M4 (the engine side is built; the pin is in place since M0).
 
@@ -786,7 +786,7 @@ Rules with a fresh variable in the conclusion ("Every man owns a dog.") needed t
 
 **Decision.** A generator in two shapes; flattened otherwise. The forms below are those `ace/zelph-of` prints ([DEC-ONE-CONDITION-PRINT](#dec-one-condition-print), [DEC-VAR-LETTERS](#dec-var-letters)):
 
-- a **switch**: the outer condition declares no referent (only ground atoms) and the inner rule keeps a variable – "If John waits then every man sleeps." becomes `(*{(John waits nil)} ~ conjunction) => ((*{(X ~ man)} ~ conjunction) => (X sleeps nil))`; applied recursively, so a chain of switches is a generator of generators;
+- a **switch**: the outer condition declares no referent (only ground atoms) and the inner rule keeps a variable – "If John waits then every man sleeps." becomes `(*@{(John waits nil)} ~ conjunction) => ((*{(X ~ man)} ~ conjunction) => (X sleeps nil))`; applied recursively, so a chain of switches is a generator of generators;
 - an inner rule that uses a referent the outer conclusion introduces – "Every man owns a dog that every cat hates." becomes `(*{(X ~ man)} ~ conjunction) => (X owns Y) (Y ~ dog) ((*{(Z ~ cat)} ~ conjunction) => (Z hates Y))`, because Y is a fresh witness the inner rule must share, and no flat rule is equivalent.
 
 Every other nested conditional is flattened: "Every man feeds every dog." is `((X ~ man), (Y ~ dog)) => (X feeds Y)`. A fully ground inner rule ("If John waits then if Mary sleeps then Bill runs.") is always flattened. The generator and every rule it writes claim none of their ground parts; provenance names the generator's sentence. The table of every nested shape and its mode is in [Nested Implications](semantics.md#nested-implications).
@@ -809,7 +809,7 @@ The native form, typed as `ace/zelph-of` prints it (one-condition rules as one-e
 
 ```
 zelph> .lang ace
-ace> (*{(John waits nil)} ~ conjunction) => ((*{(X ~ man)} ~ conjunction) => (X sleeps nil))
+ace> (*@{(John waits nil)} ~ conjunction) => ((*{(X ~ man)} ~ conjunction) => (X sleeps nil))
 ace> Bill ~ man
 ace> X sleeps nil
 ace> John waits nil
@@ -821,7 +821,7 @@ ace> .list-rules
 Listing all rules:
 ------------------------
 (*{(X ~ man)} ~ conjunction) => (X sleeps nil)
-(*{(John waits nil)} ~ conjunction) => ((*{(X ~ man)} ~ conjunction) => (X sleeps nil))
+(*@{(John waits nil)} ~ conjunction) => ((*{(X ~ man)} ~ conjunction) => (X sleeps nil))
 ------------------------
 ```
 
@@ -1137,7 +1137,7 @@ K1-P1 and K1-P2 have one cause – whether a `=>` fact is in force is read off i
 
 - A query's residue is never data: every typed query runs as query text, and what holds its variables goes once it is answered, in the session and after a load. The variables inside a value set pattern count; a `=>` inside a set stays a container. A query's ground collection literal is residue too, while a set constant stays: a collection has an identity nothing outside the query can name, so asserting it would only add an orphan at every asking.
 - Read-only bindings never resolve a string to a variable.
-- Every printed form re-enters as the same node: path and neural tag facts print their sugar outside premises, a rule's one-element condition set prints `(*{…} ~ conjunction)`, a set pattern prints `{…}` with every member, a comma list a statement holds prints as a comma list.
+- Every printed form re-enters as the same node: path and neural tag facts print their sugar outside premises, a rule's one-element condition set prints `(*{…} ~ conjunction)`, or `(*@{…} ~ conjunction)` when it is a collection around a ground condition, a set pattern prints `{…}` with every member, a comma list a statement holds prints as a comma list.
 - A statement that holds a question about implications, and a `=>` line with variables whose consequences cannot be asserted, are queries that leave nothing.
 - The message of `.load` says what happens to auto-run; auto-run still goes off.
 
@@ -1274,9 +1274,9 @@ Writing these pages met a few points where two parts of the specification disagr
 
 **Question.** zelph reads several spellings of a rule with one condition. Which one does `ace/zelph-of` print?
 
-**Decision.** `ace/zelph-of` prints a rule with one condition exactly as zelph lists the rule the front end builds, the one-element condition set: "Every man is mortal." is `(*{(X ~ man)} ~ conjunction) => (X is mortal)`. A rule with several conditions prints as the comma list `((A), (B)) => …`, which is a condition set too.
+**Decision.** `ace/zelph-of` prints a rule with one condition exactly as zelph lists the rule the front end builds, the one-element condition set: "Every man is mortal." is `(*{(X ~ man)} ~ conjunction) => (X is mortal)`. When the single condition is ground, the set carries the collection marker: the switch for "If John waits then every man sleeps." is `(*@{(John waits nil)} ~ conjunction) => …` ([DEC-NESTED-IMP](#dec-nested-imp)). A rule with several conditions prints as the comma list `((A), (B)) => …`, which is a condition set too.
 
-**Why.** This form is exactly what `.list-rules` shows for the rule the front end builds, and typed natively on a graph that lacks the rule it builds exactly that rule; it is the form [RT-3: Native Equivalence of the Shown zelph](tests.md#rt-3-native-equivalence-of-the-shown-zelph) enters natively. Typed natively on a graph that lacks the rule, `((X ~ man)) => …` and `(X ~ man) => …` both build the plain rule – the parentheses only group – which `.list-rules` shows as `(X ~ man) => …`: the same rule, whose contradictions are recorded alike ([DEC-RECORD-SINGLE](#dec-record-single)), but not the form zelph lists for the front end's rule, so neither is ever `ace/zelph-of` output. On a graph that already holds the rule in force, in either form, all three spellings meet it and add nothing.
+**Why.** This form is exactly what `.list-rules` shows for the rule the front end builds, and typed natively on a graph that lacks the rule it builds exactly that rule; it is the form [RT-3: Native Equivalence of the Shown zelph](tests.md#rt-3-native-equivalence-of-the-shown-zelph) enters natively. The front end builds the one-element set as a collection, and the brace alone builds a collection exclusively from a condition that holds a variable; from a ground condition it builds a set constant, a distinct node, and the rule over it constitutes a second rule that fires alike. zelph therefore lists a collection around a ground condition as `*@{…}` (since 2026-11-16; previously, it listed the brace alone, and that line, typed, built the second rule). Typed natively on a graph that lacks the rule, `((X ~ man)) => …` and `(X ~ man) => …` both build the plain rule – the parentheses only group – which `.list-rules` shows as `(X ~ man) => …`: the same rule, whose contradictions are recorded alike ([DEC-RECORD-SINGLE](#dec-record-single)), but not the form zelph lists for the front end's rule, so neither is ever `ace/zelph-of` output. On a graph that already holds the rule in force, in either form, all three spellings meet it and add nothing when its condition holds a variable; with a ground condition, the plain form and the set form are two distinct rules, which fire alike and are recorded alike (prior to 2026-11-14 they were a single rule).
 
 **Milestone.** M1 (`ace/zelph-of`); rules from M4.
 

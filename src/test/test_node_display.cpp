@@ -2019,6 +2019,31 @@ TEST_CASE("display: a comma list a statement holds prints as a comma list")
             REQUIRE(printed.size() == 1);
             CHECK(printed[0].starts_with("x says {("));
         }
+        // A single-condition list prints in its explicit form, where the
+        // brace builds a collection solely from a condition that holds a
+        // variable. From a ground condition it builds the set constant of
+        // it: "x says (*@{(a p b)} ~ conjunction)" printed as "x says (*{(a
+        // p b)} ~ conjunction)", which re-entered as "x says {(a p b)}", a
+        // statement concerning another node. The collection keeps its
+        // marker, and the printed line re-enters as itself.
+        SUBCASE("a list of one ground condition keeps the collection's marker")
+        {
+            interactive.process("x says (*@{(a p b)} ~ conjunction)");
+            const std::vector<std::string> printed = answers("S says O");
+            REQUIRE(printed.size() == 1);
+            CHECK(printed[0] == "x says (*@{(a p b)} ~ conjunction)");
+            interactive.process(printed[0]);
+            CHECK(answers("S says O") == std::vector<std::string>{printed[0], printed[0]});
+        }
+        // The brace enclosing a single-condition list that holds a variable
+        // builds a collection, so that list keeps the brace.
+        SUBCASE("a list of one condition holding a variable keeps the brace")
+        {
+            collector.clear();
+            interactive.process("(*{(X p Y)} ~ conjunction) says x");
+            CHECK(any_output_contains(collector, "(*{(X p Y)} ~ conjunction) says x"));
+            CHECK_FALSE(any_output_contains(collector, "@{"));
+        }
         // The list's own tag and memberships are about the container, and
         // they print it using braces, even when an answer renders them via
         // the query's pattern and its bindings: "S ~ conjunction" answered

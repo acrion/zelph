@@ -627,7 +627,8 @@ conjunction.
 
 A container of **exactly one** member is different: no combination of one
 thing can differ from any other, so the tag cannot change what the rule means.
-All four spellings below are therefore the same rule, and all four fire:
+When the condition holds a variable, as shown below, all four spellings thus
+represent the same rule, and all four fire:
 
 ```
 (X p Y) => (X q Y)                        # one condition, no container
@@ -635,6 +636,13 @@ All four spellings below are therefore the same rule, and all four fire:
 *{(X p Y)} => (X q Y)                     # ... with the focus operator
 (*{(X p Y)} ~ conjunction) => (X q Y)     # ... and tagged explicitly
 ```
+
+With a ground condition, the four spellings fire alike as well, yet
+`(a p b) => (c q d)` and `{(a p b)} => (c q d)` represent two distinct rules: a
+[rule over rules](#mentioning-a-rule-is-not-asserting-it) tells a set containing
+one ground condition from the condition itself, so the comparison that
+[recognizes a rule zelph already has](modules.md#rules-say-themselves-only-once)
+keeps them apart.
 
 ### Facts with Multiple Objects
 

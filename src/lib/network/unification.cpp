@@ -985,7 +985,9 @@ bool zelph::network::ground_condition_matches(Zelph* n, const Node subject, cons
 // closures of its subject and its consequence, which do not extend to the
 // conditions of a rule attached to a container or a set constant; the fact's
 // own flag does (Zelph::var_in_closure, queried during Unification's
-// examination of candidates). Only a `=>` candidate pays the lookup.
+// examination of candidates). Only a `=>` candidate pays the lookup. The rule
+// identity's reading of a rule's own subject relies on it (read_container,
+// ReadAt::OwnSubject).
 static bool is_rule_text(const Zelph* n, const Node fact, const FactStructure& fs, const Zelph::VariableReading reading)
 {
     return fs.predicate == n->core.Causes && n->var_in_closure(fact, reading);
@@ -1016,6 +1018,18 @@ static bool rule_set_holds_variable(const Zelph* n, const Node member)
     return set_holds_variable(n, member, entered);
 }
 
+bool zelph::network::member_is_rule_text(const Zelph* const n, const Node member)
+{
+    // The test of the candidate filter, followed by the two predicates of
+    // rule_set_holds_variable: invoked here too, rule_set_holds_variable is no
+    // longer inlined into is_engine_bookkeeping, and the scan's code undergoes
+    // modification.
+    if (n->var_in_closure(member)) return true;
+    if (!n->holds_rule_text(member)) return false;
+    std::unordered_set<Node> entered;
+    return set_holds_variable(n, member, entered);
+}
+
 // What the engine writes about a rule or a contradiction is not data either
 // (Zelph::is_bookkeeping). Each contradiction record had a condition `S ~ Y`
 // bound to it, so a rule whose consequence refuted a claimed fact met the
@@ -1039,7 +1053,9 @@ static bool is_engine_bookkeeping(const Zelph* n, const FactStructure& fs)
     // first due to its low cost: a data collection named by a single pattern
     // is interpreted as a set of one member, and its memberships are data. A
     // set of ground conditions holds no variable, and its membership answers,
-    // just as a ground condition's does.
+    // just as a ground condition's does. The rule identity's reading of a
+    // rule's own subject relies on it: member_is_rule_text asks the same
+    // predicates, and a change here must change it in the same manner.
     if (fs.predicate == n->core.PartOf && rule_set_holds_variable(n, fs.subject)) return true;
     return n->prune_scan() && n->is_rule_text_fact(fs.subject, fs.predicate, fs.objects);
 }
@@ -2235,7 +2251,8 @@ std::vector<std::shared_ptr<Variables>> Unification::extract_bindings(
     // exposes no variable at depth 1 -- its subject decomposes to a hash
     // node and the constant 0 -- while the variable A sits at depth 2.
     // This exact shape slipped through the former shallow check and caused
-    // the multiplication junk-fact regression.
+    // the multiplication junk-fact regression. The rule identity's reading of
+    // a rule's own subject relies on it (member_is_rule_text).
     {
         if (_n->var_in_closure(subject, _candidates))
         {
