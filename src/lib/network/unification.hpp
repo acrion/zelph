@@ -299,7 +299,23 @@ namespace zelph::network
                                                         // resolves to under current bindings
                                                         // (bound-pattern grounding); 0 = not groundable
 
-        bool _conditions_by_members{false}; // see the constructor
+        // Whether the subject of a candidate is compared with the
+        // condition's through the members of the two sets of conditions
+        // (see the constructor): for each candidate, or for one whose
+        // relation is `=>` where the condition's own relation is a
+        // variable.
+        enum class SubjectByMembers : unsigned char
+        {
+            Never,
+            Always,
+            UnderRule
+        };
+        SubjectByMembers _subject_by_members{SubjectByMembers::Never};
+        bool             subject_by_members(const Node relation) const
+        {
+            return _subject_by_members != SubjectByMembers::Never
+                && (_subject_by_members == SubjectByMembers::Always || relation == _n->core.Causes);
+        }
 
         // // Partial-pattern anchoring (see unification.cpp): candidate facts
         // precomputed by climbing from a concrete inner node of a partially

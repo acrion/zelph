@@ -107,6 +107,51 @@ static bool is_condition_set_node(const Zelph* const n, const Node node)
     return node != 0 && !Zelph::Impl::is_var(node) && n->is_condition_set(node);
 }
 
+// Whether `node`, the subject of a fact in a pattern whose predicate is an
+// open variable, constitutes a set of conditions. Such a subject may be any
+// node, including an atom that a great many facts hold, and
+// Zelph::is_condition_set reads the facts of the node it is asked about.
+// Thus, the id and the tag decide first, and only a container that rule text
+// writes is read: a rule's own collection, a container bearing the
+// conjunction tag, or a set constant. An untagged collection with a single
+// member created by a program is none of these, and under an open variable
+// it stays the node it is.
+static bool is_written_condition_set(const Zelph* const n, const Node node)
+{
+    if (node == 0 || Zelph::Impl::is_var(node)) return false;
+    if (!Zelph::Impl::is_hash(node) && !n->is_rule_template(node) && !n->check_fact(node, n->core.IsA, {n->core.Conjunction}).is_known())
+        return false;
+    return n->is_condition_set(node);
+}
+
+// Whether the subject of a fact within a pattern occupies the same position
+// as the conditions of a rule, such that a set of conditions there matches
+// the sets of other rules via its members (unify_condition) and is not a node
+// that a candidate must hold. The comparison determines this based on the
+// predicate of the fact in the graph (unify_nodes); a reader possessing only
+// the pattern determines it through the pattern's predicate, which is `=>`,
+// or a variable that `=>` may meet: one bound to `=>`, or one that remains
+// open (`vars` null: no binding is known). The anchors and
+// holds_member_matched_set ask here; ground_pattern and the constructor of
+// Unification ask the same once they have resolved the predicate. Asked about
+// the pattern's own predicate in isolation, a variable made the subject a
+// term: in `((a p b, c q d) R (alarm is on)) noted Z` the anchors climbed
+// from the pattern's own set, the grounding looked up a rule over that set,
+// and the top level of a condition compared it by its node, and each failed
+// to identify the rules that the comparison matches.
+static bool subject_holds_conditions(const Zelph* const n, const Node predicate, const Node subject, const Variables* const vars)
+{
+    if (predicate == n->core.Causes) return is_condition_set_node(n, subject);
+    // A variable does not constitute a set, and the majority of patterns
+    // under a variable predicate have one as their subject: asked first, it
+    // keeps the lookups below off them.
+    if (!Zelph::Impl::is_var(predicate) || subject == 0 || Zelph::Impl::is_var(subject)) return false;
+    if (vars != nullptr)
+        if (const Node bound = zelph::string::get(*vars, predicate, Node{0}); bound != 0 && !Zelph::Impl::is_var(bound))
+            return bound == n->core.Causes && is_condition_set_node(n, subject);
+    return is_written_condition_set(n, subject);
+}
+
 // `conditions`: the conditions of a rule are taken into account, provided
 // they form a set.
 static bool condition_set_below(const Zelph* const n, const Node node, std::unordered_set<Node>& seen, const bool conditions)
@@ -118,7 +163,7 @@ static bool condition_set_below(const Zelph* const n, const Node node, std::unor
     if (structures->empty()) return n->is_set_pattern(node);
     for (const auto& fs : *structures)
     {
-        if (conditions && fs.predicate == n->core.Causes && is_condition_set_node(n, fs.subject)) return true;
+        if (conditions && subject_holds_conditions(n, fs.predicate, fs.subject, nullptr)) return true;
         if (condition_set_below(n, fs.subject, seen, conditions) || condition_set_below(n, fs.predicate, seen, conditions)) return true;
         for (const Node o : fs.objects)
             if (condition_set_below(n, o, seen, conditions)) return true;
@@ -684,6 +729,18 @@ static GroundResult ground_pattern(Zelph* n, Node pattern, const Variables& vars
         return r;
     }
 
+    // So does a fact whose predicate is a variable that the bindings ground
+    // to `=>` (subject_holds_conditions): looked up, it was the sole rule
+    // over the pattern's own set, which no statement holds, and the condition
+    // failed as one that cannot match. When queried about the grounded
+    // predicate, it costs a pattern under any alternative predicate one
+    // comparison.
+    if (gp == n->core.Causes && fs.predicate != gp && is_condition_set_node(n, fs.subject))
+    {
+        history.pop_back();
+        return GroundResult::Unbound;
+    }
+
     adjacency_set gobjs;
     bool          changed = (gs != fs.subject) || (gp != fs.predicate);
     for (Node o : fs.objects)
@@ -859,9 +916,12 @@ static void collect_partial_anchors(
                          : fs.predicate;
 
         chain.insert(chain.begin(), p);
-        // The conditions of a rule held here, when they form a set, match other
-        // sets than this one (unify_condition).
-        if (fs.predicate != n->core.Causes || !is_condition_set_node(n, fs.subject))
+        // The conditions of a rule held here, when they form a set, match sets
+        // other than this one (unify_condition), and so do those of a fact
+        // whose predicate is a variable that `=>` may meet: treated as an
+        // anchor, the pattern's own set led the climb to the pattern's own text
+        // alone.
+        if (!subject_holds_conditions(n, fs.predicate, fs.subject, &vars))
             collect_partial_anchors(n, fs.subject, parent_rule, vars, chain, visited, depth_left - 1, log_depth, out, stand_ins);
         for (Node o : fs.objects)
             collect_partial_anchors(n, o, parent_rule, vars, chain, visited, depth_left - 1, log_depth, out, stand_ins);
@@ -1146,7 +1206,19 @@ Unification::Unification(
         // -- matches rules sharing identical members (unify_condition). This
         // does not hold for a rule in force, which the statement that writes it
         // also evaluates as a query: its own conditions are those it names.
-        _conditions_by_members = relation == _n->core.Causes && is_condition_set_node(_n, _subject) && _n->is_mentioned(pattern.condition);
+        //
+        // Under a relation that is a variable, the condition meets a `=>` fact
+        // as well, and its subject then takes the position where the conditions
+        // of that rule reside, just as it does at the next level down, where the
+        // comparison asks the fact within the graph (unify_nodes). Compared by
+        // its node there, the set in
+        // `((a p b, c q d) R (alarm is on)) => (z found R)` met no rule. Such a
+        // condition does not stand as a rule in force, so no statement evaluates
+        // it as its own. Whether the subject of a condition under a variable is
+        // compared in this way is determined below, where the binding of the
+        // variable is looked up.
+        if (relation == _n->core.Causes && is_condition_set_node(_n, _subject) && _n->is_mentioned(pattern.condition))
+            _subject_by_members = SubjectByMembers::Always;
 
         U_LOG(_log_depth, "Init Unification: " + U_NODE(pattern.condition));
 
@@ -1250,11 +1322,19 @@ Unification::Unification(
             {
                 _relation_list     = {bound};
                 _relation_variable = 0;
+                // Bound to `=>`, the variable becomes `=>`
+                // (subject_holds_conditions).
+                if (bound == _n->core.Causes && is_condition_set_node(_n, _subject)) _subject_by_members = SubjectByMembers::Always;
             }
             else
             {
                 _relation_list.clear();
             }
+        }
+        else if (is_written_condition_set(_n, _subject))
+        {
+            // Still open, it meets `=>` among the relations.
+            _subject_by_members = SubjectByMembers::UnderRule;
         }
     }
 
@@ -1806,7 +1886,7 @@ bool Unification::increment_fact_index()
                 Node s = _subject;
                 if (Zelph::Impl::is_var(s)) s = string::get(*_variables, s, s);
                 if (_subject_grounded != 0) s = _subject_grounded; // anchor on the grounded pattern node
-                const bool subject_concrete = is_concrete_lookup_node(s, s == _subject, _conditions_by_members);
+                const bool subject_concrete = is_concrete_lookup_node(s, s == _subject, subject_by_members(current_rel));
 
                 Node o               = 0;
                 bool object_concrete = false;
@@ -2191,7 +2271,7 @@ std::vector<std::shared_ptr<Variables>> Unification::extract_bindings(
     const auto unify_subject = [&](Variables& bindings)
     {
         history.clear();
-        return _conditions_by_members
+        return subject_by_members(relation)
                  ? unify_condition(_n, _subject, subject, bindings, *_variables, history, _log_depth, _prof, _stand_ins, &forks, false)
                  : unify_nodes(_n, _subject, subject, bindings, *_variables, history, _log_depth, _prof, _stand_ins, &forks, false);
     };

@@ -2728,6 +2728,150 @@ carl says ((a p b) => (alarm is off))
         CHECK(collect_answers(collector) == std::vector<std::string>{"((a p b) => (alarm is off)) agreed k"}); });
 }
 
+// The comparison asks the fact in the graph whether a subject stands in the
+// same position as the conditions of a rule do: under `=>` it compares two sets
+// of conditions by their members (unify_nodes). A pattern also holds such a
+// subject under a variable predicate, `((a p b, c q d) R (alarm is on))`, and R
+// meets `=>`. The readers that possess only the pattern asked the pattern's own
+// predicate, the variable, and took the set as the node it is: the top level of
+// a condition compared it via its node, the anchors climbed from it, the
+// grounding looked up the rule over it once R was bound, and `.prune-facts`
+// looked for the pattern's own instance. Each failed to locate the rules that
+// the comparison matches, which a statement around the pattern discovered only
+// when anchors were turned off. All of them now pose a single question
+// (subject_holds_conditions in unification.cpp). In each subcase, a rule that
+// differs in one condition, or in the number of its conditions, does not match.
+TEST_CASE("rule patterns: a rule held under a variable predicate matches a rule with a comma list by its conditions")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        const auto answered = [&](const std::string& query)
+        {
+            interactive.run(true, false, false);
+            collector.clear();
+            interactive.process(query);
+            auto result = collect_answers(collector);
+            std::ranges::sort(result);
+            return result;
+        };
+        const auto holds = [](const std::vector<std::string>& answers, const std::string& answer)
+        { return std::ranges::find(answers, answer) != answers.end(); };
+
+        SUBCASE("at the top of a condition")
+        {
+            // The condition itself is the pattern, and its relation is the
+            // variable: a candidate whose relation is `=>` is compared
+            // through the members of its set, while any other is compared
+            // through its node, meaning the statement that holds a list of
+            // identical conditions under `says` does not constitute a match.
+            // The condition also meets the tag of its own list (R as `~`), an
+            // answer that this case disregards.
+            SUBCASE("anchors on") {}
+            SUBCASE("anchors off") { interactive.process(".anchors off"); }
+            process_lines(interactive, R"(
+(c q d, a p b) => (alarm is on)
+(a p b, c r d) => (alarm is on)
+(c q d, a p b) says hello
+((a p b, c q d) R W) => (z met R)
+)");
+            const std::vector<std::string> met = answered("S met O");
+            CHECK(holds(met, "z met =>"));
+            CHECK_FALSE(holds(met, "z met says"));
+
+            collector.clear();
+            interactive.process(".explain (z met =>)");
+            CHECK(any_output_contains(collector, "=> (alarm is on)  [axiom]"));
+            CHECK_FALSE(any_output_contains(collector, "no derivation found"));
+        }
+        SUBCASE("inside a statement, where the anchors read the pattern")
+        {
+            // The pattern serves as the subject of `noted` and the object of
+            // `says`. With anchors enabled, the climb started at the pattern's
+            // own list and reached nothing other than the rule's own text.
+            SUBCASE("anchors on") {}
+            SUBCASE("anchors off") { interactive.process(".anchors off"); }
+            process_lines(interactive, R"(
+((c q d, a p b) => (alarm is on)) noted yes
+((a p b, c r d) => (alarm is on)) noted no
+(((a p b, c q d) R (alarm is on)) noted Z) => (z found Z)
+x says ((c q d, a p b) => (alarm is on))
+y says ((a p b, c q d, e r f) => (alarm is on))
+(X says ((a p b, c q d) R (alarm is on))) => (X heard R)
+)");
+            CHECK(answered("S found O") == std::vector<std::string>{"z found yes"});
+            CHECK(answered("S heard O") == std::vector<std::string>{"x heard =>"});
+
+            collector.clear();
+            interactive.process(".explain (x heard =>)");
+            CHECK(any_output_contains(collector, "└─ x says"));
+            CHECK_FALSE(any_output_contains(collector, "no derivation found"));
+        }
+        SUBCASE("under a predicate that another condition binds")
+        {
+            // The first condition binds R to `=>`, so the second condition
+            // holds a rule over a list, which represents every rule over these
+            // conditions. Grounded, it was the single rule over the pattern's
+            // own list, which no statement holds, and the condition was
+            // counted as one that cannot match, in either anchor mode. The
+            // last rule holds the list at the top of its second condition,
+            // where R is `=>` as well once the first condition has bound it;
+            // it meets the rule in force over these conditions and the rule
+            // that the `noted` statement mentions.
+            SUBCASE("anchors on") {}
+            SUBCASE("anchors off") { interactive.process(".anchors off"); }
+            process_lines(interactive, R"(
+(g h i) => (alarm is on)
+((c q d, a p b) => (alarm is on)) noted yes
+((a p b, c r d) => (alarm is on)) noted no
+((g h i) R (alarm is on), ((a p b, c q d) R (alarm is on)) noted Z) => (z found Z)
+(c q d, a p b) => (lamp is lit)
+(a p b, c r d) => (lamp is dark)
+((g h i) R (alarm is on), (a p b, c q d) R W) => (z saw W)
+)");
+            CHECK(answered("S found O") == std::vector<std::string>{"z found yes"});
+            CHECK(answered("S saw O") == std::vector<std::string>{"z saw (alarm is on)", "z saw (lamp is lit)"});
+        }
+        SUBCASE("in the pattern of a prune")
+        {
+            // A prune removes what its pattern matches. It took the pattern for
+            // one that matches only its own instance, the statement over the
+            // pattern's own list, and removed nothing.
+            process_lines(interactive, R"(
+((c q d, a p b) => (alarm is on)) noted yes
+((c q d, a p b) => (alarm is off)) noted yes
+)");
+            collector.clear();
+            interactive.process(".prune-facts ((a p b, c q d) R (alarm is on)) noted Z");
+            CHECK(any_output_contains(collector, "Pruned 1 matching facts."));
+            const std::vector<std::string> left = answered("S noted O");
+            REQUIRE(left.size() == 1);
+            CHECK(left[0].find("(alarm is off)") != std::string::npos);
+        }
+        SUBCASE("in a query")
+        {
+            // A query is also such a pattern, both at its top and inside a
+            // statement: it answers the rule over these conditions and not the
+            // rule that differs in one condition. Its own list carries the
+            // conjunction tag, which the query at the top meets as well; the
+            // check counts the rules it answers.
+            SUBCASE("anchors on") {}
+            SUBCASE("anchors off") { interactive.process(".anchors off"); }
+            process_lines(interactive, R"(
+(c q d, a p b) => (alarm is on)
+(a p b, c r d) => (alarm is on)
+x says ((c q d, a p b) => (alarm is on))
+y says ((a p b, c r d) => (alarm is on))
+)");
+            const std::vector<std::string> rules = answered("(a p b, c q d) R O");
+            CHECK(std::ranges::count_if(rules, [](const std::string& answer)
+                                        { return answer.find("=> (alarm is on)") != std::string::npos; })
+                  == 1);
+            const std::vector<std::string> said = answered("X says ((a p b, c q d) R O)");
+            REQUIRE(said.size() == 1);
+            CHECK(said[0].starts_with("x says"));
+        } });
+}
+
 TEST_CASE("rule patterns: the parts of a mention nested deeper or in a set are patterns")
 {
     // The parser generates a mention for every `=>` found within another
