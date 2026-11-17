@@ -223,6 +223,76 @@ TEST_CASE("janet: zelph/prune-fact removes one claimed fact, as .prune-facts doe
     }
 }
 
+// A pattern that holds a set matched by its members finds its facts via the
+// unifier, since such a pattern matches facts that are not its own instance:
+// a statement that holds a rule over a comma list, and a subject that stands
+// beneath a variable predicate where the conditions of a rule are located.
+// That path took every fact the pattern matched, and a fact with an object
+// the pattern does not name accompanied it: `.prune-facts {a} R c` removed
+// `{a} tells c d`, and with it what that fact states about `d`. A pattern
+// removes its own facts and no wider ones, just as the ground form does (the
+// subcase "a wider fact is not pruned through a narrower one" above).
+TEST_CASE("pruning: a pattern matched by the members of a set leaves a fact with an object it does not name")
+{
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+    const auto                  answers = [&](const std::string& query)
+    {
+        collector.clear();
+        interactive.process(query);
+        auto result = collect_answers(collector);
+        std::ranges::sort(result);
+        return result;
+    };
+    const auto reports = [&](const std::string& command, const std::string& line)
+    {
+        collector.clear();
+        interactive.process(command);
+        return any_output_contains(collector, line);
+    };
+
+    SUBCASE("a set constant of one member under a variable predicate")
+    {
+        // The set constant `{a}` is data. Under a variable predicate that
+        // remains open, it counts as a set of conditions, which a set
+        // containing a single member is, without a tag, and that sends the
+        // prune through the unifier.
+        process_lines(interactive, "{a} says c\n{a} tells c d\n");
+        CHECK(reports(".prune-facts {a} R c", "Pruned 1 matching facts."));
+        CHECK(answers("S says O").empty());
+        CHECK(answers("S tells O") == std::vector<std::string>{"{a} tells c", "{a} tells d"});
+    }
+    SUBCASE("a pattern of two objects beside a fact of three")
+    {
+        process_lines(interactive, "{a} tells c d\n{a} tells c d e\n");
+        CHECK(reports(".prune-facts {a} R c d", "Pruned 1 matching facts."));
+        CHECK(answers("S tells O") == std::vector<std::string>{"{a} tells c", "{a} tells d", "{a} tells e"});
+    }
+    SUBCASE("a held rule beside a second object")
+    {
+        // `x` states the rule and `k` within a single fact, `y` the rule
+        // in isolation. The pattern names the rule and nothing beyond,
+        // hence only the fact of `y` is its own.
+        process_lines(interactive, "x says ((c q d, a p b) => (alarm is on)) k\ny says ((c q d, a p b) => (alarm is on))\n");
+        CHECK(reports(".prune-facts S R ((a p b, c q d) => (alarm is on))", "Pruned 1 matching facts."));
+        const auto left = answers("S says O");
+        REQUIRE(left.size() == 2);
+        CHECK(left[0].starts_with("x says "));
+        CHECK(left[1].starts_with("x says "));
+    }
+    SUBCASE("the nodes .prune-nodes removes")
+    {
+        // The node form removes the subject of each fact its pattern matches:
+        // `y`, and not `x`, the fact of which holds `k` as well.
+        process_lines(interactive, "x noted ((c q d, a p b) => (alarm is on)) k\ny noted ((c q d, a p b) => (alarm is on))\n");
+        CHECK(reports(".prune-nodes S noted ((a p b, c q d) => (alarm is on))", "Pruned 1 matching facts and 1 nodes."));
+        const auto left = answers("S noted O");
+        REQUIRE(left.size() == 2);
+        CHECK(left[0].starts_with("x noted "));
+        CHECK(left[1].starts_with("x noted "));
+    }
+}
+
 // A prune takes the statements that nest the fact along with it (pinned
 // above), so a program that must not lose one asks first. The answer
 // corresponds to what the first step of the removal takes: the statements

@@ -111,11 +111,22 @@ void zelph::network::Reasoning::collect_prune_targets(const Node condition, cons
         {
             const Node fact = u.matched_fact();
             if (fact == 0) continue;
+
+            // A fact that holds an object not named by the pattern is not the
+            // pattern's fact, and it remains, just as it does on the exact
+            // path below, which asks check_fact for the pattern's objects and
+            // nothing else: eliminating it would also remove what it states
+            // about that object. The match pairs each object of the pattern
+            // with an object of its own in the fact (extract_bindings), so
+            // the fact holds such an object exactly when it holds more
+            // objects than the pattern.
+            adjacency_set fact_objects;
+            const Node    fact_subject = parse_fact(fact, fact_objects);
+            if (fact_objects.size() > objects.size()) continue;
+
             _facts_to_prune.insert(fact);
             if (!_prune_nodes_mode) continue;
 
-            adjacency_set fact_objects;
-            const Node    fact_subject = parse_fact(fact, fact_objects);
             if (Zelph::Impl::is_var(subject_pattern))
                 _nodes_to_prune.insert(fact_subject);
             else if (fact_objects.size() == 1)
