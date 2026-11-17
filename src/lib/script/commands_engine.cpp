@@ -29,11 +29,14 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include "script/script_engine.hpp"
 #include "string/string_utils.hpp"
 
+#include <charconv>
 #include <cstddef>
 #include <exception>
 #include <limits>
+#include <sstream>
 #include <stdexcept>
 #include <string>
+#include <system_error>
 #include <vector>
 
 using namespace zelph;
@@ -245,6 +248,50 @@ namespace zelph::console
         }
 
         _n->set_explain_budget(budget);
+        _n->out(status(), true);
+    }
+
+    void CommandExecutor::Impl::cmd_node_map_load_factor(const std::vector<std::string>& cmd)
+    {
+        namespace sizing = network::node_map_sizing;
+
+        const auto status = [this]
+        {
+            const float        factor = _n->node_map_load_factor();
+            std::ostringstream text;
+            text << "Node map load factor from 2^31 buckets: " << factor << (factor == sizing::default_load_factor ? " (default)" : "");
+            return text.str();
+        };
+
+        if (cmd.size() == 1)
+        {
+            _n->out(status(), true);
+            return;
+        }
+
+        const auto usage = []
+        {
+            std::ostringstream text;
+            text << "Usage: .node-map-load-factor [<factor>|default] -- <factor> is a number from "
+                 << sizing::min_large_load_factor << " to " << sizing::max_large_load_factor
+                 << ", the load factor the node map may reach once it has 2^31 buckets";
+            return std::runtime_error(text.str());
+        };
+        if (cmd.size() != 2) throw usage();
+
+        float factor = sizing::default_load_factor;
+        if (cmd[1] != "default")
+        {
+            // from_chars reads the number in the same manner across all
+            // locales.
+            const char* const first = cmd[1].data();
+            const char* const last  = first + cmd[1].size();
+            const auto [end, error] = std::from_chars(first, last, factor);
+            const bool in_range     = factor >= sizing::min_large_load_factor && factor <= sizing::max_large_load_factor;
+            if (error != std::errc{} || end != last || !in_range) throw usage();
+        }
+
+        _n->set_node_map_load_factor(factor);
         _n->out(status(), true);
     }
 }

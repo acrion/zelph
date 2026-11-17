@@ -71,6 +71,7 @@ add_executable(zelph_tests
     test_nand_arithmetic.cpp
     test_neural.cpp
     test_node_display.cpp
+    test_node_map.cpp
     test_numbers.cpp
     test_numeric_compare.cpp
     test_intervals.cpp
@@ -119,6 +120,11 @@ add_executable(zelph_tests
     test_wikidata_qualifiers.cpp
 )
 target_link_libraries(zelph_tests PRIVATE zelph_lib doctest_with_main unordered_dense::unordered_dense)
+
+# test_node_map.cpp writes the header of a network file independently, just as
+# any writer apart from the engine would, using Cap'n Proto, the library that
+# reads it.
+target_link_libraries(zelph_tests PRIVATE CapnProto::capnp)
 
 # Networks saved by prior engine versions, which the tests load as a user
 # would. They are compiled into the test binary instead of being loaded from

@@ -61,6 +61,11 @@ struct ZelphImpl {
   # within a condition, regardless of its predicate, as one that a fact
   # with multiple objects could potentially state.
   widerStatementPredicates @15 :List(UInt64);
+  # The number of nodes that the left and the right sections hold
+  # together: what a load reserves the node map for before reading them
+  # (node_map_sizing::load_reserve). 0 in every file from an older engine,
+  # whose load estimates the number based on the chunk counts.
+  nodeCount @16 :UInt64;
 }
 
 struct NamePair {

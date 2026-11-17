@@ -187,6 +187,7 @@ namespace zelph::console
         void cmd_contradiction_records(const std::vector<std::string>& cmd);
         void cmd_negation_records(const std::vector<std::string>& cmd);
         void cmd_explain_budget(const std::vector<std::string>& cmd);
+        void cmd_node_map_load_factor(const std::vector<std::string>& cmd);
 
         // --- Implemented in commands_cluster.cpp ---
 

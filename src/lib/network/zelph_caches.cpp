@@ -35,6 +35,8 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include <memory>
 #include <mutex>
 #include <shared_mutex>
+#include <sstream>
+#include <stdexcept>
 #include <unordered_set>
 #include <utility>
 #include <vector>
@@ -667,6 +669,28 @@ void Zelph::reset_genuine_stats() const
 {
     _genuine_hits.store(0, std::memory_order_relaxed);
     _genuine_walks.store(0, std::memory_order_relaxed);
+}
+
+float Zelph::node_map_load_factor() const
+{
+    return _pImpl->large_load_factor();
+}
+
+void Zelph::set_node_map_load_factor(const float factor) const
+{
+    if (!(factor >= node_map_sizing::min_large_load_factor && factor <= node_map_sizing::max_large_load_factor))
+    {
+        std::ostringstream text;
+        text << "Zelph::set_node_map_load_factor: the factor must lie from " << node_map_sizing::min_large_load_factor
+             << " to " << node_map_sizing::max_large_load_factor << ", not " << factor;
+        throw std::invalid_argument(text.str());
+    }
+    _pImpl->set_large_load_factor(factor);
+}
+
+Network::NodeMapState Zelph::node_map_state() const
+{
+    return _pImpl->node_map_state();
 }
 
 bool Zelph::fact_stores_enabled() const

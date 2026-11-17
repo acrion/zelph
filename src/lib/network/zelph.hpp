@@ -712,6 +712,16 @@ namespace zelph::network
         bool fact_stores_enabled() const;
         void disable_fact_stores() const;
 
+        // --- Node map sizing (.node-map-load-factor, .stat) ---
+        // The load factor the node map uses from 2^31 buckets onward, and the
+        // map's state (Network::set_large_load_factor, node_map_sizing.hpp).
+        // The factor lies from node_map_sizing::min_large_load_factor to
+        // max_large_load_factor; like every setting of the engine, .new
+        // reverts to the default.
+        float                 node_map_load_factor() const;
+        void                  set_node_map_load_factor(float factor) const;
+        Network::NodeMapState node_map_state() const;
+
         FactComponents    extract_fact_components(Node relation) const;
         void              set_output_handler(io::OutputHandler output) const;
         io::OutputHandler get_output_handler() const;

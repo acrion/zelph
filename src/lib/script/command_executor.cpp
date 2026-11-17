@@ -317,6 +317,8 @@ namespace zelph::console
         { cmd_negation_records(c); };
         _command_map[".explain-budget"] = [this](auto& c)
         { cmd_explain_budget(c); };
+        _command_map[".node-map-load-factor"] = [this](auto& c)
+        { cmd_node_map_load_factor(c); };
         _command_map[".cluster"] = [this](auto& c)
         { cmd_cluster(c); };
         _command_map[".cluster-drop"] = [this](auto& c)

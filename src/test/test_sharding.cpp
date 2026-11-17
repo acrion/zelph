@@ -25,6 +25,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #include <doctest/doctest.h>
 
+#include "network/reasoning.hpp"
 #include "test_helpers.hpp"
 
 #include <cstdio>
@@ -478,6 +479,36 @@ TEST_CASE("sharding: a seek-only manifest reads chunks from the .bin")
         interactive.process(".lang de");
         interactive.process(".node beta_de");
         CHECK(any_event_contains(collector, "beta_de")); });
+
+    fs::remove_all(artifact.root);
+}
+
+// A load via a manifest reserves the node map in the same manner as a .bin
+// load does: for the node count indicated in the source .bin's header, up to
+// the extent that the chunks being read can hold it. The artifact's network
+// is too small to make the map of a fresh engine grow, so the reserve shows
+// in the entries it was made for: every node of the file for either manifest,
+// whether a chunk comes from a shard or from a byte range within the .bin,
+// and none where the load reads neither section.
+TEST_CASE("sharding: a load through a manifest reserves the node map for the nodes it reads")
+{
+    const auto artifact = build_artifact(artifact_root("reserve"));
+
+    for (const auto& manifest : {artifact.sharded_manifest, artifact.seek_manifest})
+    {
+        CAPTURE(manifest.string());
+        with_fresh_session([&](auto&, auto& interactive)
+                           {
+            interactive.process(".load-partial \"" + manifest.string() + "\"");
+            const auto whole = interactive.graph()->node_map_state();
+            CHECK(whole.entries > 0);
+            CHECK(whole.reserved == whole.entries);
+
+            interactive.process(".load-partial \"" + manifest.string() + "\" left=none right=none");
+            const auto neither = interactive.graph()->node_map_state();
+            CHECK(neither.entries == 0);
+            CHECK(neither.reserved == 0); });
+    }
 
     fs::remove_all(artifact.root);
 }

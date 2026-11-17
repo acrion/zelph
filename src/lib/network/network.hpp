@@ -26,6 +26,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #pragma once
 
 #include "adjacency_set.hpp"
+#include "node_map_sizing.hpp"
 
 #include <ankerl/unordered_dense.h>
 
@@ -160,6 +161,7 @@ namespace zelph::network
 
             auto [rel_it, inserted] = _nodes.try_emplace(relation);
             node_entry& rel         = rel_it->second;
+            if (inserted) note_inserted();
 
             if (!inserted && !rel.left.is_absent())
             {
@@ -616,6 +618,38 @@ namespace zelph::network
         {
             std::shared_lock<std::shared_mutex> lock_left(_smtx_left);
             return _nodes.size() - _absent_left;
+        }
+
+        // The load factor the node map uses once its bucket array reaches
+        // node_map_sizing::large_buckets; otherwise, it uses the default. A
+        // map that already has them adopts a new factor immediately, while
+        // any other map does so when it grows there or when a load reserves
+        // them.
+        float large_load_factor() const { return _large_load_factor; }
+        void  set_large_load_factor(const float factor)
+        {
+            std::unique_lock<std::shared_mutex> lock_left(_smtx_left);
+            std::unique_lock<std::shared_mutex> lock_right(_smtx_right);
+            _large_load_factor = factor;
+            apply_load_factor();
+        }
+
+        // The size and factor of the node map, along with what the last load
+        // did with it: the entries it reserved before inserting any, and how
+        // often the bucket array doubled during insertion, which a reserve
+        // for the node count that the file records leaves at none.
+        struct NodeMapState
+        {
+            std::size_t entries     = 0;
+            std::size_t buckets     = 0;
+            float       load_factor = node_map_sizing::default_load_factor;
+            std::size_t reserved    = 0;
+            std::size_t growths     = 0;
+        };
+        NodeMapState node_map_state() const
+        {
+            std::shared_lock<std::shared_mutex> lock_left(_smtx_left);
+            return {_nodes.size(), _nodes.bucket_count(), _nodes.max_load_factor(), _load_reserved, _load_growths};
         }
 
         Node var()
@@ -1866,11 +1900,12 @@ namespace zelph::network
 #ifdef NDEBUG
     protected:
 #endif
-        // See node_entry. The map's keys are modified solely when both
-        // adjacency locks are held exclusively, and a side's sets are updated
-        // under that side's lock -- `left` under _smtx_left and `right` under
-        // _smtx_right. A load fills the map without those locks (load_left,
-        // load_right): no reads occur while a load is in progress.
+        // See node_entry. The map's keys and its load factor are modified
+        // solely when both adjacency locks are held exclusively, and a side's
+        // sets are updated under that side's lock -- `left` under _smtx_left
+        // and `right` under _smtx_right. A load fills the map without those
+        // locks (load_left, load_right, finish_load): no reads occur while a
+        // load is in progress.
         node_map _nodes;
 
         // The entries where either the left or right side is absent (see
@@ -1878,6 +1913,17 @@ namespace zelph::network
         // load read one side of a node without the other.
         std::size_t _absent_left{0};
         std::size_t _absent_right{0};
+
+        // See set_large_load_factor and apply_load_factor.
+        float       _large_load_factor{node_map_sizing::default_load_factor};
+        std::size_t _large_factor_from{std::numeric_limits<std::size_t>::max()};
+
+        // See reserve_for_load and NodeMapState: the number of buckets
+        // immediately following the last load's reserve, the entries it
+        // reserved, and the doublings that occurred during insertion.
+        std::size_t _load_buckets{0};
+        std::size_t _load_reserved{0};
+        std::size_t _load_growths{0};
 
         // The left or the right side of `n`, or null if it lacks that side:
         // `n` does not exist, or a partial load did not read that side. Under
@@ -1914,7 +1960,11 @@ namespace zelph::network
         void create_entry(const Node n)
         {
             const auto [it, inserted] = _nodes.try_emplace(n);
-            if (inserted) return;
+            if (inserted)
+            {
+                note_inserted();
+                return;
+            }
             if (it->second.left.is_absent()) --_absent_left;
             if (it->second.right.is_absent()) --_absent_right;
             it->second.left  = adjacency_set{};
@@ -1952,6 +2002,76 @@ namespace zelph::network
                 --_absent_right;
             }
             it->second.right = std::move(adj);
+        }
+
+        // Sizes the node map before a load inserts `requested` entries
+        // (node_map_sizing::load_reserve), ensuring that the load fills the
+        // map without a growth: each doubling of the bucket array re-places
+        // every entry inserted so far. A request beyond
+        // node_map_sizing::reserve_limit is clamped to that limit, and the
+        // map grows from that point onward.
+        void reserve_for_load(const std::uint64_t requested)
+        {
+            namespace sizing = node_map_sizing;
+            std::unique_lock<std::shared_mutex> lock_left(_smtx_left);
+            std::unique_lock<std::shared_mutex> lock_right(_smtx_right);
+
+            const auto entries = static_cast<std::size_t>((std::min)(requested, sizing::reserve_limit(_large_load_factor)));
+
+            // ankerl sizes a reserve at one factor for every array size,
+            // thus requiring the factor of the array it is to select to be
+            // in force first: the default, unless the entries exceed what
+            // large_buckets hold at the default, in which case no smaller
+            // array holds them at the large factor either.
+            const bool large = entries > sizing::capacity(sizing::large_buckets, sizing::default_load_factor);
+            _nodes.max_load_factor(large ? _large_load_factor : sizing::default_load_factor);
+            _nodes.reserve(entries);
+            apply_load_factor();
+
+            _load_reserved = entries;
+            _load_buckets  = _nodes.bucket_count();
+        }
+
+        // Called once a load has inserted its entries: the array grows
+        // solely through doubling, and nothing is erased while a load
+        // inserts. The load gives the map the factor for the bucket count it
+        // attained at this point, rather than with every entry: its reserve
+        // gave the large factor to every map it sized for large_buckets, and
+        // a map that outgrew its reserve -- where the file records no node
+        // count, or records fewer nodes than it holds, or its two sections
+        // hold different nodes under a single chunk number -- has grown at
+        // the default until this moment.
+        void finish_load()
+        {
+            _load_growths = 0;
+            for (std::size_t buckets = _load_buckets; buckets != 0 && buckets < _nodes.bucket_count(); buckets *= 2)
+                ++_load_growths;
+            apply_load_factor();
+        }
+
+        // Gives the node map the factor corresponding to its bucket count
+        // (node_map_sizing::factor_at), and notes the size beyond which it
+        // has to be given again: a map below large_buckets grows to them
+        // when it holds more than half as many buckets hold at the default
+        // factor, and only at that point does a factor different from the
+        // default take over.
+        void apply_load_factor()
+        {
+            namespace sizing   = node_map_sizing;
+            const float factor = sizing::factor_at(_nodes.bucket_count(), _large_load_factor);
+            if (_nodes.max_load_factor() != factor) _nodes.max_load_factor(factor);
+            _large_factor_from = _nodes.bucket_count() < sizing::large_buckets && _large_load_factor != sizing::default_load_factor
+                                   ? static_cast<std::size_t>(sizing::capacity(sizing::large_buckets / 2, sizing::default_load_factor))
+                                   : std::numeric_limits<std::size_t>::max();
+        }
+
+        // Following each entry added by a created node or a bulk import (a
+        // load performs a single check, during finish_load): one comparison
+        // against a size that no map reaches unless a factor other than the
+        // default is awaiting its growth to large_buckets.
+        void note_inserted()
+        {
+            if (_nodes.size() > _large_factor_from) apply_load_factor();
         }
 
         // Sparse edge-weight store, keyed by create_hash(a, b) of a directed edge.

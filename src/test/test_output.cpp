@@ -654,6 +654,35 @@ TEST_CASE("help: .negation-records is documented and listed with the engine sett
     CHECK(any_output_contains(collector, ".contradiction-records, .negation-records,"));
 }
 
+// The same four places for the node map's load factor, whose detail names
+// the step that the factor defers and the cost associated with it.
+TEST_CASE("help: .node-map-load-factor is documented and listed with the engine settings")
+{
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+    interactive.process(".help .node-map-load-factor");
+    CHECK(any_output_contains(collector, ".node-map-load-factor [<factor>|default]"));
+    CHECK(any_output_contains(collector, "adds another 16 GiB at once"));
+    CHECK_FALSE(any_event_contains(collector, "Unknown command"));
+
+    // What a factor is compared to: the entries, versus the factor
+    // multiplied by the bucket count. A map containing a single entry
+    // exceeds the factor.
+    CHECK(any_output_contains(collector, "exceed the load factor times the"));
+
+    collector.clear();
+    interactive.process(".help");
+    CHECK(any_output_contains(collector, ".node-map-load-factor [<factor>|default]"));
+
+    collector.clear();
+    interactive.process(".help .new");
+    CHECK(any_output_contains(collector, ".node-map-load-factor, .lang,"));
+
+    collector.clear();
+    interactive.process(".help .stat");
+    CHECK(any_output_contains(collector, "see .help .node-map-load-factor"));
+}
+
 // A declaration is not a command, thus ".help opaque" could not locate an
 // entry: the bare name was read as the command ".opaque" and rejected for
 // being unrecognized. The overview lists the topic alongside the inference

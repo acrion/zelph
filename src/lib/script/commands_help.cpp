@@ -130,6 +130,7 @@ namespace zelph::console
             "  .contradiction-records [on|off]           – Show or disable writing each contradiction into the graph (memory vs. repeated reports)",
             "  .negation-records [on|off]                – Show or set recording what negations derived, to warn when a later fact defeats one (default: off)",
             "  .explain-budget [<units>|default|unlimited] – Show or set the work .explain may spend on the complete proof under a depth limit (default: 80000)",
+            "  .node-map-load-factor [<factor>|default]  – Show or set the load factor of the node map from 2^31 buckets on (memory vs. speed, default: 0.8)",
             "",
             "Logging & Profiling",
             "  .log <max-depth>                          – Enable detailed reasoning logging up to given recursion depth (0 = off, -1 = counters only)",
@@ -1000,9 +1001,10 @@ namespace zelph::console
                      "Also clears the import registry, so all scripts can be imported again.\n"
                      "The engine is created anew, so everything it holds returns to its default:\n"
                      "the settings .parallel, .anchors, .semi-naive, .fact-stores,\n"
-                     ".contradiction-records, .negation-records, .explain-budget, .lang, .log\n"
-                     "and .log-janet, the records of .negation-records, the clusters, and every\n"
-                     "Janet definition. What belongs to the session stays:\n"
+                     ".contradiction-records, .negation-records, .explain-budget,\n"
+                     ".node-map-load-factor, .lang, .log and .log-janet, the records of\n"
+                     ".negation-records, the clusters, and every Janet definition.\n"
+                     "What belongs to the session stays:\n"
                      ".deductions, .auto-run and .timer keep their mode.\n"
                      "A module loaded with .import cannot run it: a module does not clear the\n"
                      "session that loads it. A script run as 'zelph script.zph' can, and its\n"
@@ -1011,6 +1013,8 @@ namespace zelph::console
             {".stat", ".stat\n"
                       "Shows current network statistics:\n"
                       "- Number of nodes\n"
+                      "- The load factor of the node map from 2^31 buckets, shown only when it\n"
+                      "  differs from the default (see .help .node-map-load-factor)\n"
                       "- RAM usage (in GiB, if available)\n"
                       "- Total entries in name-of-node mappings\n"
                       "- Total entries in node-of-name mappings\n"
@@ -1270,6 +1274,24 @@ namespace zelph::console
                                 "engine, so .new restores the default.\n"
                                 "The same budget bounds the search of (zelph/dependents <fact>) from\n"
                                 "Janet, which ends its answer with :truncated where the budget ran out."},
+            {".node-map-load-factor", ".node-map-load-factor [<factor>|default]\n"
+                                      "Shows or sets the load factor the node map may reach once its bucket\n"
+                                      "array has 2^31 buckets. The node map holds one entry per node, and its\n"
+                                      "bucket array doubles when the entries exceed the load factor times the\n"
+                                      "number of buckets; below 2^31 buckets the factor is always 0.8. The\n"
+                                      "array has 2^31 buckets beyond 858,993,472 nodes and takes 16 GiB then,\n"
+                                      "and its one remaining doubling adds another 16 GiB at once: at node\n"
+                                      "1,717,986,945 at the default 0.8, at node 1,932,735,233 at 0.9, at node\n"
+                                      "2,040,109,441 at 0.95. A higher factor defers that step, and a lookup\n"
+                                      "in so full a map takes longer (memory vs. speed).\n"
+                                      "  (no argument) – show the current factor\n"
+                                      "  <factor>  – a number from 0.8 to 0.95\n"
+                                      "  default   – 0.8, the factor below 2^31 buckets\n"
+                                      "Set it before the .load or the import that builds so large a network:\n"
+                                      "a load sizes the node map once, for the node count its file records,\n"
+                                      "and a map that has 2^31 buckets already takes a new factor at once.\n"
+                                      "The factor is a setting of the engine, so .new restores the default;\n"
+                                      ".stat shows it while it differs from the default."},
             {".fact-stores", ".fact-stores [on|off]\n"
                              "Shows or disables the fact-path acceleration stores: the genuine-\n"
                              "structure store (exact triple per created fact node) and the\n"

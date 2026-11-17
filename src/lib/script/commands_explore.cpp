@@ -784,6 +784,12 @@ namespace zelph::console
 
         _n->out_stream() << "Nodes: " << _n->count() << std::endl;
 
+        // The setting of .node-map-load-factor, displayed solely when it
+        // differs from the default: the statistics of every other session
+        // remain unchanged.
+        if (const float factor = _n->node_map_load_factor(); factor != network::node_map_sizing::default_load_factor)
+            _n->out_stream() << "Node map load factor from 2^31 buckets: " << factor << std::endl;
+
         size_t ram_usage = zelph::platform::get_process_memory_usage();
         if (ram_usage > 0)
         {

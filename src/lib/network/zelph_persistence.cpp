@@ -190,8 +190,11 @@ void Zelph::Impl::clear_loaded_state()
     std::unique_lock<std::shared_mutex> lock_name_node(_mtx_name_of_node);
 
     _nodes.clear();
-    _absent_left  = 0;
-    _absent_right = 0;
+    _absent_left   = 0;
+    _absent_right  = 0;
+    _load_buckets  = 0;
+    _load_reserved = 0;
+    _load_growths  = 0;
     _weights.clear();
     _name_of_node.clear();
     _node_of_name.clear();
@@ -715,7 +718,8 @@ void Zelph::Impl::loadFromManifest(const std::string& manifest_path, const Zelph
             detail::fetch_chunk_to_cache(header_source, 0, manifest_description.source_header_length_bytes, "header").string();
     }
 
-    FILE* file = detail::open_file_or_throw(header_source_path);
+    std::uint64_t node_count = 0;
+    FILE*         file       = detail::open_file_or_throw(header_source_path);
     try
     {
         ::capnp::ReaderOptions options;
@@ -727,6 +731,7 @@ void Zelph::Impl::loadFromManifest(const std::string& manifest_path, const Zelph
         ::capnp::PackedMessageReader   main_message(buffered_input, options);
         auto                           impl = main_message.getRoot<ZelphImpl>();
         loadSmallData(impl);
+        node_count = impl.getNodeCount();
         fclose(file);
     }
     catch (...)
@@ -748,6 +753,8 @@ void Zelph::Impl::loadFromManifest(const std::string& manifest_path, const Zelph
         io::OutputStream(_output, io::OutputChannel::Diagnostic, true) << "Header-only manifest load complete.";
         return;
     }
+
+    reserve_for_load(node_map_sizing::load_reserve(node_count, node_map_sizing::chunks_read(leftChunkCount, rightChunkCount, leftSelectionPtr, rightSelectionPtr)));
 
     // Where one chunk is read from. A sharded reference is looked up
     // locally FIRST -- next to the manifest, then below shard-root --
@@ -855,6 +862,8 @@ void Zelph::Impl::loadFromManifest(const std::string& manifest_path, const Zelph
             }
         }
     }
+
+    finish_load();
 
     if (nameOfNodeSelectionPtr == nullptr || !nameOfNodeSelection.empty())
     {
@@ -1192,6 +1201,10 @@ void Zelph::Impl::saveToFile(const std::string& filename, const ankerl::unordere
     impl.setLeftChunkCount(static_cast<uint32_t>(leftChunkCount));
     impl.setRightChunkCount(static_cast<uint32_t>(rightChunkCount));
 
+    // The nodes jointly held by the two sections, which a load reserves
+    // the node map for: each entry holds at least one of its sides.
+    impl.setNodeCount(count_kept(_nodes, _nodes.size(), filtering));
+
     // Annotations are associated with their respective nodes, meaning a
     // filtered save outputs only those belonging to the kept nodes. Each key
     // has a single entry, with nodes ordered by ID; read again below, where
@@ -1463,6 +1476,7 @@ bool Zelph::Impl::loadFromFile(const std::string& filename, bool& negation_condi
         clear_loaded_state();
         state_cleared = true;
         loadSmallData(impl);
+        reserve_for_load(node_map_sizing::load_reserve(impl.getNodeCount(), node_map_sizing::chunks_read(leftChunkCount, rightChunkCount)));
 
         {
             io::OutputStream line(_output, io::OutputChannel::Diagnostic, true);
@@ -1472,6 +1486,7 @@ bool Zelph::Impl::loadFromFile(const std::string& filename, bool& negation_condi
         }
 
         loadLeftRightChunks(bufferedInput, options, leftChunkCount, rightChunkCount);
+        finish_load();
         loadNameOfNodeChunks(bufferedInput, options, nameOfNodeChunkCount);
         loadNodeOfNameChunks(bufferedInput, options, nodeOfNameChunkCount);
         loadAnnotationChunks(bufferedInput, options, annotationChunkCount);
@@ -1612,12 +1627,14 @@ void Zelph::Impl::loadFromFile(const std::string& filename, const Zelph::BinChun
         // offset instead of streaming past the others.
         if (want_left_right || want_name_of_node || want_node_of_name)
         {
+            reserve_for_load(node_map_sizing::load_reserve(impl.getNodeCount(), node_map_sizing::chunks_read(leftChunkCount, rightChunkCount, leftSelectorPtr, rightSelectorPtr)));
             loadLeftRightChunks(bufferedInput,
                                 options,
                                 leftChunkCount,
                                 rightChunkCount,
                                 leftSelectorPtr,
                                 rightSelectorPtr);
+            finish_load();
         }
         if (want_name_of_node || want_node_of_name)
         {
