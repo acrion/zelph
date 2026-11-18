@@ -30,6 +30,9 @@ The rule engine and its documentation have been prepared for the specification o
 | 2026-11-09 | [`23a766f`](https://github.com/acrion/zelph/commit/23a766fe3abb9c6bf9a08c6791b1943cb5423f17) | Remove retrospectives from the docs and correct two stale details |
 | 2026-11-12 | [`c17686a`](https://github.com/acrion/zelph/commit/c17686a48b2a6e5ebde7f7fc99a4e558abc3bee6) | Conclude each walk over a set of conditions that holds itself |
 | 2026-11-13 | [`cb94bd4`](https://github.com/acrion/zelph/commit/cb94bd43590774a9ac47dcd2acc700950f9e2e16) | Compare the containers within a rule’s terms as the reasoner reads them |
+| 2026-11-16 | [`1c846b0`](https://github.com/acrion/zelph/commit/1c846b011e9916ecbf29740a56d2720baebf1e5e) | Read containers via a single function within the reasoner and the identity |
+| 2026-11-16 | [`11b5bc2`](https://github.com/acrion/zelph/commit/11b5bc279b235d376e5cb5d1145876d29c392632) | Read a set under a variable predicate as the conditions of a rule |
+| 2026-11-17 | [`a15573c`](https://github.com/acrion/zelph/commit/a15573c323b93ee79664946891c2fdbb24574aad) | Prune no fact that holds an object the pattern fails to name |
 
 - **1a** (open): A specification of the mapping between RDF terms and zelph nodes, published as a documentation page: IRIs, blank nodes, plain literals, language-tagged literals and datatype IRIs, with the round-trip properties each one has and the ones it does not.
 - **1b** (open): A streaming N-Triples and N-Quads reader, reading gzip and zstd input directly, with the memory behaviour of the existing Wikidata importer: constant memory over an input of arbitrary size.
