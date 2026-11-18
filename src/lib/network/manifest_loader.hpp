@@ -1321,10 +1321,14 @@ namespace zelph::network
             return best;
         }
 
+        // `object_size`, when provided, is assigned the size of the whole
+        // remote object as indicated by its metadata (0 if no size is
+        // reported).
         inline std::filesystem::path fetch_chunk_to_cache(const std::string& source,
                                                           const uint64_t     offset,
                                                           const uint64_t     length,
-                                                          const std::string& section_hint)
+                                                          const std::string& section_hint,
+                                                          uint64_t* const    object_size = nullptr)
         {
             namespace fs = std::filesystem;
 
@@ -1353,6 +1357,7 @@ namespace zelph::network
             {
                 throw std::runtime_error("Unable to validate remote cache identity for " + source);
             }
+            if (object_size != nullptr) *object_size = observed->content_length;
 
             const std::string           identity     = source + "\n" + observed->revision + "\n" + observed->etag;
             const std::string           token        = sanitize_cache_token(section_hint);

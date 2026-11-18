@@ -31,6 +31,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include "wikidata_dump.hpp"
 
 #include <algorithm>
+#include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
@@ -901,20 +902,86 @@ TEST_CASE("wikidata import: a cache that cannot be written is a failure of the s
     std::filesystem::remove(dump);
 }
 
-TEST_CASE("wikidata import: a cache that breaks off after its header is reported, and left as it is")
+TEST_CASE("wikidata import: a cache damaged in its last chunk is reported, and left as it is")
 {
-    // A cache prematurely terminated -- due to a full disk or an interrupted
-    // copy -- encounters failure after the header, once the load has already
-    // discarded the graph and begun reading part of the file. The dump is
-    // subsequently imported into the incomplete state left by the cache,
-    // resulting in a graph that is neither the cache nor the dump, a condition
-    // that was reported solely as a diagnostic. The import further overwrote
-    // the cache with this inconsistent graph, causing every later load of the
-    // dump to read this corrupted mixture as the original dump. The session
-    // documents the incident and outlines the steps to get a clean graph, its
+    // A cache corrupted within a chunk encounters failure after the header,
+    // once the load has already discarded the graph and begun reading part of
+    // the file: the corruption preserves the file's size, thereby maintaining
+    // the chunk directory that a load checks first. The dump is subsequently
+    // imported into the incomplete state left by the cache, producing a graph
+    // that is neither the original cache nor the dump, a condition that was
+    // reported solely as a diagnostic. The import then overwrote the cache
+    // with this inconsistent graph, causing every later load of the dump to
+    // read this corrupted mixture as the original dump. The session documents
+    // the incident and outlines the steps required to get a clean graph; its
     // status records the failure, and the cache, since this import did not
-    // begin with an empty graph, remains unchanged. The interruption occurs
-    // within the final chunk, far beyond the header.
+    // start from an empty graph, remains unchanged. The damage lies at the
+    // start of the final chunk, far beyond the header. A cache truncated
+    // prematurely does not get this far (the next test).
+    namespace fs = std::filesystem;
+
+    const auto dump  = write_dump();
+    fs::path   cache = dump;
+    cache.replace_extension(".bin");
+    fs::remove(cache);
+    const fs::path index = fs::path(cache).replace_extension(".index.json");
+    {
+        zelph::io::OutputCollector  collector;
+        zelph::console::Interactive interactive(collector.sink());
+        interactive.process(".load \"" + dump.string() + "\"");
+        interactive.process(".index-file \"" + cache.string() + "\" \"" + index.string() + "\"");
+    }
+    REQUIRE(fs::exists(cache));
+
+    const auto bytes = [](const fs::path& file)
+    {
+        std::ifstream in(file, std::ios::binary);
+        return std::string(std::istreambuf_iterator<char>(in), {});
+    };
+
+    // The final chunk begins at the highest offset specified by the index.
+    std::uint64_t final_chunk = 0;
+    {
+        const std::string text = bytes(index);
+        for (std::size_t at = text.find("\"offset\":"); at != std::string::npos; at = text.find("\"offset\":", at + 1))
+            final_chunk = std::max<std::uint64_t>(final_chunk, std::stoull(text.substr(at + 9)));
+        fs::remove(index);
+    }
+    REQUIRE(final_chunk > 0);
+    {
+        std::fstream out(cache, std::ios::binary | std::ios::in | std::ios::out);
+        out.seekp(static_cast<std::streamoff>(final_chunk));
+        out.write(std::string(8, '\xff').data(), 8);
+    }
+    const std::string damaged = bytes(cache);
+
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+    interactive.process(".load \"" + dump.string() + "\"");
+
+    CHECK(any_event_contains(collector, "WARNING: the cache " + cache.string() + " could not be read completely: Failed to read"));
+    CHECK(any_event_contains(collector, "the dump is imported into it"));
+    CHECK(any_event_contains(collector, ".new, delete " + cache.string() + ", and .load " + dump.string() + " again"));
+    CHECK(interactive.had_failure());
+    CHECK(bytes(cache) == damaged);
+
+    remove_dump(dump);
+}
+
+// A cache cut short prematurely -- due to a full disk or a disrupted copy --
+// no longer matches its chunk directory, and the load refuses it before
+// discarding the graph. What occurs next hinges on the file the user named.
+// A .load of the dump imports the dump into the empty graph in place of the
+// cache, just as when there is no cache, and that import writes the cache
+// anew: the session does not fail, and the cache is whole once more for the
+// next load. A .load of the cache itself names a network file, which its
+// directory refuses, just as it refuses any other .bin: the load fails,
+// nothing is imported, and the file remains unchanged. Treated as a cache,
+// the refused file formerly made way for the dump beside it, which overwrote
+// the file in an empty session and was incorporated into the network of any
+// other.
+TEST_CASE("wikidata import: a cache cut short is refused, and replaced by its dump only when the dump is named")
+{
     namespace fs = std::filesystem;
 
     const auto dump  = write_dump();
@@ -927,24 +994,56 @@ TEST_CASE("wikidata import: a cache that breaks off after its header is reported
         interactive.process(".load \"" + dump.string() + "\"");
     }
     REQUIRE(fs::exists(cache));
-    fs::resize_file(cache, fs::file_size(cache) - 8);
+    const std::uintmax_t whole = fs::file_size(cache);
+    fs::resize_file(cache, whole - 8);
 
     const auto bytes = [](const fs::path& file)
     {
         std::ifstream in(file, std::ios::binary);
         return std::string(std::istreambuf_iterator<char>(in), {});
     };
-    const std::string cut = bytes(cache);
+    const std::string cut     = bytes(cache);
+    const std::string refusal = "Refused to load '" + cache.string() + "': its chunk directory does not match the file";
 
-    zelph::io::OutputCollector  collector;
-    zelph::console::Interactive interactive(collector.sink());
-    interactive.process(".load \"" + dump.string() + "\"");
+    SUBCASE("the dump named: the dump is imported, and the cache written anew")
+    {
+        zelph::io::OutputCollector  collector;
+        zelph::console::Interactive interactive(collector.sink());
+        interactive.process(".load \"" + dump.string() + "\"");
 
-    CHECK(any_event_contains(collector, "WARNING: the cache " + cache.string() + " could not be read completely: Failed to read"));
-    CHECK(any_event_contains(collector, "the dump is imported into it"));
-    CHECK(any_event_contains(collector, ".new, delete " + cache.string() + ", and .load " + dump.string() + " again"));
-    CHECK(interactive.had_failure());
-    CHECK(bytes(cache) == cut);
+        CHECK(any_event_contains(collector, "Failed to load cache: " + refusal));
+        CHECK_FALSE(any_event_contains(collector, "could not be read completely"));
+        CHECK_FALSE(interactive.had_failure());
+        CHECK(fs::file_size(cache) == whole);
+
+        interactive.process(".lang en");
+        collector.clear();
+        interactive.process(".node Büdner");
+        CHECK(any_event_contains(collector, "Q1"));
+    }
+    SUBCASE("the cache named in an empty session: refused, and the file stays as it is")
+    {
+        zelph::io::OutputCollector  collector;
+        zelph::console::Interactive interactive(collector.sink());
+        const std::size_t           nodes = node_count(collector, interactive);
+        CHECK_THROWS_WITH_AS(interactive.process(".load \"" + cache.string() + "\""), doctest::Contains(refusal), std::runtime_error);
+        CHECK(node_count(collector, interactive) == nodes);
+        CHECK(bytes(cache) == cut);
+    }
+    SUBCASE("the cache named in a session with a network: refused, and nothing is imported")
+    {
+        zelph::io::OutputCollector  collector;
+        zelph::console::Interactive interactive(collector.sink());
+        interactive.process("bill likes ann");
+        const std::size_t nodes = node_count(collector, interactive);
+        CHECK_THROWS_WITH_AS(interactive.process(".load \"" + cache.string() + "\""), doctest::Contains(refusal), std::runtime_error);
+        CHECK(node_count(collector, interactive) == nodes);
+        CHECK(bytes(cache) == cut);
+
+        collector.clear();
+        interactive.process("X likes Y");
+        CHECK(answers_contain(collector, "bill likes ann"));
+    }
 
     remove_dump(dump);
 }

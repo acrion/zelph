@@ -63,6 +63,7 @@ add_executable(zelph_tests
     test_integers.cpp
     test_jacobian.cpp
     test_janet_names.cpp
+    test_main.cpp
     test_math.cpp
     test_math_identities.cpp
     test_math_syntax.cpp
@@ -119,11 +120,14 @@ add_executable(zelph_tests
     test_wikidata_import.cpp
     test_wikidata_qualifiers.cpp
 )
-target_link_libraries(zelph_tests PRIVATE zelph_lib doctest_with_main unordered_dense::unordered_dense)
 
-# test_node_map.cpp writes the header of a network file independently, just as
-# any writer apart from the engine would, using Cap'n Proto, the library that
-# reads it.
+# doctest without its main(): the test binary includes its own (test_main.cpp),
+# which also enables it to stand in for curl.
+target_link_libraries(zelph_tests PRIVATE zelph_lib doctest unordered_dense::unordered_dense)
+
+# The tests rewrite the chunk directory within a network file independently,
+# just as any writer other than the engine would, using Cap'n Proto, the
+# library responsible for reading it (directory_rewrite.hpp).
 target_link_libraries(zelph_tests PRIVATE CapnProto::capnp)
 
 # Networks saved by prior engine versions, which the tests load as a user

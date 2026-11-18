@@ -25,6 +25,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #include "io/bin_inspect.hpp"
 
+#include "io/chunk_directory.hpp"
 #include "zelph.capnp.h"
 
 #include <capnp/message.h>
@@ -37,6 +38,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include <fstream>
 #include <iomanip>
 #include <ios>
+#include <optional>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -76,42 +78,6 @@ namespace zelph::io
         private:
             kj::InputStream& _inner;
             uint64_t         _count{0};
-        };
-
-        class CountingBufferedInputStream : public kj::BufferedInputStream
-        {
-        public:
-            explicit CountingBufferedInputStream(kj::InputStream& inner)
-                : _buffered(inner)
-            {
-            }
-
-            kj::ArrayPtr<const kj::byte> tryGetReadBuffer() override
-            {
-                return _buffered.tryGetReadBuffer();
-            }
-
-            size_t tryRead(void* buffer, size_t minBytes, size_t maxBytes) override
-            {
-                auto n = _buffered.tryRead(buffer, minBytes, maxBytes);
-                _count += n;
-                return n;
-            }
-
-            void skip(size_t bytes) override
-            {
-                _buffered.skip(bytes);
-                _count += bytes;
-            }
-
-            uint64_t bytes_read() const
-            {
-                return _count;
-            }
-
-        private:
-            kj::BufferedInputStreamWrapper _buffered;
-            uint64_t                       _count{0};
         };
     }
 
@@ -155,7 +121,8 @@ namespace zelph::io
             kj::FdInputStream           raw_input(fileno(file));
             CountingBufferedInputStream counting_input(raw_input);
 
-            auto options = make_bin_reader_options();
+            auto           options = make_bin_reader_options();
+            DeclaredChunks declared_counts;
 
             {
                 ::capnp::PackedMessageReader main_message(counting_input, options);
@@ -166,6 +133,8 @@ namespace zelph::io
                 stats.name_of_node_count = impl.getNameOfNodeChunkCount();
                 stats.node_of_name_count = impl.getNodeOfNameChunkCount();
                 stats.annotation_count   = impl.getAnnotationChunkCount();
+                stats.has_directory      = impl.getChunkDirectory();
+                declared_counts          = declared_chunks(impl);
             }
             // Measured after the reader is gone; see read_bin_index_data.
             stats.header_length_bytes = counting_input.bytes_read();
@@ -186,6 +155,23 @@ namespace zelph::io
                     "Command .stat-file: '" + filename + "' declares " + std::to_string(declared)
                     + " chunks, which do not fit in " + std::to_string(stats.file_size_bytes)
                     + " bytes -- the header is corrupted or the file is truncated");
+            }
+
+            // The directory is checked against the file's size, which reads no
+            // chunk either: a file truncated after its header is reported here
+            // as one whose directory does not match, unless it ends so near the
+            // header that the prior check has already refused it.
+            if (stats.has_directory)
+            {
+                try
+                {
+                    const ChunkDirectory directory = read_chunk_directory(counting_input, stats.header_length_bytes, stats.file_size_bytes, declared_counts);
+                    stats.directory_deviations     = directory_deviations(directory, declared_counts, stats.file_size_bytes);
+                }
+                catch (const DirectoryUnreadable& e)
+                {
+                    stats.directory_deviations.emplace_back(e.what());
+                }
             }
 
             fclose(file);
@@ -231,7 +217,8 @@ namespace zelph::io
             // which produces a gap before the next chunk for large multi-segment
             // chunks (those exceeding the 512 MiB first segment of saveToFile's
             // MallocMessageBuilder(1u << 26)).
-            uint64_t header_offset = counting_input.bytes_read();
+            uint64_t       header_offset = counting_input.bytes_read();
+            DeclaredChunks declared;
             {
                 ::capnp::PackedMessageReader main_message(counting_input, options);
                 auto                         impl = main_message.getRoot<zelph::network::ZelphImpl>();
@@ -240,8 +227,35 @@ namespace zelph::io
                 data.stats.name_of_node_count     = impl.getNameOfNodeChunkCount();
                 data.stats.node_of_name_count     = impl.getNodeOfNameChunkCount();
                 data.stats.annotation_count       = impl.getAnnotationChunkCount();
+                data.stats.has_directory          = impl.getChunkDirectory();
+                declared                          = declared_chunks(impl);
             }
             data.header_length_bytes = counting_input.bytes_read() - header_offset;
+
+            // The range the index refers to as the header runs up to the
+            // first chunk, thereby encompassing the chunk directory: a load
+            // via a manifest fetches the header using that range and finds
+            // the directory within it. A directory that does not match the
+            // file is reported before the walk, which would otherwise only
+            // fail later and with less precision if the file were truncated.
+            std::optional<ChunkDirectory> directory;
+            if (data.stats.has_directory)
+            {
+                try
+                {
+                    directory = read_chunk_directory(counting_input, data.header_length_bytes, data.stats.file_size_bytes, declared);
+                }
+                catch (const DirectoryUnreadable& e)
+                {
+                    throw std::runtime_error("Command " + command + ": the chunk directory of '" + filename + "' cannot be read: " + e.what());
+                }
+                if (const auto deviations = directory_deviations(*directory, declared, data.stats.file_size_bytes); !deviations.empty())
+                {
+                    throw std::runtime_error("Command " + command + ": the chunk directory of '" + filename
+                                             + "' does not match the file: " + describe_deviations(deviations));
+                }
+                data.header_length_bytes = directory->chunks_begin();
+            }
 
             auto read_adj_chunks = [&](uint32_t                  count,
                                        std::vector<BinChunkRef>& target)
@@ -257,6 +271,7 @@ namespace zelph::io
                         auto                         chunk = chunk_message.getRoot<zelph::network::AdjChunk>();
                         ref.chunk_index                    = chunk.getChunkIndex();
                         ref.which                          = chunk.getWhich().cStr();
+                        ref.entries                        = chunk.getPairs().size();
                     }
                     // Measured after chunk_message is destroyed: the destructor has now
                     // skipped all remaining segments of this message.
@@ -279,6 +294,7 @@ namespace zelph::io
                     auto                         chunk = chunk_message.getRoot<zelph::network::NameChunk>();
                     ref.chunk_index                    = chunk.getChunkIndex();
                     ref.lang                           = chunk.getLang().cStr();
+                    ref.entries                        = chunk.getPairs().size();
                 }
                 ref.length = counting_input.bytes_read() - before;
                 data.name_of_node_chunks.push_back(std::move(ref));
@@ -295,6 +311,7 @@ namespace zelph::io
                     auto                         chunk = chunk_message.getRoot<zelph::network::NodeNameChunk>();
                     ref.chunk_index                    = chunk.getChunkIndex();
                     ref.lang                           = chunk.getLang().cStr();
+                    ref.entries                        = chunk.getPairs().size();
                 }
                 ref.length = counting_input.bytes_read() - before;
                 data.node_of_name_chunks.push_back(std::move(ref));
@@ -308,10 +325,55 @@ namespace zelph::io
                 ref.offset = before;
                 {
                     ::capnp::PackedMessageReader chunk_message(counting_input, options);
-                    ref.chunk_index = chunk_message.getRoot<zelph::network::AnnotationChunk>().getChunkIndex();
+                    const auto                   chunk = chunk_message.getRoot<zelph::network::AnnotationChunk>();
+                    ref.chunk_index                    = chunk.getChunkIndex();
+                    ref.entries                        = chunk.getEntries().size();
                 }
                 ref.length = counting_input.bytes_read() - before;
                 data.annotation_chunks.push_back(std::move(ref));
+            }
+
+            // Each chunk where the directory places it, as long as it says,
+            // and with as many entries: a load relies on the directory for
+            // its reserves, and this walk is what can tell.
+            if (directory)
+            {
+                std::vector<std::string> deviations;
+                const auto               compare = [&](const zelph::network::FileSection section, const std::vector<BinChunkRef>& walked)
+                {
+                    const auto* listed = directory->find(section);
+                    for (std::size_t i = 0; listed != nullptr && i < walked.size() && i < listed->size(); ++i)
+                    {
+                        const DirectoryChunk& said  = (*listed)[i];
+                        const BinChunkRef&    found = walked[i];
+                        const std::string     name  = chunk_name(static_cast<std::uint16_t>(section), i);
+                        if (said.offset != found.offset)
+                        {
+                            deviations.push_back("the directory places " + name + " at byte " + std::to_string(said.offset) + ", the file has it at byte "
+                                                 + std::to_string(found.offset));
+                        }
+                        if (said.length != found.length)
+                        {
+                            deviations.push_back("the directory gives " + name + " " + std::to_string(said.length) + " bytes, it has "
+                                                 + std::to_string(found.length));
+                        }
+                        if (said.entries != found.entries)
+                        {
+                            deviations.push_back("the directory gives " + name + " " + std::to_string(said.entries) + " entries, it holds "
+                                                 + std::to_string(found.entries));
+                        }
+                    }
+                };
+                compare(zelph::network::FileSection::LEFT, data.left_chunks);
+                compare(zelph::network::FileSection::RIGHT, data.right_chunks);
+                compare(zelph::network::FileSection::NAME_OF_NODE, data.name_of_node_chunks);
+                compare(zelph::network::FileSection::NODE_OF_NAME, data.node_of_name_chunks);
+                compare(zelph::network::FileSection::ANNOTATIONS, data.annotation_chunks);
+                if (!deviations.empty())
+                {
+                    throw std::runtime_error("Command " + command + ": the chunk directory of '" + filename
+                                             + "' does not match its chunks: " + describe_deviations(deviations));
+                }
             }
 
             fclose(file);

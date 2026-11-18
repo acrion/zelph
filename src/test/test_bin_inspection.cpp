@@ -25,15 +25,35 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #include <doctest/doctest.h>
 
+#include "directory_rewrite.hpp"
 #include "test_helpers.hpp"
 #include "wikidata_dump.hpp"
 
 #include "network/reasoning.hpp"
 
+#include <algorithm>
+#include <atomic>
+#include <chrono>
+#include <cstdint>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <map>
 #include <sstream>
 #include <string>
+#include <thread>
+#include <vector>
+
+#ifndef _WIN32
+    #include <fcntl.h>
+    #include <pthread.h>
+    #include <signal.h>
+    #include <sys/stat.h>
+    #include <unistd.h>
+#endif
+#ifdef __linux__
+    #include <sys/resource.h>
+#endif
 
 using namespace zelph::test;
 
@@ -47,9 +67,12 @@ using namespace zelph::test;
 // including one declaring more chunks than the file has bytes.
 //
 // The division of labour between the two is deliberate and now documented:
-// .stat-file reads the header only, which is what makes it instant on an
-// 88 GB file and also means it cannot see a file truncated after the header.
-// .index-file reads every chunk and is the one that notices.
+// .stat-file reads the header and the chunk directory that follows it, which
+// enables it to respond instantly even on an 88 GB file. It holds the
+// directory against the file's size and thus detects a file that has been cut
+// short, but it cannot see a damaged chunk, nor can it identify issues in a
+// file lacking a directory, as older engines produced them. .index-file reads
+// every chunk and is the one that notices.
 // ---------------------------------------------------------------------------
 
 namespace
@@ -61,7 +84,7 @@ namespace
         fs::path root;
         fs::path good;      // a saved two-fact network
         fs::path empty;     // a saved network with nothing but the core nodes
-        fs::path truncated; // good, cut after the header
+        fs::path truncated; // good, cut after the header, within its chunk directory
         fs::path tiny;      // good, cut inside the header's own claims
         fs::path garbage;   // not a .bin at all
         fs::path nothing;   // zero bytes
@@ -108,6 +131,61 @@ c p d
         nothing.close();
 
         return f;
+    }
+
+    std::string read_text(const fs::path& path)
+    {
+        std::ifstream     in(path, std::ios::binary);
+        std::stringstream text;
+        text << in.rdbuf();
+        return text.str();
+    }
+
+    // The number that `key` has in the first object located after `from` in the
+    // JSON written by .index-file: number_after(index, "\"left\": [", "offset")
+    // indicates the starting point of the first left chunk.
+    std::uint64_t number_after(const std::string& index, const std::string& from, const std::string& key)
+    {
+        const std::size_t at = index.find("\"" + key + "\":", index.find(from));
+        REQUIRE(at != std::string::npos);
+        return std::stoull(index.substr(at + key.size() + 3));
+    }
+
+    // A copy of `from` with `extra` zero bytes appended after its end.
+    void copy_longer(const fs::path& from, const fs::path& to, const std::size_t extra)
+    {
+        std::string bytes = read_text(from);
+        bytes.append(extra, '\0');
+        std::ofstream(to, std::ios::binary).write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+    }
+
+    // Whether a command printed `line` exactly as a distinct line, character by
+    // character.
+    bool printed_line(const zelph::io::OutputCollector& collector, const std::string& line)
+    {
+        return std::any_of(collector.events().begin(), collector.events().end(), [&line](const zelph::io::OutputEvent& event)
+                           { return event.channel == zelph::io::OutputChannel::Out && event.text == line; });
+    }
+}
+
+namespace zelph::test
+{
+    // Binary files from older_networks/*.bin, compiled into this executable
+    // through embed_files.cmake.
+    const std::map<std::string, std::vector<unsigned char>>& older_networks();
+}
+
+namespace
+{
+    // A network as an older engine stored it, omitting a chunk
+    // directory, writing up to `bytes` bytes of it to `to`.
+    void write_older_network(const fs::path& to, const std::size_t bytes)
+    {
+        const auto& networks = zelph::test::older_networks();
+        const auto  network  = networks.find("data_collections");
+        REQUIRE(network != networks.end());
+        REQUIRE(bytes <= network->second.size());
+        std::ofstream(to, std::ios::binary).write(reinterpret_cast<const char*>(network->second.data()), static_cast<std::streamsize>(bytes));
     }
 }
 
@@ -189,17 +267,383 @@ TEST_CASE("bin inspection: the header report and the chunk walk divide the work"
     CHECK(any_output_contains(collector, "Node-of-Name Chunks: 0"));
 
     // Truncated after the header: .stat-file reports what the header says,
-    // because it never looks further. This is the documented division of
-    // labour, not an oversight -- pinned so that a future change to either
-    // command has to be deliberate.
+    // and the chunk directory behind it, which it reads as well, that the
+    // file ends before the directory does. It reads no chunk. This is the
+    // documented division of labour, not an oversight -- pinned so that a
+    // future change to either command has to be deliberate.
     collector.clear();
     interactive.process(".stat-file \"" + f.truncated.string() + "\"");
     CHECK(any_output_contains(collector, "Total Chunks: 4"));
+    CHECK(printed_line(collector, "Chunk Directory: does not match the file"));
 
-    // ...and .index-file, which reads every chunk, is the one that notices.
-    CHECK_THROWS_AS(interactive.process(".index-file \"" + f.truncated.string() + "\" \""
-                                        + (f.root / "out.json").string() + "\""),
-                    std::runtime_error);
+    // .index-file refuses that file too, at its directory, before
+    // reading a chunk.
+    const fs::path json = f.root / "out.json";
+    CHECK_THROWS_AS(interactive.process(".index-file \"" + f.truncated.string() + "\" \"" + json.string() + "\""), std::runtime_error);
+
+    // What the walk alone sees is a chunk that cannot be read within a file of
+    // the right size. The file is damaged in the way a disk or a transfer can
+    // damage one: the first eight bytes of its last chunk are overwritten, yet
+    // the file retains its size. Its directory still matches, so .stat-file has
+    // nothing to report, and .index-file, which reads each chunk, is the one
+    // that identifies the issue: it fails and writes no index. Without this
+    // case, a walk concluding a section at the first chunk it could not read
+    // would produce an index for such a file, leaving that section empty.
+    interactive.process(".index-file \"" + f.good.string() + "\" \"" + json.string() + "\"");
+    const std::uint64_t last_chunk = number_after(read_text(json), "\"nodeOfName\": [", "offset");
+    fs::remove(json);
+    const fs::path damaged = f.root / "damaged.bin";
+    {
+        std::string bytes = read_text(f.good);
+        REQUIRE(last_chunk + 8 <= bytes.size());
+        bytes.replace(static_cast<std::size_t>(last_chunk), 8, 8, '\xff');
+        std::ofstream(damaged, std::ios::binary).write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+    }
+    collector.clear();
+    interactive.process(".stat-file \"" + damaged.string() + "\"");
+    CHECK(any_output_contains(collector, "Chunk Directory: matches the file"));
+    CHECK_THROWS_AS(interactive.process(".index-file \"" + damaged.string() + "\" \"" + json.string() + "\""), std::runtime_error);
+    CHECK_FALSE(fs::exists(json));
+
+    // A file lacking a chunk directory leaves .stat-file with nothing to hold
+    // against its size: if truncated, it still reports what its header
+    // declares, and it is the walk that fails, at the point where the file
+    // ends.
+    const fs::path      older      = f.root / "older-cut.bin";
+    const std::uint64_t older_size = zelph::test::older_networks().at("data_collections").size();
+    write_older_network(older, static_cast<std::size_t>(older_size - 8));
+    collector.clear();
+    interactive.process(".stat-file \"" + older.string() + "\"");
+    CHECK(any_output_contains(collector, "Total Chunks: 4"));
+    CHECK(any_output_contains(collector, "Chunk Directory: none"));
+    CHECK_THROWS_AS(interactive.process(".index-file \"" + older.string() + "\" \"" + json.string() + "\""), std::runtime_error);
+    CHECK_FALSE(fs::exists(json));
+
+    fs::remove_all(f.root);
+}
+
+// Every file the engine writes includes a chunk directory, and it matches:
+// .stat-file finds it in accord with the file's size, and .index-file, which
+// walks every chunk and reports any discrepancy, finds each one at the position
+// specified by the directory, as long as it says and with the correct number of
+// entries. A save of selected predicates counts what it keeps apart from the
+// network, a network comprising solely core nodes features empty name sections,
+// and annotations make a fifth section. The range the index refers to as the
+// header terminates at the start of the first chunk: it covers the directory,
+// which a load through a manifest reads from that range.
+TEST_CASE("bin inspection: every file the engine saves has a chunk directory that matches it")
+{
+    const Fixtures f = build();
+
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+    const fs::path              slice     = f.root / "slice.bin";
+    const fs::path              annotated = f.root / "annotated.bin";
+    process_lines(interactive, R"(
+a p b
+c q d
+%(zelph/annotate (zelph/fact "a" "p" "b") "source" "a sentence")
+)");
+    interactive.process(".save-predicates \"" + slice.string() + "\" p");
+    interactive.process(".save \"" + annotated.string() + "\"");
+
+    const fs::path json = f.root / "index.json";
+    for (const fs::path& file : {f.good, f.empty, slice, annotated})
+    {
+        CAPTURE(file.string());
+        collector.clear();
+        interactive.process(".stat-file \"" + file.string() + "\"");
+        CHECK(printed_line(collector, "Chunk Directory: matches the file"));
+
+        interactive.process(".index-file \"" + file.string() + "\" \"" + json.string() + "\"");
+        const std::string index = read_text(json);
+        CHECK(number_after(index, "\"header\"", "length") == number_after(index, "\"left\": [", "offset"));
+    }
+
+    fs::remove_all(f.root);
+}
+
+#ifndef _WIN32
+namespace
+{
+    // A named pipe, lacking any size until it is read to completion. A
+    // thread writes `bytes` into it for the single reader that opens it,
+    // as `cat file > pipe` would.
+    class PipeSource
+    {
+    public:
+        PipeSource(fs::path path, std::string bytes)
+            : _path(std::move(path))
+        {
+            fs::remove(_path);
+            REQUIRE(::mkfifo(_path.c_str(), 0600) == 0);
+            _writer = std::thread([this, bytes = std::move(bytes)]
+                                  {
+                // A reader that shuts down the pipe early must not end the
+                // process: the signal remains attached to this thread and
+                // goes with it.
+                sigset_t broken_pipe;
+                sigemptyset(&broken_pipe);
+                sigaddset(&broken_pipe, SIGPIPE);
+                pthread_sigmask(SIG_BLOCK, &broken_pipe, nullptr);
+
+                const int fd = ::open(_path.c_str(), O_WRONLY);
+                _opened      = true;
+                if (fd < 0) return;
+                for (std::size_t written = 0; written < bytes.size();)
+                {
+                    const ssize_t n = ::write(fd, bytes.data() + written, bytes.size() - written);
+                    if (n <= 0) break;
+                    written += static_cast<std::size_t>(n);
+                }
+                ::close(fd); });
+        }
+
+        ~PipeSource()
+        {
+            // A reader that never arrives keeps the writer stalled while
+            // attempting to open the pipe, and opening it without blocking
+            // allows the writer to proceed.
+            while (!_opened)
+            {
+                const int fd = ::open(_path.c_str(), O_RDONLY | O_NONBLOCK);
+                if (fd >= 0) ::close(fd);
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            }
+            _writer.join();
+            fs::remove(_path);
+        }
+
+        PipeSource(const PipeSource&)            = delete;
+        PipeSource& operator=(const PipeSource&) = delete;
+
+    private:
+        fs::path          _path;
+        std::atomic<bool> _opened{false};
+        std::thread       _writer;
+    };
+
+    // A named pipe that a thread reads to its end for the single writer
+    // that opens it, counting the bytes, as `cat pipe > file` would.
+    class PipeSink
+    {
+    public:
+        explicit PipeSink(fs::path path)
+            : _path(std::move(path))
+        {
+            fs::remove(_path);
+            REQUIRE(::mkfifo(_path.c_str(), 0600) == 0);
+            _reader = std::thread([this]
+                                  {
+                const int fd = ::open(_path.c_str(), O_RDONLY);
+                _opened      = true;
+                if (fd < 0) return;
+                char buffer[4096];
+                for (ssize_t n = ::read(fd, buffer, sizeof(buffer)); n > 0; n = ::read(fd, buffer, sizeof(buffer)))
+                    _received += static_cast<std::size_t>(n);
+                ::close(fd); });
+        }
+
+        ~PipeSink()
+        {
+            finish();
+            fs::remove(_path);
+        }
+
+        const fs::path& path() const { return _path; }
+
+        // The bytes transmitted by the writer, after the pipe has been closed.
+        std::size_t received()
+        {
+            finish();
+            return _received;
+        }
+
+        PipeSink(const PipeSink&)            = delete;
+        PipeSink& operator=(const PipeSink&) = delete;
+
+    private:
+        void finish()
+        {
+            if (!_reader.joinable()) return;
+            // A writer that never came leaves the reader awaiting the pipe's
+            // opening, and opening it without blocking lets the reader proceed.
+            while (!_opened)
+            {
+                const int fd = ::open(_path.c_str(), O_WRONLY | O_NONBLOCK);
+                if (fd >= 0) ::close(fd);
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            }
+            _reader.join();
+        }
+
+        fs::path          _path;
+        std::atomic<bool> _opened{false};
+        std::size_t       _received = 0;
+        std::thread       _reader;
+    };
+}
+
+// A save writes the chunk directory ahead of the chunks by seeking back over
+// its zeros once they are written, so the target must support seeking. A
+// pipe cannot, and a save into one is rejected prior to the first byte: the
+// reader at the other end receives nothing, instead of a whole file whose
+// directory stays zero and which every load refuses, and the message
+// explains the reason.
+TEST_CASE("save: a target that cannot seek back is refused before the first byte")
+{
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+    interactive.process("a p b");
+
+    PipeSink pipe(fs::temp_directory_path() / "zelph_save_into_pipe.bin");
+    CHECK_THROWS_WITH_AS(interactive.process(".save \"" + pipe.path().string() + "\""), doctest::Contains("it cannot seek back"), std::runtime_error);
+    CHECK(pipe.received() == 0);
+}
+#endif
+
+// The chunk directory specifies the position of each chunk, and the chunks must
+// terminate where the file terminates. .stat-file holds the directory against
+// the file's size and so tells a file cut short from a whole one without
+// needing to read a chunk, and it indicates both where the chunks end and where
+// the file ends. Bytes located after the last chunk represent a difference as
+// well. A discrepancy unrelated to size, such as a chunk said to hold more
+// entries than its bytes can accommodate, falls under the same line, which
+// therefore says whether the directory matches the file, rather than its size.
+// A file originating from an older engine lacks a directory, and the report
+// states this explicitly: a load of such a file reserves nothing. The lines
+// above, which scripts read, remain unchanged.
+TEST_CASE("bin inspection: .stat-file says whether the chunk directory matches the file")
+{
+    const Fixtures f = build();
+
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+    const std::uint64_t         size = fs::file_size(f.good);
+
+    // The whole report for a file as the engine saved it, line by line.
+    // Scripts read the lines from File Size to Total Chunks, based on their
+    // wording and in this sequence, so no intervening content is permitted,
+    // and the line for the directory appears beneath them. A file with
+    // annotations includes an additional line, Annotation Chunks, positioned
+    // between the name sections and the total.
+    collector.clear();
+    interactive.process(".stat-file \"" + f.good.string() + "\"");
+    {
+        const std::vector<std::string> expected = {"Serialized File Statistics:",
+                                                   "------------------------",
+                                                   "File: " + f.good.string(),
+                                                   "File Size: " + std::to_string(size) + " bytes",
+                                                   "Left Chunks: 1",
+                                                   "Right Chunks: 1",
+                                                   "Name-of-Node Chunks: 1",
+                                                   "Node-of-Name Chunks: 1",
+                                                   "Total Chunks: 4",
+                                                   "Chunk Directory: matches the file",
+                                                   "------------------------",
+                                                   "(declared by the header; use .index-file to verify the chunks)"};
+        std::vector<std::string>       printed;
+        for (const auto& event : collector.events())
+        {
+            if (event.channel == zelph::io::OutputChannel::Out) printed.push_back(event.text);
+        }
+        REQUIRE(printed.size() == expected.size());
+        for (std::size_t line = 0; line < expected.size(); ++line)
+        {
+            CAPTURE(line);
+            CHECK(printed[line] == expected[line]);
+        }
+    }
+
+    const fs::path cut = f.root / "cut.bin";
+    copy_prefix(f.good, cut, static_cast<std::streamsize>(size - 8));
+    collector.clear();
+    interactive.process(".stat-file \"" + cut.string() + "\"");
+    CHECK(any_output_contains(collector, "Total Chunks: 4"));
+    CHECK(printed_line(collector, "Chunk Directory: does not match the file"));
+    CHECK(any_output_contains(collector, "nodeOfName chunk 0 ends at byte " + std::to_string(size) + ", but the file ends at byte " + std::to_string(size - 8)));
+
+    const fs::path longer = f.root / "longer.bin";
+    copy_longer(f.good, longer, 8);
+    collector.clear();
+    interactive.process(".stat-file \"" + longer.string() + "\"");
+    CHECK(any_output_contains(collector, "nodeOfName chunk 0 ends at byte " + std::to_string(size) + ", but the file ends at byte " + std::to_string(size + 8)));
+
+    const fs::path dense = f.root / "dense.bin";
+    fs::copy_file(f.good, dense);
+    std::uint64_t claimed = 0;
+    rewrite_directory(dense, [&claimed](zelph::network::ChunkDirectory::Builder directory)
+                      {
+                          auto left = directory.getSections()[0].getChunks()[0];
+                          claimed   = left.getLength() / 4 + 1;
+                          left.setEntries(claimed); });
+    collector.clear();
+    interactive.process(".stat-file \"" + dense.string() + "\"");
+    CHECK(printed_line(collector, "Chunk Directory: does not match the file"));
+    CHECK(any_output_contains(collector, "left chunk 0 holds " + std::to_string(claimed) + " entries, more than its"));
+
+    const fs::path older = f.root / "older.bin";
+    write_older_network(older, zelph::test::older_networks().at("data_collections").size());
+    collector.clear();
+    interactive.process(".stat-file \"" + older.string() + "\"");
+    CHECK(any_output_contains(collector, "Total Chunks: 4"));
+    CHECK(any_output_contains(collector, "Chunk Directory: none"));
+
+    fs::remove_all(f.root);
+}
+
+// .index-file walks each chunk and holds the chunk directory against what it
+// finds. A directory that matches the file's size may still be incorrect
+// regarding a chunk, which .stat-file cannot see and a load would believe: an
+// entry count it would reserve for, or a boundary separating two chunks. The
+// walk finds either discrepancy, names it, and writes no index for such a
+// file. The directory is rewritten as a damaged file or another writer could
+// hold it.
+TEST_CASE("bin inspection: .index-file refuses a chunk directory that its chunks contradict")
+{
+    const Fixtures f = build();
+
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+    const fs::path              json = f.root / "index.json";
+
+    SUBCASE("an entry count")
+    {
+        std::uint64_t held = 0;
+        rewrite_directory(f.good, [&held](zelph::network::ChunkDirectory::Builder directory)
+                          {
+                              auto left = directory.getSections()[0].getChunks()[0];
+                              held      = left.getEntries();
+                              left.setEntries(held + 1); });
+        collector.clear();
+        interactive.process(".stat-file \"" + f.good.string() + "\"");
+        CHECK(printed_line(collector, "Chunk Directory: matches the file"));
+        CHECK_THROWS_WITH_AS(interactive.process(".index-file \"" + f.good.string() + "\" \"" + json.string() + "\""),
+                             doctest::Contains("the directory gives left chunk 0 " + std::to_string(held + 1) + " entries, it holds " + std::to_string(held)),
+                             std::runtime_error);
+    }
+    SUBCASE("a boundary between two chunks")
+    {
+        // Eight bytes from the left chunk are passed to the right chunk: the
+        // chunks continue to follow one another and end where the file ends.
+        std::uint64_t right_begins = 0;
+        rewrite_directory(f.good, [&right_begins](zelph::network::ChunkDirectory::Builder directory)
+                          {
+                              auto left  = directory.getSections()[0].getChunks()[0];
+                              auto right = directory.getSections()[1].getChunks()[0];
+                              left.setLength(left.getLength() - 8);
+                              right_begins = right.getOffset();
+                              right.setOffset(right_begins - 8);
+                              right.setLength(right.getLength() + 8); });
+        collector.clear();
+        interactive.process(".stat-file \"" + f.good.string() + "\"");
+        CHECK(printed_line(collector, "Chunk Directory: matches the file"));
+        CHECK_THROWS_WITH_AS(interactive.process(".index-file \"" + f.good.string() + "\" \"" + json.string() + "\""),
+                             doctest::Contains("the directory places right chunk 0 at byte " + std::to_string(right_begins - 8) + ", the file has it at byte "
+                                               + std::to_string(right_begins)),
+                             std::runtime_error);
+    }
+    CHECK_FALSE(fs::exists(json));
 
     fs::remove_all(f.root);
 }
@@ -267,18 +711,19 @@ c p d
         text << in.rdbuf();
         CHECK(text.str().find("annotations") == std::string::npos);
     }
-    SUBCASE("a file cut inside the section is noticed by the walk and by a load")
+    SUBCASE("a file cut inside the section is noticed by its directory")
     {
         // The header continues to assert the section, which .stat-file
-        // believes; the commands that read the chunks detect its
-        // incompleteness.
+        // believes; the chunk directory places the section's chunk, which
+        // extends past the file's end, and the commands that read it say so.
         const fs::path cut = f.root / "annotated-cut.bin";
         copy_prefix(annotated, cut, static_cast<std::streamsize>(fs::file_size(annotated) - 8));
         collector.clear();
         interactive.process(".stat-file \"" + cut.string() + "\"");
         CHECK(any_output_contains(collector, "Total Chunks: 5"));
+        CHECK(any_output_contains(collector, "annotation chunk 0 ends at byte"));
         CHECK_THROWS_AS(interactive.process(".index-file \"" + cut.string() + "\" \"" + json.string() + "\""), std::runtime_error);
-        CHECK_THROWS_WITH_AS(interactive.process(".load \"" + cut.string() + "\""), doctest::Contains("zelph .bin"), std::runtime_error);
+        CHECK_THROWS_WITH_AS(interactive.process(".load \"" + cut.string() + "\""), doctest::Contains("annotation chunk 0 ends at byte"), std::runtime_error);
     }
 
     fs::remove_all(f.root);
@@ -295,10 +740,15 @@ TEST_CASE("bin inspection: a failed load says what happened to the network")
     // that a file interrupted mid-process leaves part of its content in the
     // graph and nothing of the session. Previously, the message was the kj
     // backtrace and conveyed no information regarding this; the recovery path
-    // is .new, and the message now indicates this explicitly.
+    // is .new, and the message now indicates this explicitly. A file the
+    // engine writes is rejected before this stage if it is truncated (its
+    // chunk directory does not match it, see below); a file from an older
+    // engine lacks a directory and is read until it breaks off.
+    const fs::path truncated = f.root / "older-truncated.bin";
+    write_older_network(truncated, 200);
     try
     {
-        interactive.process(".load \"" + f.truncated.string() + "\"");
+        interactive.process(".load \"" + truncated.string() + "\"");
         FAIL("expected .load to refuse a truncated file");
     }
     catch (const std::runtime_error& e)
@@ -342,6 +792,267 @@ TEST_CASE("bin inspection: a file that is not a network leaves the session's gra
 
     fs::remove_all(f.root);
 }
+
+#ifdef __linux__
+namespace
+{
+    // Caps the address space of the process at the amount it occupies plus
+    // `margin` bytes, for the duration the object remains alive: an allocation
+    // beyond the margin then fails instead of being served.
+    class AddressSpaceCap
+    {
+    public:
+        explicit AddressSpaceCap(const std::uint64_t margin)
+        {
+            REQUIRE(getrlimit(RLIMIT_AS, &_before) == 0);
+            std::uint64_t pages = 0;
+            std::ifstream("/proc/self/statm") >> pages;
+            REQUIRE(pages > 0);
+            rlimit capped   = _before;
+            capped.rlim_cur = static_cast<rlim_t>(pages * static_cast<std::uint64_t>(sysconf(_SC_PAGESIZE)) + margin);
+            if (capped.rlim_cur > _before.rlim_max) capped.rlim_cur = _before.rlim_max;
+            REQUIRE(setrlimit(RLIMIT_AS, &capped) == 0);
+        }
+        ~AddressSpaceCap() { setrlimit(RLIMIT_AS, &_before); }
+        AddressSpaceCap(const AddressSpaceCap&)            = delete;
+        AddressSpaceCap& operator=(const AddressSpaceCap&) = delete;
+
+    private:
+        rlimit _before{};
+    };
+}
+#endif
+
+// A load believes the chunk directory once it matches the file, and refuses a
+// file whose directory does not match before the session's network is
+// discarded, saying what contradicts it. A file cut short is the case that
+// matters most -- a download that terminated prematurely, a disk that became
+// full -- and the directory exposes it before any chunk is read: without it,
+// the load discarded the session's network and then halted mid-file. Each
+// subcase damages one property the check holds: where the chunks end, that the
+// directory exists for reading, where a chunk begins, and how many chunks a
+// section contains. The last two are rewritten as a damaged directory or
+// another writer might hold them.
+TEST_CASE("load: a file whose chunk directory does not match it is refused before it replaces the session's network")
+{
+    const Fixtures      f    = build();
+    const std::uint64_t size = fs::file_size(f.good);
+    const fs::path      file = f.root / "damaged.bin";
+    fs::copy_file(f.good, file);
+
+    const auto refused = [&file](const std::string& deviation)
+    {
+        zelph::io::OutputCollector  collector;
+        zelph::console::Interactive interactive(collector.sink());
+        interactive.process("a p b");
+        for (const std::string load : {".load", ".load-partial"})
+        {
+            CAPTURE(load);
+            CHECK_THROWS_WITH_AS(interactive.process(load + " \"" + file.string() + "\""), doctest::Contains(deviation), std::runtime_error);
+        }
+        collector.clear();
+        interactive.process("A p B");
+        CHECK(answers_contain(collector, "a p b"));
+    };
+
+    SUBCASE("a file cut short")
+    {
+        copy_prefix(f.good, file, static_cast<std::streamsize>(size - 8));
+        refused("nodeOfName chunk 0 ends at byte " + std::to_string(size) + ", but the file ends at byte " + std::to_string(size - 8));
+    }
+    SUBCASE("a file with bytes behind its last chunk")
+    {
+        copy_longer(f.good, file, 8);
+        refused("nodeOfName chunk 0 ends at byte " + std::to_string(size) + ", but the file ends at byte " + std::to_string(size + 8));
+    }
+    SUBCASE("a file cut inside its chunk directory")
+    {
+        copy_prefix(f.good, file, 200);
+        refused("the chunk directory needs");
+    }
+    SUBCASE("a chunk that does not begin where the one before it ends")
+    {
+        std::uint64_t left_ends = 0;
+        rewrite_directory(file, [&left_ends](zelph::network::ChunkDirectory::Builder directory)
+                          {
+                              auto right = directory.getSections()[1].getChunks()[0];
+                              left_ends  = right.getOffset();
+                              right.setOffset(left_ends + 1); });
+        refused("right chunk 0 begins at byte " + std::to_string(left_ends + 1) + ", but left chunk 0 ends at byte " + std::to_string(left_ends));
+    }
+    SUBCASE("two chunks that overlap")
+    {
+        // The right chunk begins one byte prior to where the left chunk ends,
+        // and is one byte longer for it: it terminates at the same point as
+        // before, with no other variation. A verification requesting merely the
+        // absence of a gap would permit it to pass.
+        std::uint64_t left_ends = 0;
+        rewrite_directory(file, [&left_ends](zelph::network::ChunkDirectory::Builder directory)
+                          {
+                              auto right = directory.getSections()[1].getChunks()[0];
+                              left_ends  = right.getOffset();
+                              right.setOffset(left_ends - 1);
+                              right.setLength(right.getLength() + 1); });
+        refused("right chunk 0 begins at byte " + std::to_string(left_ends - 1) + ", but left chunk 0 ends at byte " + std::to_string(left_ends));
+    }
+    SUBCASE("a section with fewer chunks than the header declares")
+    {
+        // The directory names its fourth section with a number that
+        // no section has, thereby omitting any nodeOfName chunk
+        // entirely.
+        rewrite_directory(file, [](zelph::network::ChunkDirectory::Builder directory)
+                          { directory.getSections()[3].setSection(static_cast<zelph::network::FileSection>(9)); });
+        refused("the directory lists 0 nodeOfName chunks, but the header declares 1");
+    }
+    SUBCASE("a section with more chunks than the header declares")
+    {
+        // Names in two languages make two chunks within each name section.
+        // The header is rewritten to declare a single nodeOfName chunk
+        // where the directory lists two, as a damaged header might: a load
+        // that believed the header would stop before the last chunk and
+        // say nothing about the names it omitted.
+        {
+            zelph::io::OutputCollector  collector;
+            zelph::console::Interactive interactive(collector.sink());
+            interactive.process("a p b");
+            interactive.process(".name a de a_de");
+            interactive.process(".save \"" + file.string() + "\"");
+        }
+        rewrite_header(file, [](zelph::network::ZelphImpl::Builder header)
+                       {
+                           REQUIRE(header.getNodeOfNameChunkCount() == 2);
+                           header.setNodeOfNameChunkCount(1); });
+        refused("the directory lists 2 nodeOfName chunks, but the header declares 1");
+    }
+
+    SUBCASE("a chunk directory larger than the header's chunk counts allow")
+    {
+        // One damaged field, the size of the directory's sole segment,
+        // claims every byte behind the header of a network comprising a
+        // hundred facts: many times the directory of the four chunks that
+        // its header declares. In a large file, the identical field claims
+        // gigabytes that the file holds, and the load refuses the claim
+        // before reading or allocating any data of that size.
+        {
+            zelph::io::OutputCollector  collector;
+            zelph::console::Interactive interactive(collector.sink());
+            for (int i = 0; i < 100; ++i)
+                interactive.process("s" + std::to_string(i) + " p o" + std::to_string(i));
+            interactive.process(".save \"" + file.string() + "\"");
+        }
+        const std::uint64_t claimed = claim_for_directory(file);
+        refused("the chunk directory needs " + std::to_string(claimed) + " bytes behind the header, but the header's chunk counts allow at most");
+    }
+#ifdef __linux__
+    SUBCASE("a chunk directory that claims a gigabyte is refused without that much being allocated")
+    {
+        // The same damaged field, now claiming a gigabyte for the directory of
+        // a file roughly a kilobyte in size. The load refuses the claim for its
+        // size, and it must not allocate any data of that magnitude before
+        // verifying it: that is the instant when a large file with such a field
+        // would take gigabytes while the session's network remains in memory.
+        // An allocation does not show in what a load reports, so the process's
+        // address space is capped while the two loads run, a quarter of a
+        // gigabyte beyond what the process occupies. A load that sized a buffer
+        // based on the claim before checking it would not get the buffer, and
+        // would end with that failure rather than the refusal. The session
+        // exists before the cap, since making one requires its own address
+        // space. Linux enforces this cap; where it does not, the case specifies
+        // this, and the subcase above holds the refusal through its message
+        // everywhere.
+        constexpr std::uint32_t gigabyte_in_words = std::uint32_t{1} << 27;
+        const std::uint64_t     claimed           = claim_for_directory(file, gigabyte_in_words);
+
+        zelph::io::OutputCollector  collector;
+        zelph::console::Interactive interactive(collector.sink());
+        interactive.process("a p b");
+        {
+            const AddressSpaceCap cap(std::uint64_t{1} << 28);
+            // Volatile, or the compiler takes the pair consisting of malloc and
+            // free away, and with it, the answer.
+            void* volatile served = std::malloc(static_cast<std::size_t>(claimed));
+            if (served != nullptr)
+            {
+                std::free(served);
+                MESSAGE("the cap on the address space is not enforced here: whether the load allocates the claim goes unchecked");
+            }
+            for (const std::string load : {".load", ".load-partial"})
+            {
+                CAPTURE(load);
+                CHECK_THROWS_WITH_AS(interactive.process(load + " \"" + file.string() + "\""),
+                                     doctest::Contains("the chunk directory needs " + std::to_string(claimed)
+                                                       + " bytes behind the header, but the header's chunk counts allow at most"),
+                                     std::runtime_error);
+            }
+        }
+        collector.clear();
+        interactive.process("A p B");
+        CHECK(answers_contain(collector, "a p b"));
+    }
+#endif
+    fs::remove_all(f.root);
+}
+
+#ifndef _WIN32
+// A pipe possesses no size until it is read to completion. A file lacking a
+// chunk directory needs none, and it loads from a pipe, entirely or
+// partially. A file equipped with a directory is checked against its size, a
+// detail a pipe cannot supply: the load refuses it after reading its header,
+// prior to replacing the session's network, and explains the reason.
+TEST_CASE("load: a file without a chunk directory loads from a pipe, and one with a directory is refused")
+{
+    const Fixtures f    = build();
+    const fs::path pipe = f.root / "pipe.bin";
+
+    SUBCASE("a file without a chunk directory loads")
+    {
+        const fs::path older = f.root / "older.bin";
+        write_older_network(older, zelph::test::older_networks().at("data_collections").size());
+
+        zelph::io::OutputCollector  collector;
+        zelph::console::Interactive interactive(collector.sink());
+        interactive.process(".load \"" + older.string() + "\"");
+        const std::size_t nodes = node_count(collector, interactive);
+        REQUIRE(nodes > 0);
+
+        for (const std::string load : {".load", ".load-partial"})
+        {
+            CAPTURE(load);
+            interactive.process(".new");
+            {
+                PipeSource source(pipe, read_text(older));
+                interactive.process(load + " \"" + pipe.string() + "\"");
+            }
+            CHECK(node_count(collector, interactive) == nodes);
+        }
+    }
+    SUBCASE("a file with a chunk directory is refused, and the session's network stays")
+    {
+        // A manifest that names the pipe as its .bin is rejected in the same
+        // manner.
+        const fs::path manifest = f.root / "manifest.json";
+        std::ofstream(manifest) << "{\"source\": {\"binPath\": \"" << pipe.generic_string() << "\"}, \"sections\": {\"left\": {\"chunks\": []}, "
+                                << "\"right\": {\"chunks\": []}, \"nameOfNode\": {\"chunks\": []}, \"nodeOfName\": {\"chunks\": []}}}\n";
+
+        zelph::io::OutputCollector  collector;
+        zelph::console::Interactive interactive(collector.sink());
+        interactive.process("a p b");
+        for (const std::string& load : {".load \"" + pipe.string() + "\"", ".load-partial \"" + pipe.string() + "\"", ".load-partial \"" + manifest.string() + "\""})
+        {
+            CAPTURE(load);
+            PipeSource source(pipe, read_text(f.good));
+            CHECK_THROWS_WITH_AS(interactive.process(load),
+                                 doctest::Contains("the size of the file cannot be determined (it is not a regular file), so its chunk directory cannot be checked"),
+                                 std::runtime_error);
+        }
+        collector.clear();
+        interactive.process("A p B");
+        CHECK(answers_contain(collector, "a p b"));
+    }
+
+    fs::remove_all(f.root);
+}
+#endif
 
 // A complete-file .load previously integrated the file into the session
 // incrementally, node by node, due to the chunk loaders' clears being

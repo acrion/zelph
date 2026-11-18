@@ -76,6 +76,8 @@ This loads the entire network into memory. Afterwards, you can execute queries, 
 
 Tip: if you work with the full JSON file, zelph automatically creates a `.bin` cache file during the first import to speed up future runs.
 
+A `.bin` written by the engine features a chunk directory positioned after its header, which records the location of each chunk and the number of entries it holds ([The Chunk Directory](sharding.md#the-chunk-directory)). The load sizes the node map once based on this, for every node within the file, rather than allowing the map to expand during insertion. A file whose directory does not match it – such as one truncated by a download that terminated prematurely – is rejected before your network is discarded, and the message says what does not match. A file lacking a directory loads equally well, without that reserve, and without that protection: a load reads a truncated file of this kind up to the point where it breaks off, then fails there, once your previous network has already been discarded; the message states this and names `.new` as the method to restart.
+
 The header of a `.bin` file records the predicates for which the network might hold a fact involving several objects ([Facts with Multiple Objects](logic.md#facts-with-multiple-objects)), and the load restores that record. A rule condition, or a statement within one, whose predicate falls within that set is matched through its atoms as well, because a fact with more objects states it too, and this incurs a higher cost than the single lookup otherwise employed. The Wikidata importer writes one object per fact, so a network it constructs records none. A file lacking such a record causes the network to be read as possibly containing such facts for every predicate until the next load; `.stat` then shows the line `Facts with multiple objects: may exist for every predicate (not recorded)`, and saving the network again does not alter this state, as the engine does not know which predicates hold such facts.
 
 The files above carry direct triples only, with one exception. A network **featuring the statement and qualifier layer** – what disjointness analysis reads – is what `wikidata-20260309-all-P11260.bin` is: the full dump combined with the _list item_ qualifiers of the _disjoint union of_ statements; see [Wikidata Qualifiers](qualifiers.md). Any other qualifier set is constructed using the `.wikidata-qualifiers` command from the JSON dump, and a published variant for it is a matter of asking: open an issue on [GitHub](https://github.com/acrion/zelph/issues).
@@ -95,7 +97,7 @@ A `.bin` file is internally organised into four sections of numbered chunks:
 - **nameOfNode** — maps from node IDs to human-readable names, grouped by language
 - **nodeOfName** — maps from human-readable names to node IDs, grouped by language
 
-Each section is divided into multiple chunks. For example, `wikidata-20260309-all-pruned-small.bin` contains 27 left chunks, 27 right chunks, 13 nameOfNode chunks, and 13 nodeOfName chunks (80 chunks in total).
+Each section is divided into multiple chunks. For example, `wikidata-20260309-all-pruned-small.bin` contains 27 left chunks, 27 right chunks, 13 nameOfNode chunks, and 13 nodeOfName chunks (80 chunks in total). Behind the header, the chunk directory records the offset, the length, and the number of entries for each chunk.
 
 A network that includes [node annotations](janet.md#node-annotations) embeds them within a fifth section positioned after the others, which `.stat-file` lists as "Annotation Chunks"; a partial load skips reading this section.
 
@@ -114,11 +116,12 @@ Right Chunks: 27
 Name-of-Node Chunks: 13
 Node-of-Name Chunks: 13
 Total Chunks: 80
+Chunk Directory: none
 ------------------------
 (declared by the header; use .index-file to verify the chunks)
 ```
 
-This reads the header and nothing else, which is what makes it instant on an 88 GB file — and is also its limit: a file that was cut off after the header still reports the counts the header declares. Only a header whose counts could not fit in the file at all is refused. A file that is not a serialized network, or is empty, is refused by name rather than with a Cap'n Proto backtrace.
+This reads the header and the chunk directory located immediately after it, and nothing beyond, which is what enables it to be instant on an 88 GB file. The line `Chunk Directory` says whether the directory matches the file: a file that was cut short does not, and the line below it then names the last chunk of the file, along with the byte where that chunk ends and the byte where the file ends. This file lacks a directory, which the line reports as `none`. Such a file, truncated after the header, still reports the counts declared by the header, and a damaged chunk remains undetected in any file. Only a header whose counts could not fit within the file at all is refused. A file that is not a serialized network, or is empty, is refused by name rather than with a Cap'n Proto backtrace.
 
 Use `.index-file` to generate a detailed JSON byte-offset index for every chunk:
 
@@ -127,7 +130,7 @@ zelph> .index-file /path/to/file.bin /tmp/index.json
 Wrote byte-offset index to /tmp/index.json
 ```
 
-The resulting JSON file lists the byte offset and length of each chunk within the `.bin` file. This is useful for understanding the internal layout and serves as the starting point for creating manifest files (see [Manifest-Based Loading](#manifest-based-loading) below). Because it reads every chunk, it is also the command that notices a truncated or corrupted file — at the cost of one pass over the whole thing.
+The resulting JSON file lists the byte offset and length for each chunk inside the `.bin` file, as well as for the header, whose range includes the chunk directory. This aids in comprehending the internal layout and serves as the foundation for creating manifest files (see [Manifest-Based Loading](#manifest-based-loading) below). Since it reads every chunk, it is also the command that notices a truncated or corrupted file – at the cost of a single pass across the entire file. It holds each chunk against the chunk directory as well and refuses to write an index when the two do not match.
 
 ### Basic Partial Loading from a Local `.bin` File
 
@@ -169,7 +172,7 @@ zelph> .load-partial /path/to/file.bin meta-only
 | _(selector omitted)_ | Load all chunks of that section                             |
 | `meta-only`          | Load only the header; skip all chunk payloads               |
 
-A selector naming a chunk the file does not have is refused before anything is loaded, so the network you already had is still there — use `.index-file` (or `.stat-file` for the counts alone) to find the valid indices. A load that fails *while reading*, on a truncated or corrupted file, is a different matter: the previous graph has been discarded by then and the message says so, with `.new` as the way back.
+A selector naming a chunk not present in the file is rejected before any loading, ensuring the network you already had remains intact – use `.index-file` (or `.stat-file` for the counts alone) to identify valid indices. The same applies to a file whose chunk directory does not match it, such as a truncated file. A load that fails *during reading*, due to a corrupted chunk or a truncated file lacking a chunk directory, is another case: the previous graph has already been discarded at that point, and the message reflects this, with `.new` serving as the path to recovery.
 
 ### Practical Example
 
@@ -249,7 +252,7 @@ This writes an upload-ready artifact tree under `/tmp/file/`:
 
 The tree mirrors the layout advertised in the manifest, so uploading `/tmp/file/` to the repo as `file` (the tool prints the matching `hf upload` command) makes it consumable via `.load-partial manifest.json ...`.
 
-The `headerLengthBytes` value comes from the `header.length` field in the index output. Each chunk entry needs at minimum `chunkIndex`, `offset` (byte offset into the source `.bin`), and `length`.
+The `headerLengthBytes` value comes from the `header.length` field in the index output. Each chunk entry needs at minimum `chunkIndex`, `offset` (byte offset into the source `.bin`), and `length`. The header range includes the chunk directory of the `.bin`, and a load refuses a manifest that lists a chunk not present in the directory, or gives a chunk a length or an `offset` different from those specified in the directory.
 
 For sharded layouts where each chunk is stored as a separate file, each chunk entry can additionally contain an `objectPath` field pointing to a local file path or a remote URL. When `objectPath` is present, zelph reads the chunk from that file instead of seeking into the source `.bin`. The manifest version `zelph-hf-layout/v2` is used for this mode. A sharded chunk entry looks like:
 

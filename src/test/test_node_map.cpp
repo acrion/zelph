@@ -25,14 +25,11 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #include <doctest/doctest.h>
 
+#include "directory_rewrite.hpp"
 #include "io/zelph.capnp.h"
 #include "network/node_map_sizing.hpp"
 #include "network/reasoning.hpp"
 #include "test_helpers.hpp"
-
-#include <capnp/message.h>
-#include <capnp/serialize-packed.h>
-#include <kj/io.h>
 
 #include <cstddef>
 #include <cstdint>
@@ -62,8 +59,8 @@ using namespace zelph::test;
 //
 // Previously, a load inserted into a map of the size the session left, which
 // doubled whenever the entries outgrew it and re-placed all entries inserted
-// so far at each doubling. Now, it reserves the map once, for the node count
-// recorded in the file's header as far as the chunks it reads can hold it,
+// so far at each doubling. Now, it reserves the map once, for the nodes that
+// the chunks it reads hold, as the chunk directory of the file records them,
 // and the map records both what the load reserved and how many times it
 // doubled during insertion (Network::NodeMapState): this counter is how the
 // tests below see a growth.
@@ -89,29 +86,20 @@ namespace
         return node_count(collector, interactive);
     }
 
-    // Writes `count` as the node count into the header of the network within
-    // `file` and leaves its chunks unchanged: whatever a writer other than
-    // the engine might place there, via Cap'n Proto just as the engine does.
-    void record_node_count(const std::filesystem::path& file, const std::uint64_t count)
+    // A network comprising two chunks per section, the second one short,
+    // stored within `file`; returns its node count. A network must exceed
+    // the capacity of a single chunk to achieve this, hence a program
+    // using the library creates a million nodes, mirroring the import
+    // process of a large network, in a fraction of the time a script
+    // consisting of a million lines would require.
+    std::size_t save_two_chunk_network(const std::filesystem::path& file)
     {
-        std::vector<kj::byte> bytes;
-        {
-            std::ifstream in(file, std::ios::binary);
-            bytes.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
-        }
-        kj::ArrayInputStream   input(kj::arrayPtr(bytes.data(), bytes.size()));
-        kj::VectorOutputStream header;
-        {
-            ::capnp::PackedMessageReader  read(input);
-            ::capnp::MallocMessageBuilder written;
-            written.setRoot(read.getRoot<zelph::network::ZelphImpl>());
-            written.getRoot<zelph::network::ZelphImpl>().setNodeCount(count);
-            ::capnp::writePackedMessage(header, written);
-        }
-        const auto    chunks = input.tryGetReadBuffer();
-        std::ofstream out(file, std::ios::binary | std::ios::trunc);
-        out.write(reinterpret_cast<const char*>(header.getArray().begin()), static_cast<std::streamsize>(header.getArray().size()));
-        out.write(reinterpret_cast<const char*>(chunks.begin()), static_cast<std::streamsize>(chunks.size()));
+        zelph::io::OutputCollector  collector;
+        zelph::console::Interactive interactive(collector.sink());
+        for (std::size_t i = 0; i < zelph::network::serialization::chunk_entries; ++i)
+            interactive.graph()->var();
+        interactive.process(".save \"" + file.string() + "\"");
+        return interactive.graph()->node_map_state().entries;
     }
 }
 
@@ -218,84 +206,56 @@ TEST_CASE("node map: a reserve is clamped to what 2^32 buckets hold at its facto
     }
 }
 
-// The chunk numbers a load reads. Chunk i of the left section and chunk i of
-// the right section contain identical nodes, so loading chunk 0 on one side
-// and chunk 1 on the other reads the nodes from two chunks, whereas loading
-// chunk 0 on both sides accesses the nodes from a single chunk. Counting only
-// the larger selection, one chunk in both scenarios, underestimates the first
-// case: chunk 0 on the left and chunk 1 on the right of the pruned P279
-// network read 2,000,000 nodes into a reserve of 1,000,000, with the map
-// doubling during the insertion process.
-TEST_CASE("node map: a load reads the chunk numbers of both its selections")
+// The entries a load reserves, drawn from those the chunk directory records
+// for each chunk. Chunk i in the left section and chunk i in the right
+// section contain identical nodes, so loading chunk 0 on one side and chunk
+// 1 on the other retrieves nodes from two distinct chunks, whereas loading
+// chunk 0 on both sides accesses the nodes from a single chunk. Counting
+// only the larger selection, one chunk in each scenario, underestimates the
+// first case: chunk 0 on the left and chunk 1 on the right of the pruned
+// P279 network read 2,000,000 nodes into a reserve of 1,000,000, with the
+// map doubling during the insertion process.
+TEST_CASE("node map: a load reserves the entries of the chunk numbers it reads")
 {
-    using selection              = std::unordered_set<std::uint32_t>;
-    const selection* const whole = nullptr;
-    const selection        none, first{0}, second{1}, both{0, 1}, third{2};
+    using selection                        = std::unordered_set<std::uint32_t>;
+    const selection* const           whole = nullptr;
+    const selection                  none, first{0}, second{1}, both{0, 1}, third{2};
+    const std::vector<std::uint64_t> three{1000000, 1000000, 615};
 
-    CHECK(sizing::chunks_read(3, 3) == 3);
-    CHECK(sizing::chunks_read(3, 3, whole, whole) == 3);
+    CHECK(sizing::load_reserve(three, three, whole, whole) == 2000615);
 
-    // Two sections of different lengths, both read in their entirety:
-    // the longer one names the chunk numbers.
-    CHECK(sizing::chunks_read(1, 3) == 3);
-    CHECK(sizing::chunks_read(3, 0) == 3);
-
-    CHECK(sizing::chunks_read(3, 3, &first, &first) == 1);
-    CHECK(sizing::chunks_read(3, 3, &first, &second) == 2);
-    CHECK(sizing::chunks_read(3, 3, &both, &second) == 2);
-    CHECK(sizing::chunks_read(3, 3, &none, &second) == 1);
-    CHECK(sizing::chunks_read(3, 3, &none, &none) == 0);
+    CHECK(sizing::load_reserve(three, three, &first, &first) == 1000000);
+    CHECK(sizing::load_reserve(three, three, &first, &second) == 2000000);
+    CHECK(sizing::load_reserve(three, three, &both, &second) == 2000000);
+    CHECK(sizing::load_reserve(three, three, &none, &second) == 1000000);
+    CHECK(sizing::load_reserve(three, three, &none, &none) == 0);
 
     // A section read in its entirety and a selection of the other, which
-    // adds the numbers missing from the whole section. Sections differ in
-    // length in a view that a partial load read and the library saved.
-    CHECK(sizing::chunks_read(3, 3, whole, &second) == 3);
-    CHECK(sizing::chunks_read(3, 3, &third, whole) == 3);
-    CHECK(sizing::chunks_read(2, 3, whole, &third) == 3);
-    CHECK(sizing::chunks_read(0, 3, whole, &second) == 1);
+    // adds the chunks missing from the whole section.
+    CHECK(sizing::load_reserve(three, three, whole, &second) == 2000615);
+    CHECK(sizing::load_reserve(three, three, &third, whole) == 2000615);
+
+    // Sections of different lengths, as seen in a view generated by a
+    // partial load and subsequently saved by the library.
+    const std::vector<std::uint64_t> two{1000000, 1000000};
+    CHECK(sizing::load_reserve(two, three, whole, whole) == 2000615);
+    CHECK(sizing::load_reserve(two, three, whole, &third) == 2000615);
+    CHECK(sizing::load_reserve({}, three, whole, &second) == 1000000);
 }
 
-// What a load reserves: the node count recorded in its header, up to the
-// limit that the chunks it reads can accommodate. A header from an older
-// engine records no node count; every chunk of a section except its last one
-// is full, thus the chunks establish a lower bound on the count, which never
-// reserves more than the file holds.
-TEST_CASE("node map: a load reserves the node count its file records")
+// The final chunk in a section is short, and a load that reads it reserves
+// the entries it holds rather than an entire chunk. Counted in chunk numbers,
+// chunk 2 of the pruned P279 network, which holds 5,552 nodes, took 1,000,000
+// entries, approximately 56 MB in memory at any one time.
+TEST_CASE("node map: a load of the short last chunk reserves the entries it holds")
 {
-    constexpr std::size_t chunk = zelph::network::serialization::chunk_entries;
+    using selection = std::unordered_set<std::uint32_t>;
+    const selection                  none, last{2};
+    const std::vector<std::uint64_t> p279{1000000, 1000000, 5552};
 
-    CHECK(sizing::load_reserve(27, 1) == 27);
-    CHECK(sizing::load_reserve(26533048, 27) == 26533048);
-
-    // A selection of chunks.
-    CHECK(sizing::load_reserve(26533048, 1) == chunk);
-    CHECK(sizing::load_reserve(26533048, 2) == 2 * chunk);
-    CHECK(sizing::load_reserve(26533048, 0) == 0);
-
-    // A header that lacks the count.
-    CHECK(sizing::load_reserve(0, 27) == 26 * chunk);
-    CHECK(sizing::load_reserve(0, 1) == 0);
-    CHECK(sizing::load_reserve(0, 0) == 0);
-}
-
-// A header might be damaged, or written by something other than the engine,
-// and nothing then makes the node count it records the count that its chunks
-// hold. A load that reserves a quantity based on whatever count its header
-// records would rely on a solitary figure: one of 40,000,000 for a network of
-// 25,364 nodes took 2.1 GB before the load read a chunk, and a count with its
-// highest bit set requests all the clamp allows, 3,435,973,888 entries. The
-// chunks bound the count, and the count bounds the chunks, so one damaged
-// number reserves no more than the other allows.
-TEST_CASE("node map: a load reserves no more nodes than its chunks hold")
-{
-    constexpr std::size_t chunk = zelph::network::serialization::chunk_entries;
-
-    CHECK(sizing::load_reserve(40000000, 1) == chunk);
-    CHECK(sizing::load_reserve(std::uint64_t{1} << 62, 2) == 2 * chunk);
-
-    // A file containing 617 nodes, where the 32-bit chunk counts assert
-    // the maximum they are capable of.
-    CHECK(sizing::load_reserve(617, sizing::chunks_read(4294967295U, 4294967295U)) == 617);
+    CHECK(sizing::load_reserve(p279, p279, &last, &last) == 5552);
+    CHECK(sizing::load_reserve(p279, p279, &last, &none) == 5552);
+    CHECK(sizing::load_reserve(p279, p279, &none, &last) == 5552);
 }
 
 // The point of the reserve: a load places each node into a map that already
@@ -322,11 +282,11 @@ TEST_CASE("load: a load reserves the node map once and does not grow it while it
     std::filesystem::remove(file);
 }
 
-// A save of selected predicates writes the nodes it keeps and records their
-// number, not the total number of nodes in the network from which they were
-// extracted, so a load of the file reserves for what the file holds. One
-// predicate out of two is saved here, each associated with 200 facts across
-// nodes of its own.
+// Saving selected predicates writes the nodes it keeps, and its chunk
+// directory records the entries of the chunks it writes, not the overall
+// count of nodes in the network they were drawn from, so a load of the file
+// reserves for what the file holds. One predicate out of two is saved here,
+// each linked to 200 facts spread across nodes of its own.
 TEST_CASE("load: a file of selected predicates records the nodes it holds")
 {
     const auto  file         = std::filesystem::temp_directory_path() / "zelph_node_map_selected.bin";
@@ -390,29 +350,110 @@ TEST_CASE("load: a partial load reserves for the chunks it reads")
     std::filesystem::remove(file);
 }
 
-// The bound where a user meets it: a file whose header records more nodes than
-// its chunks can accommodate. The engine records the count it saves, so the
-// header is rewritten here as another writer could write it, and the load
-// receives the file as it would receive a damaged one. Both a whole load and a
-// partial load reserve what the file's single chunk number can hold, and the
-// network loads exactly as it was saved.
-TEST_CASE("load: a header that records more nodes than its chunks hold reserves what they can hold")
+// The same where a user meets it: a network comprising more than one chunk,
+// with the final chunk being short. A partial load of that chunk reserves the
+// nodes it holds, on either side and on both, and a load that reads chunk 0 on
+// one side and the last chunk on the other reserves the nodes of both.
+TEST_CASE("load: a partial load of the short last chunk reserves the nodes it holds")
 {
     constexpr std::size_t chunk = zelph::network::serialization::chunk_entries;
-    const auto            file  = std::filesystem::temp_directory_path() / "zelph_node_map_overstated.bin";
-    const std::size_t     nodes = save_network(file, 200);
-    record_node_count(file, 40000000);
+    const auto            file  = std::filesystem::temp_directory_path() / "zelph_node_map_last_chunk.bin";
+    const std::size_t     nodes = save_two_chunk_network(file);
+    REQUIRE(nodes > chunk);
+    const std::size_t last = nodes - chunk;
 
     zelph::io::OutputCollector  collector;
     zelph::console::Interactive interactive(collector.sink());
-    interactive.process(".load \"" + file.string() + "\"");
-    CHECK(node_count(collector, interactive) == nodes);
-    CHECK(interactive.graph()->node_map_state().entries == nodes);
-    CHECK(interactive.graph()->node_map_state().reserved == chunk);
+    for (const auto& [sides, read] : {std::pair<std::string, std::size_t>{"left=1 right=1", last},
+                                      {"left=1 right=none", last},
+                                      {"left=none right=1", last},
+                                      {"left=0 right=1", nodes},
+                                      {"left=0 right=0", chunk}})
+    {
+        CAPTURE(sides);
+        interactive.process(".new");
+        interactive.process(".load-partial \"" + file.string() + "\" " + sides);
 
-    interactive.process(".load-partial \"" + file.string() + "\" left=0 right=0");
+        const auto state = interactive.graph()->node_map_state();
+        CHECK(state.entries == read);
+        CHECK(state.reserved == read);
+        CHECK(state.growths == 0);
+    }
+
+    interactive.process(".new");
+    interactive.process(".load \"" + file.string() + "\"");
     CHECK(interactive.graph()->node_map_state().entries == nodes);
-    CHECK(interactive.graph()->node_map_state().reserved == chunk);
+    CHECK(interactive.graph()->node_map_state().reserved == nodes);
+
+    std::filesystem::remove(file);
+}
+
+// A chunk directory could be damaged, or written by something other than the
+// engine, and a load that reserved the values it records would rely on
+// numbers that no other component bounds: a header indicating 40,000,000
+// nodes for a network of 25,364 took 2.1 GB before the load read a chunk. A
+// directory is trusted only when it matches its file, and one whose chunk in
+// the left or right section claims more entries than a chunk can hold does
+// not. The load refuses the file and states the reason, before reserving and
+// before discarding the session's network.
+TEST_CASE("load: a chunk directory that claims more entries than a chunk holds is refused")
+{
+    constexpr std::size_t chunk = zelph::network::serialization::chunk_entries;
+    const auto            file  = std::filesystem::temp_directory_path() / "zelph_node_map_overstated.bin";
+    save_network(file, 200);
+    rewrite_directory(file, [](zelph::network::ChunkDirectory::Builder directory)
+                      { directory.getSections()[1].getChunks()[0].setEntries(chunk + 1); });
+
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+    interactive.process("a p b");
+    for (const std::string load : {".load", ".load-partial"})
+    {
+        CAPTURE(load);
+        CHECK_THROWS_WITH_AS(interactive.process(load + " \"" + file.string() + "\""),
+                             doctest::Contains("right chunk 0 holds 1000001 entries, more than a chunk holds (1000000)"),
+                             std::runtime_error);
+    }
+    CHECK(interactive.graph()->node_map_state().reserved == 0);
+    collector.clear();
+    interactive.process("A p B");
+    CHECK(answers_contain(collector, "a p b"));
+
+    std::filesystem::remove(file);
+}
+
+// The other bound of a chunk: its bytes, which also bound the amount a load
+// reserves for a file of a given size. An entry the engine writes in the
+// left or right section takes at least four packed bytes, two for each of
+// its words, the node and the pointer to its adjacency, neither of which is
+// zero. A chunk therefore holds at most a quarter of its bytes in entries. A
+// directory asserting one additional entry for a chunk of a few kilobytes,
+// significantly below the chunk's capacity, is refused in the same way.
+TEST_CASE("load: a chunk directory that claims more entries than a chunk's bytes can hold is refused")
+{
+    const auto file = std::filesystem::temp_directory_path() / "zelph_node_map_dense.bin";
+    save_network(file, 200);
+    std::uint64_t claimed = 0;
+    rewrite_directory(file, [&claimed](zelph::network::ChunkDirectory::Builder directory)
+                      {
+                          auto left = directory.getSections()[0].getChunks()[0];
+                          claimed   = left.getLength() / 4 + 1;
+                          left.setEntries(claimed); });
+    REQUIRE(claimed < zelph::network::serialization::chunk_entries);
+
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+    interactive.process("a p b");
+    for (const std::string load : {".load", ".load-partial"})
+    {
+        CAPTURE(load);
+        CHECK_THROWS_WITH_AS(interactive.process(load + " \"" + file.string() + "\""),
+                             doctest::Contains("left chunk 0 holds " + std::to_string(claimed) + " entries, more than its"),
+                             std::runtime_error);
+    }
+    collector.clear();
+    interactive.process("A p B");
+    CHECK(answers_contain(collector, "a p b"));
 
     std::filesystem::remove(file);
 }
@@ -424,12 +465,13 @@ namespace zelph::test
     const std::map<std::string, std::vector<unsigned char>>& older_networks();
 }
 
-// A file from an older engine records no node count, and its single chunk
-// bounds it by nothing: the load reserves nothing and the map grows as it
-// did before the reserve was introduced. Loading such a file is how a user
+// A file from an older engine lacks a chunk directory, and no other part of
+// it reliably indicates how many nodes its chunks hold: the load reserves
+// nothing, regardless of its chunk counts, and the map grows as it did
+// before the introduction of the reserve. Loading such a file is how a user
 // reaches that path, and it shows the counter in action: the map that the
-// fresh engine left doubles while the load inserts.
-TEST_CASE("load: a file without a node count lets the node map grow while it loads")
+// fresh engine left doubles as the load inserts.
+TEST_CASE("load: a file without a chunk directory lets the node map grow while it loads")
 {
     const auto& networks = zelph::test::older_networks();
     const auto  network  = networks.find("data_collections");
@@ -452,6 +494,41 @@ TEST_CASE("load: a file without a node count lets the node map grow while it loa
     CHECK(state.reserved == 0);
     CHECK(state.growths > 0);
     CHECK(state.buckets == sizing::buckets_for(state.entries, sizing::default_load_factor));
+}
+
+// However many chunks a file lacking a chunk directory declares, the load
+// reserves nothing: the counts in its header indicate the number of chunks,
+// not the number of nodes they hold, and an estimate derived from them
+// reserved a million entries for each complete chunk of a file whose header
+// undergoes no verification. Here, a network with two chunks per section is
+// written in the format of every network published before the directory, as
+// an older engine wrote it, and loaded in full or in part.
+TEST_CASE("load: a file without a chunk directory reserves nothing, however many chunks it has")
+{
+    const auto        saved = std::filesystem::temp_directory_path() / "zelph_node_map_two_chunks.bin";
+    const auto        older = std::filesystem::temp_directory_path() / "zelph_node_map_two_chunks_older.bin";
+    const std::size_t nodes = save_two_chunk_network(saved);
+    REQUIRE(nodes > zelph::network::serialization::chunk_entries);
+    write_without_directory(saved, older);
+    std::filesystem::remove(saved);
+
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+    interactive.process(".stat-file \"" + older.string() + "\"");
+    REQUIRE(any_output_contains(collector, "Left Chunks: 2"));
+    REQUIRE(any_output_contains(collector, "Chunk Directory: none"));
+
+    interactive.process(".load \"" + older.string() + "\"");
+    CHECK(interactive.graph()->node_map_state().entries == nodes);
+    CHECK(interactive.graph()->node_map_state().reserved == 0);
+    CHECK(interactive.graph()->node_map_state().growths > 0);
+
+    interactive.process(".new");
+    interactive.process(".load-partial \"" + older.string() + "\" left=0,1 right=0,1");
+    CHECK(interactive.graph()->node_map_state().entries == nodes);
+    CHECK(interactive.graph()->node_map_state().reserved == 0);
+
+    std::filesystem::remove(older);
 }
 
 // The setting consists of a single line, similar to the other engine

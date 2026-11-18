@@ -32,6 +32,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include <algorithm>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <map>
 #include <string>
 #include <vector>
@@ -462,7 +463,7 @@ a p b
     }
 }
 
-TEST_CASE("annotations: a section of more than one chunk reads back, and a load cut inside it leaves a store that agrees with itself" * doctest::test_suite("slow"))
+TEST_CASE("annotations: a section of more than one chunk reads back, and a load that fails inside it leaves a store that agrees with itself" * doctest::test_suite("slow"))
 {
     // The section is split into chunks containing a million entries each,
     // with one entry per node and key, just as in every other section. Nodes
@@ -476,9 +477,9 @@ TEST_CASE("annotations: a section of more than one chunk reads back, and a load 
     const auto file = annotation_file("chunks");
     Node       bulk = 0;
     Node       last = 0;
-    // Sufficiently extended such that the second chunk exceeds in length
-    // the eight bytes extracted by the cut from the file's end, ensuring
-    // the cut lands within it rather than within the first chunk.
+    // Extended enough that the second chunk surpasses the eight bytes
+    // overwritten at the start by the damage below, ensuring the damage
+    // remains contained within it.
     const std::string tail(100, 't');
     {
         zelph::io::OutputCollector  collector;
@@ -513,7 +514,7 @@ TEST_CASE("annotations: a section of more than one chunk reads back, and a load 
         CHECK(graph->annotations(last) == annotations{{"k1", {"first value"}}, {"k2", {tail}}});
         CHECK(graph->annotations(bulk).size() == 999'999);
     }
-    SUBCASE("a load cut inside the second chunk")
+    SUBCASE("a load that fails inside the second chunk")
     {
         // Upon failure of the second chunk, the first has already been
         // retrieved. Just as the graph retains the portion of the file read
@@ -522,16 +523,37 @@ TEST_CASE("annotations: a section of more than one chunk reads back, and a load 
         // it. If a write finds a value that a read has recently indicated as
         // absent, the flag and the store's content are at odds, and in such a
         // condition, a removal leaves the entries of its node behind,
-        // awaiting the next fact created with the same id.
-        const auto cut = annotation_file("chunks-cut");
-        fs::copy_file(file, cut, fs::copy_options::overwrite_existing);
-        fs::resize_file(cut, fs::file_size(cut) - 8);
-        CHECK_THROWS_AS(interactive.process(".load \"" + cut.string() + "\""), std::runtime_error);
+        // awaiting the next fact created with the same id. The file is
+        // damaged at the start of the second chunk and keeps its size, much
+        // like a file damaged on disk: its chunk directory still matches it,
+        // so the load reads up to the point of damage. A file truncated
+        // prematurely is refused before the load replaces anything
+        // (test_bin_inspection.cpp).
+        const auto index = annotation_file("chunks-index").replace_extension(".json");
+        interactive.process(".index-file \"" + file.string() + "\" \"" + index.string() + "\"");
+        std::string text;
+        {
+            std::ifstream in(index);
+            text.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+        }
+        const auto second = text.find("\"chunkIndex\":1", text.find("\"annotations\": ["));
+        REQUIRE(second != std::string::npos);
+        const auto offset = std::stoull(text.substr(text.find("\"offset\":", second) + 9));
+
+        const auto damaged = annotation_file("chunks-damaged");
+        fs::copy_file(file, damaged, fs::copy_options::overwrite_existing);
+        {
+            std::fstream out(damaged, std::ios::binary | std::ios::in | std::ios::out);
+            out.seekp(static_cast<std::streamoff>(offset));
+            out.write(std::string(8, '\xff').data(), 8);
+        }
+        CHECK_THROWS_AS(interactive.process(".load \"" + damaged.string() + "\""), std::runtime_error);
         REQUIRE(std::max(graph->get_node("first"), graph->get_node("second")) == last);
 
         const auto seen = graph->annotations(last);
         CHECK(graph->annotate(last, "k1", "first value") == (seen.find("k1") == seen.end()));
-        fs::remove(cut);
+        fs::remove(damaged);
+        fs::remove(index);
     }
 
     fs::remove(file);

@@ -819,11 +819,32 @@ namespace zelph::console
         // does.
         if (stats.annotation_count != 0) _n->out_stream() << "Annotation Chunks: " << stats.annotation_count << std::endl;
         _n->out_stream() << "Total Chunks: " << total_chunks << std::endl;
+        // Below the lines that scripts read, ensuring they remain unchanged.
+        // A load sizes the node map from a directory that matches, refuses a
+        // file whose directory does not match, and reserves nothing for a
+        // file lacking one.
+        if (!stats.has_directory)
+        {
+            _n->out_stream() << "Chunk Directory: none" << std::endl;
+        }
+        else if (stats.directory_deviations.empty())
+        {
+            _n->out_stream() << "Chunk Directory: matches the file" << std::endl;
+        }
+        else
+        {
+            constexpr std::size_t shown = 8;
+            _n->out_stream() << "Chunk Directory: does not match the file" << std::endl;
+            for (std::size_t i = 0; i < stats.directory_deviations.size() && i < shown; ++i)
+                _n->out_stream() << "  " << stats.directory_deviations[i] << std::endl;
+            if (stats.directory_deviations.size() > shown)
+                _n->out_stream() << "  and " << stats.directory_deviations.size() - shown << " more" << std::endl;
+        }
         _n->out_stream() << "------------------------" << std::endl;
         // The counts come from the header; nothing here read a chunk. That is
-        // the point on an 88 GB file, but it also means a file that stops
-        // after the header still reports them. .index-file walks the chunks
-        // and is what fails on such a file.
+        // the point on an 88 GB file, but it also means a file lacking a
+        // chunk directory that stops after the header still reports them.
+        // .index-file walks the chunks and is what fails on such a file.
         _n->out_stream() << "(declared by the header; use .index-file to verify the chunks)" << std::endl;
     }
 #endif

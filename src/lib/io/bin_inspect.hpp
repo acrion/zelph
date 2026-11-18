@@ -49,6 +49,12 @@ namespace zelph::io
         uint32_t annotation_count    = 0; // zero in every file that lacks node annotations
         uint64_t file_size_bytes     = 0;
         uint64_t header_length_bytes = 0;
+
+        // Whether the header announces a chunk directory, and what
+        // conflicts with it: nothing, for a directory that matches the
+        // file.
+        bool                     has_directory = false;
+        std::vector<std::string> directory_deviations;
     };
 
     // Smallest number of bytes a chunk message can occupy. A packed Cap'n
@@ -62,6 +68,7 @@ namespace zelph::io
         uint32_t    chunk_index = 0;
         uint64_t    offset      = 0;
         uint64_t    length      = 0;
+        uint64_t    entries     = 0; // compared to the chunk directory, not written
         std::string which;
         std::string lang;
     };
@@ -70,7 +77,7 @@ namespace zelph::io
     {
         std::string              filename;
         BinHeaderStats           stats;
-        uint64_t                 header_length_bytes = 0;
+        uint64_t                 header_length_bytes = 0; // up to the first chunk, the chunk directory included
         std::vector<BinChunkRef> left_chunks;
         std::vector<BinChunkRef> right_chunks;
         std::vector<BinChunkRef> name_of_node_chunks;
@@ -78,12 +85,15 @@ namespace zelph::io
         std::vector<BinChunkRef> annotation_chunks;
     };
 
-    /// The header only, which is what makes this instant on an 88 GB file.
-    /// Throws with the file named -- and with the command that asked -- when
-    /// it is not a readable zelph .bin.
+    /// The header and the chunk directory behind it, which is what makes this
+    /// instant on an 88 GB file. Throws with the file named -- and with the
+    /// command that asked -- when it is not a readable zelph .bin; a
+    /// directory that does not match the file is reported, not thrown.
     BinHeaderStats read_bin_header_stats(const std::string& command, const std::string& filename);
 
     /// Walk every chunk and record where it begins and how long it is.
+    /// Raises an exception when the chunk directory does not match the
+    /// walk's findings.
     BinIndexData read_bin_index_data(const std::string& command, const std::string& filename);
 
     /// Write what read_bin_index_data produced, as JSON.

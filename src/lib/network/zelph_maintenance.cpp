@@ -3445,8 +3445,9 @@ void Zelph::load_from_file(const std::string& filename) const
     }
     catch (...)
     {
+        const bool discarded = graph_epoch() != epoch;
         adopt_loaded_graph(epoch);
-        throw;
+        Impl::rethrow_load_failure(discarded);
     }
     adopt_loaded_graph(epoch);
 
@@ -3602,8 +3603,9 @@ void Zelph::load_from_file(const std::string& filename, const BinChunkSelection&
     }
     catch (...)
     {
+        const bool discarded = graph_epoch() != epoch;
         adopt_loaded_graph(epoch);
-        throw;
+        Impl::rethrow_load_failure(discarded);
     }
     adopt_loaded_graph(epoch);
 }
@@ -3623,8 +3625,9 @@ void Zelph::load_from_manifest(const std::string&       manifest_path,
     }
     catch (...)
     {
+        const bool discarded = graph_epoch() != epoch;
         adopt_loaded_graph(epoch);
-        throw;
+        Impl::rethrow_load_failure(discarded);
     }
     adopt_loaded_graph(epoch);
 }

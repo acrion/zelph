@@ -26,6 +26,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include "wikidata.hpp"
 
 #include "import_diagnostics.hpp"
+#include "io/chunk_directory.hpp"
 #include "io/read_async.hpp"
 #include "platform/platform_utils.hpp"
 #include "string/node_to_string.hpp"
@@ -200,6 +201,13 @@ void Wikidata::import_all(const std::string& constraints_dir)
                 // imported into it.
                 if (_pImpl->_n->graph_epoch() == epoch)
                 {
+                    // A .bin file designated by the user is a network file,
+                    // and a chunk directory that does not match it
+                    // constitutes the same error as for any other .bin:
+                    // nothing is imported, and the file remains unchanged.
+                    // Named via its dump, the cache is replaced by the
+                    // import.
+                    if (_input_path.extension() == ".bin" && dynamic_cast<const io::DirectoryRefusal*>(&ex) != nullptr) throw;
                     _pImpl->_n->diagnostic("Failed to load cache: "s + ex.what(), true);
                 }
                 else

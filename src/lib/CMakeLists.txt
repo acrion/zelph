@@ -352,6 +352,8 @@ else()
     set(ZELPH_PERSISTENCE_SOURCES
         io/bin_inspect.cpp
         io/bin_inspect.hpp
+        io/chunk_directory.cpp
+        io/chunk_directory.hpp
         io/data_manager.cpp
         io/read_async.cpp
         wikidata/wikidata.cpp

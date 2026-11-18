@@ -128,16 +128,18 @@ namespace zelph::network
         static void        validate_chunk_selector(const detail::chunk_selector& selection, uint32_t chunkCount, const char* label);
         void               clear_loaded_state();
         void               loadSmallData(const ZelphImpl::Reader& impl);
-        void               loadLeftRightChunks(kj::BufferedInputStreamWrapper& bufferedInput, const ::capnp::ReaderOptions& options, uint32_t leftChunkCount, uint32_t rightChunkCount, const detail::chunk_selector* leftSelection = nullptr, const detail::chunk_selector* rightSelection = nullptr);
-        void               loadNameOfNodeChunks(kj::BufferedInputStreamWrapper& bufferedInput, const ::capnp::ReaderOptions& options, uint32_t nameOfNodeChunkCount, const detail::chunk_selector* selection = nullptr);
-        void               loadNodeOfNameChunks(kj::BufferedInputStreamWrapper& bufferedInput, const ::capnp::ReaderOptions& options, uint32_t nodeOfNameChunkCount, const detail::chunk_selector* selection = nullptr);
-        void               loadAnnotationChunks(kj::BufferedInputStreamWrapper& bufferedInput, const ::capnp::ReaderOptions& options, uint32_t annotationChunkCount);
+        void               loadLeftRightChunks(kj::BufferedInputStream& bufferedInput, const ::capnp::ReaderOptions& options, uint32_t leftChunkCount, uint32_t rightChunkCount, const detail::chunk_selector* leftSelection = nullptr, const detail::chunk_selector* rightSelection = nullptr);
+        void               loadNameOfNodeChunks(kj::BufferedInputStream& bufferedInput, const ::capnp::ReaderOptions& options, uint32_t nameOfNodeChunkCount, const detail::chunk_selector* selection = nullptr);
+        void               loadNodeOfNameChunks(kj::BufferedInputStream& bufferedInput, const ::capnp::ReaderOptions& options, uint32_t nodeOfNameChunkCount, const detail::chunk_selector* selection = nullptr);
+        void               loadAnnotationChunks(kj::BufferedInputStream& bufferedInput, const ::capnp::ReaderOptions& options, uint32_t annotationChunkCount);
         void               loadLeftRightChunkFromPath(const std::string& source_path, uint64_t source_offset, const detail::chunk_selector* selection, const char* which_name, uint32_t section_count);
         void               loadNameOfNodeChunkFromPath(const std::string& source_path, uint64_t source_offset, const detail::chunk_selector* selection);
         void               loadNodeOfNameChunkFromPath(const std::string& source_path, uint64_t source_offset, const detail::chunk_selector* selection);
         void               loadFromManifest(const std::string& manifest_path, const Zelph::BinChunkSelection& selection, const std::string& shard_root, const std::string& bin_path_hint, const bool skip_payload);
         void               saveToFile(const std::string& filename, const ankerl::unordered_dense::set<Node>* const keep = nullptr) const;
         static std::string read_error_text(const std::string& filename, const kj::Exception& e, const bool state_discarded);
+        static std::string discarded_text(const std::string& message);
+        static void        rethrow_load_failure(const bool state_discarded);
         bool               loadFromFile(const std::string& filename, bool& negation_conditions); // if the file was written using template ids
         void               loadFromFile(const std::string& filename, const Zelph::BinChunkSelection& selection, const bool skip_payload);
 #endif // __EMSCRIPTEN__

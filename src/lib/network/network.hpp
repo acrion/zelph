@@ -637,7 +637,8 @@ namespace zelph::network
         // The size and factor of the node map, along with what the last load
         // did with it: the entries it reserved before inserting any, and how
         // often the bucket array doubled during insertion, which a reserve
-        // for the node count that the file records leaves at none.
+        // for the nodes recorded by the chunk directory of the file leaves
+        // at none.
         struct NodeMapState
         {
             std::size_t entries     = 0;
@@ -1918,9 +1919,10 @@ namespace zelph::network
         float       _large_load_factor{node_map_sizing::default_load_factor};
         std::size_t _large_factor_from{std::numeric_limits<std::size_t>::max()};
 
-        // See reserve_for_load and NodeMapState: the number of buckets
-        // immediately following the last load's reserve, the entries it
-        // reserved, and the doublings that occurred during insertion.
+        // See reserve_for_load and NodeMapState: the number of buckets the
+        // most recent load started inserting into, following its reserve if
+        // any was made, the entries it reserved, and the doublings that
+        // occurred during insertion.
         std::size_t _load_buckets{0};
         std::size_t _load_reserved{0};
         std::size_t _load_growths{0};
@@ -2037,10 +2039,9 @@ namespace zelph::network
         // inserts. The load gives the map the factor for the bucket count it
         // attained at this point, rather than with every entry: its reserve
         // gave the large factor to every map it sized for large_buckets, and
-        // a map that outgrew its reserve -- where the file records no node
-        // count, or records fewer nodes than it holds, or its two sections
-        // hold different nodes under a single chunk number -- has grown at
-        // the default until this moment.
+        // a map that outgrew its reserve -- where the file lacks a chunk
+        // directory, or its two sections hold different nodes under a single
+        // chunk number -- has grown at the default until this moment.
         void finish_load()
         {
             _load_growths = 0;

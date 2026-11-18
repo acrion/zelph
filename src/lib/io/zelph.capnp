@@ -61,11 +61,52 @@ struct ZelphImpl {
   # within a condition, regardless of its predicate, as one that a fact
   # with multiple objects could potentially state.
   widerStatementPredicates @15 :List(UInt64);
-  # The number of nodes that the left and the right sections hold
-  # together: what a load reserves the node map for before reading them
-  # (node_map_sizing::load_reserve). 0 in every file from an older engine,
-  # whose load estimates the number based on the chunk counts.
-  nodeCount @16 :UInt64;
+  # Was: nodeCount, the total number of nodes jointly held by the left and
+  # right sections. No engine reads or writes it anymore, since the chunk
+  # directory now records the entries of each chunk. It stays a UInt64 to
+  # guarantee that no later field takes its word in the header of a file
+  # that set it.
+  deprecated5 @16 :UInt64;
+  # True in every file an engine generates that places a ChunkDirectory
+  # message immediately after its header. An older engine wrote the first
+  # chunk there and left this value set to false.
+  chunkDirectory @17 :Bool;
+}
+
+# The location of each chunk within a file, and the quantity of entries it
+# holds. A save writes it as the message immediately following the header,
+# unpacked: its size is then determined solely by the number of chunks, so
+# the save writes it with zeros preceding the chunks and updates it after
+# they are written. A load sizes the node map from it, once it matches the
+# file.
+struct ChunkDirectory {
+  # The sections appear in the order of the file, each containing its
+  # chunks in their respective order. A section that an engine does not
+  # recognize still contributes its part of the file.
+  sections @0 :List(DirectorySection);
+}
+
+struct DirectorySection {
+  section @0 :FileSection;
+  chunks @1 :List(DirectoryChunk);
+}
+
+enum FileSection {
+  left @0;
+  right @1;
+  nameOfNode @2;
+  nodeOfName @3;
+  annotations @4;
+}
+
+struct DirectoryChunk {
+  # Bytes from the start of the file to the chunk's packed message.
+  offset @0 :UInt64;
+  # The number of bytes contained in that message.
+  length @1 :UInt64;
+  # Pairs of the chunk, or its entries within the annotation
+  # section.
+  entries @2 :UInt64;
 }
 
 struct NamePair {

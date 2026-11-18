@@ -239,12 +239,13 @@ Everywhere else on this page the budget is time. For `.save` it is memory,
 because the operation that matters — writing a network freshly imported from
 a Wikidata dump — runs on a machine that is already deep into swap.
 
-A saved network is a stream of Cap'n Proto messages: a small header, then
-the adjacency and name maps in chunks of `chunk_entries` (1M) each. Cap'n
-Proto allocates the **first segment of a message up front**, so the size
-handed to `MallocMessageBuilder` is a floor on what the write needs
-resident, not a hint — and under mimalloc, which the zelph binary links, the
-pages are there immediately. A flat first segment of 64 Mi words therefore
+A saved network is a stream of Cap’n Proto messages: a small
+header, the chunk directory, followed by the adjacency and name maps
+organized into chunks of `chunk_entries` (1M) each. Cap'n Proto allocates
+the **first segment of a message up front**, so the size handed to
+`MallocMessageBuilder` is a floor on what the write needs resident, not a
+hint — and under mimalloc, which the zelph binary links, the pages are
+there immediately. A flat first segment of 64 Mi words therefore
 cost 512 MiB per message regardless of content: measured, saving an 11 kB
 network moved process RSS from 0.0 to 0.5 GiB, and the same half gigabyte
 was charged on top of every large save.
@@ -264,6 +265,8 @@ peak RSS of the save from 1.22 GiB to 0.84 GiB at unchanged wall time, and
 the file comes out byte-identical. No off switch accompanies this: unlike
 the acceleration stores, nothing here trades memory for speed — the segment
 is simply as large as the data going into it.
+
+The chunk directory incurs a cost of three words per chunk. Being unpacked, its size remains unaffected by the content it records: the save operation writes it with zeros before the chunks, records each chunk’s offset, length, and entries during chunk writing, and later overwrites the zeros with the directory at the end.
 
 ## Reading the Code
 

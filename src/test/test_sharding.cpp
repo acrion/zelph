@@ -25,15 +25,22 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #include <doctest/doctest.h>
 
+#include "curl_stand_in.hpp"
+#include "directory_rewrite.hpp"
 #include "network/reasoning.hpp"
+#include "network/serialization_layout.hpp"
 #include "test_helpers.hpp"
 
+#include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <map>
+#include <optional>
 #include <sstream>
 #include <string>
+#include <utility>
 #include <vector>
 
 using namespace zelph::test;
@@ -80,6 +87,10 @@ namespace
         fs::path seek_manifest;
         fs::path shards_dir;
         fs::path route_index;
+
+        // The range of the .bin that the index designates as its header: the
+        // header message and the chunk directory located after it.
+        uint64_t header_length = 0;
 
         // Node ID of "alpha", read from the network rather than assumed: the
         // route index addresses nodes by ID, which is what makes it a route
@@ -184,10 +195,24 @@ namespace
         return name + ".capnp-packed";
     }
 
+    // What a case might request from the artifact's network.
+    struct ArtifactShape
+    {
+        // False for a .bin in the format of the networks published before
+        // the chunk directory: no directory present, and a header that
+        // announces none.
+        bool with_directory = true;
+
+        // Nodes beyond the named ones. A quantity exceeding what a chunk
+        // holds assigns a second chunk to both the left and the right
+        // section.
+        std::size_t further_nodes = 0;
+    };
+
     // Build a complete artifact tree in `root`, mirroring what
     // tools/emit_zelph_hf_v2.py produces:
     //   net.bin, net.hf-v2.json, net.seek.json, shards/<section>/chunk-*.
-    ArtifactPaths build_artifact(const fs::path& root)
+    ArtifactPaths build_artifact(const fs::path& root, const ArtifactShape& shape = {})
     {
         fs::remove_all(root);
         fs::create_directories(root);
@@ -212,7 +237,14 @@ gamma ~ beta
             interactive.process(".name alpha de alpha_de");
             interactive.process(".name beta de beta_de");
             paths.alpha = node_id_of(interactive, collector, "alpha");
+            for (std::size_t i = 0; i < shape.further_nodes; ++i)
+                interactive.graph()->var();
             interactive.process(".save \"" + paths.bin.string() + "\"");
+
+            // Index, shards, and manifests are made from the file as it
+            // currently stands, thus aligning with the .bin regardless of
+            // format.
+            if (!shape.with_directory) write_without_directory(paths.bin, paths.bin);
             interactive.process(".index-file \"" + paths.bin.string() + "\" \"" + index_json.string() + "\"");
         }
 
@@ -248,6 +280,7 @@ gamma ~ beta
 
         REQUIRE(header_length > 0);
         REQUIRE(paths.sections.size() == 4);
+        paths.header_length = header_length;
 
         // The artifact advertises a repository that does not exist: any
         // resolution that leaves the local tree must fail rather than
@@ -483,13 +516,13 @@ TEST_CASE("sharding: a seek-only manifest reads chunks from the .bin")
     fs::remove_all(artifact.root);
 }
 
-// A load via a manifest reserves the node map in the same manner as a .bin
-// load does: for the node count indicated in the source .bin's header, up to
-// the extent that the chunks being read can hold it. The artifact's network
-// is too small to make the map of a fresh engine grow, so the reserve shows
-// in the entries it was made for: every node of the file for either manifest,
-// whether a chunk comes from a shard or from a byte range within the .bin,
-// and none where the load reads neither section.
+// A load using a manifest reserves the node map in the same way a .bin load
+// does: for the nodes that the chunks being accessed contain, as the chunk
+// directory of the source .bin records them. The artifact's network is too
+// small to make the map of a fresh engine grow, so the reserve shows in the
+// entries it was made for: every node of the file for either manifest,
+// regardless of whether a chunk comes from a shard or from a byte range
+// within the .bin, and none where the load reads neither section.
 TEST_CASE("sharding: a load through a manifest reserves the node map for the nodes it reads")
 {
     const auto artifact = build_artifact(artifact_root("reserve"));
@@ -512,6 +545,485 @@ TEST_CASE("sharding: a load through a manifest reserves the node map for the nod
 
     fs::remove_all(artifact.root);
 }
+
+// A manifest can enumerate fewer chunks than its .bin contains, down to none
+// for a section, and a load reads only the chunks it lists. What it reserves
+// corresponds to the contents of those chunks, not every chunk in the
+// directory: here the manifest lists the name chunks alone, and the load
+// inserts no node and reserves for none.
+TEST_CASE("sharding: a load through a manifest reserves for the chunks it lists")
+{
+    const auto artifact = build_artifact(artifact_root("listed"));
+    const auto manifest = artifact.root / "net.names.json";
+    {
+        std::ostringstream text;
+        text << "{\"source\": {\"binPath\": \"" << artifact.bin.generic_string() << "\"}, \"sections\": {"
+             << "\"left\": {\"chunks\": []}, \"right\": {\"chunks\": []}";
+        for (const char* name : {"nameOfNode", "nodeOfName"})
+        {
+            text << ", \"" << name << "\": {\"chunks\": [";
+            const auto& list = artifact.sections.at(name);
+            for (size_t i = 0; i < list.size(); ++i)
+                text << (i == 0 ? "" : ", ") << "{\"chunkIndex\": " << list[i].index << ", \"length\": " << list[i].length << ", \"offset\": " << list[i].offset << "}";
+            text << "]}";
+        }
+        text << "}}\n";
+        std::ofstream(manifest) << text.str();
+    }
+
+    with_fresh_session([&](auto& collector, auto& interactive)
+                       {
+        interactive.process(".load-partial \"" + manifest.string() + "\"");
+        CHECK(interactive.graph()->node_map_state().entries == 0);
+        CHECK(interactive.graph()->node_map_state().reserved == 0);
+
+        collector.clear();
+        interactive.process(".stat");
+        CHECK(any_output_contains(collector, "Languages: 2")); });
+
+    fs::remove_all(artifact.root);
+}
+
+// A manifest is made from the index of a single .bin and applies solely to that
+// file: the chunk lengths it gives are those of the chunks the .bin's directory
+// contains, and likewise the offsets at which it reads a chunk from the .bin. A
+// manifest that specifies a different length or offset, or lists a chunk not
+// present in the directory, pertains to a different file or has been corrupted,
+// and the load rejects it before discarding the session's network, explicitly
+// naming the discrepancy. Without verification of the offsets, the load would
+// discard the network and encounter failure when reading a chunk at an
+// incorrect location. The manifest is written here as a manually crafted one
+// might be.
+TEST_CASE("sharding: a manifest that does not match the chunk directory of its .bin is refused")
+{
+    const auto artifact = build_artifact(artifact_root("mismatch"));
+    const auto manifest = artifact.root / "net.mismatch.json";
+
+    // What the manifest modifies in relation to the index of the artifact:
+    // the left chunks, lengthened by `longer` bytes, placed `later` bytes
+    // farther along, or given no offset at all, and a nodeOfName chunk
+    // beyond what the file contains if `one_more`: a copy of the last one,
+    // placed under the next number.
+    struct Changes
+    {
+        uint64_t longer         = 0;
+        uint64_t later          = 0;
+        bool     without_offset = false;
+        bool     one_more       = false;
+    };
+    const auto write_manifest = [&](const Changes& changes)
+    {
+        std::ostringstream text;
+        text << "{\n  \"source\": {\"binPath\": \"" << artifact.bin.generic_string() << "\", \"headerLengthBytes\": " << artifact.header_length
+             << "},\n  \"sections\": {\n";
+        bool first_section = true;
+        for (const char* name : {"left", "right", "nameOfNode", "nodeOfName"})
+        {
+            text << (first_section ? "" : ",\n") << "    \"" << name << "\": {\"chunks\": [";
+            first_section    = false;
+            const auto& list = artifact.sections.at(name);
+            const bool  left = std::string(name) == "left";
+            for (size_t i = 0; i < list.size(); ++i)
+            {
+                text << (i == 0 ? "" : ", ") << "{\"chunkIndex\": " << list[i].index << ", \"length\": " << list[i].length + (left ? changes.longer : 0);
+                if (!left || !changes.without_offset) text << ", \"offset\": " << list[i].offset + (left ? changes.later : 0);
+                text << "}";
+            }
+            if (changes.one_more && std::string(name) == "nodeOfName")
+            {
+                text << ", {\"chunkIndex\": " << list.size() << ", \"length\": " << list.back().length << ", \"offset\": " << list.back().offset << "}";
+            }
+            text << "]}";
+        }
+        text << "\n  }\n}\n";
+        std::ofstream(manifest) << text.str();
+    };
+
+    const auto refused = [&](const std::string& difference)
+    {
+        with_fresh_session([&](auto& collector, auto& interactive)
+                           {
+            interactive.process("a p b");
+            CHECK_THROWS_WITH_AS(interactive.process(".load-partial \"" + manifest.string() + "\""), doctest::Contains(difference), std::runtime_error);
+
+            collector.clear();
+            interactive.process("A p B");
+            CHECK(answers_contain(collector, "a p b")); });
+    };
+
+    const uint64_t left_length = artifact.sections.at("left").front().length;
+    const uint64_t left_offset = artifact.sections.at("left").front().offset;
+    SUBCASE("a chunk of another length")
+    {
+        write_manifest({.longer = 1});
+        refused("the manifest gives left chunk 0 " + std::to_string(left_length + 1) + " bytes, the directory " + std::to_string(left_length));
+    }
+    SUBCASE("a chunk at another offset")
+    {
+        write_manifest({.later = 8});
+        refused("the manifest places left chunk 0 at byte " + std::to_string(left_offset + 8) + ", the directory at byte " + std::to_string(left_offset));
+    }
+    SUBCASE("a chunk without an offset")
+    {
+        // A chunk that the load reads from the .bin, which it would read at the
+        // start of the file, where the header stands.
+        write_manifest({.without_offset = true});
+        refused("the manifest gives left chunk 0 no offset, the directory places it at byte " + std::to_string(left_offset));
+    }
+    SUBCASE("a chunk the file does not have")
+    {
+        write_manifest({.one_more = true});
+        refused("the manifest lists nodeOfName chunk 2, which the directory does not");
+    }
+
+    fs::remove_all(artifact.root);
+}
+
+// A load through a manifest reads the header of the .bin specified by the
+// manifest and holds the chunk directory against the file's size, whether the
+// .bin is local or remote, before discarding the session's network. A local
+// .bin missing its last bytes, as a copy that broke off would leave it, is
+// refused at that point. The case asks the graph and not merely the message:
+// without this comparison, the load discards the graph, fails at the chunk that
+// is truncated, falls back to the .bin, then refuses the file using identical
+// wording, and when the shards are located alongside the manifest, it even
+// succeeds.
+TEST_CASE("sharding: a manifest over a local .bin that lost bytes is refused before the session's network is discarded")
+{
+    const auto        artifact = build_artifact(artifact_root("cut-bin"));
+    const std::string bin      = read_file(artifact.bin);
+    const uint64_t    size     = bin.size();
+    std::ofstream(artifact.bin, std::ios::binary | std::ios::trunc).write(bin.data(), static_cast<std::streamsize>(size - 8));
+
+    for (const auto& manifest : {artifact.sharded_manifest, artifact.seek_manifest})
+    {
+        CAPTURE(manifest.string());
+        with_fresh_session([&](auto& collector, auto& interactive)
+                           {
+            interactive.process("a p b");
+            CHECK_THROWS_WITH_AS(interactive.process(".load-partial \"" + manifest.string() + "\""),
+                                 doctest::Contains("nodeOfName chunk 1 ends at byte " + std::to_string(size) + ", but the file ends at byte " + std::to_string(size - 8)),
+                                 std::runtime_error);
+
+            collector.clear();
+            interactive.process("A p B");
+            CHECK(answers_contain(collector, "a p b")); });
+    }
+
+    fs::remove_all(artifact.root);
+}
+
+// No network published before the chunk directory possesses one, and a load
+// via a manifest is the method by which such a network is loaded in part.
+// Nothing within such a file reliably indicates how many nodes its chunks
+// hold, so the load reads it using the reader it has always used and reserves
+// nothing: it neither refuses the file due to the absence of the directory,
+// nor sizes the node map from the chunk counts in the header, an estimate
+// that reserved a million entries for every chunk except the last. For a
+// single chunk, that approximation yields zero as well, hence the second
+// subcase, a network with two chunks in the left section and two chunks in
+// the right section.
+TEST_CASE("sharding: a .bin without a chunk directory loads through a manifest and reserves nothing")
+{
+    SUBCASE("one chunk per section, from shards and from byte ranges of the .bin")
+    {
+        const auto artifact = build_artifact(artifact_root("no-directory"), {.with_directory = false});
+        for (const auto& manifest : {artifact.sharded_manifest, artifact.seek_manifest})
+        {
+            CAPTURE(manifest.string());
+            with_fresh_session([&](auto& collector, auto& interactive)
+                               {
+                interactive.process(".stat-file \"" + artifact.bin.string() + "\"");
+                REQUIRE(any_output_contains(collector, "Chunk Directory: none"));
+
+                interactive.process(".load-partial \"" + manifest.string() + "\"");
+                CHECK(interactive.graph()->node_map_state().entries > 0);
+                CHECK(interactive.graph()->node_map_state().reserved == 0);
+
+                collector.clear();
+                interactive.process(".stat");
+                CHECK(any_output_contains(collector, "Languages: 2")); });
+        }
+        fs::remove_all(artifact.root);
+    }
+    SUBCASE("two chunks per section")
+    {
+        constexpr std::size_t chunk    = zelph::network::serialization::chunk_entries;
+        const auto            artifact = build_artifact(artifact_root("no-directory-two-chunks"), {.with_directory = false, .further_nodes = chunk});
+        REQUIRE(artifact.sections.at("left").size() == 2);
+        REQUIRE(artifact.sections.at("right").size() == 2);
+
+        with_fresh_session([&](auto&, auto& interactive)
+                           {
+            interactive.process(".load-partial \"" + artifact.seek_manifest.string() + "\"");
+            const auto state = interactive.graph()->node_map_state();
+            CHECK(state.entries > chunk);
+            CHECK(state.reserved == 0);
+            CHECK(state.growths > 0); });
+        fs::remove_all(artifact.root);
+    }
+}
+
+// The cases that load straight from the repository are omitted on Windows. The
+// engine composes the command that starts curl for a POSIX shell, with its
+// arguments enclosed in single quotes, and hands it to std::system; on Windows
+// this is cmd.exe, which does not read single quotes as quote markers, so the
+// stand-in for curl could not be initiated via that command. The cases also
+// set their environment using setenv and unsetenv.
+#ifndef _WIN32
+namespace
+{
+    // Sets environment variables for the scope of a single test and reinstates
+    // their prior values afterwards.
+    class ScopedEnvironment
+    {
+    public:
+        explicit ScopedEnvironment(const std::vector<std::pair<std::string, std::string>>& values)
+        {
+            for (const auto& [name, value] : values)
+            {
+                const char* before = std::getenv(name.c_str());
+                _before.emplace_back(name, before == nullptr ? std::nullopt : std::optional<std::string>(before));
+                setenv(name.c_str(), value.c_str(), 1);
+            }
+        }
+        ~ScopedEnvironment()
+        {
+            for (const auto& [name, before] : _before)
+            {
+                if (before)
+                    setenv(name.c_str(), before->c_str(), 1);
+                else
+                    unsetenv(name.c_str());
+            }
+        }
+        ScopedEnvironment(const ScopedEnvironment&)            = delete;
+        ScopedEnvironment& operator=(const ScopedEnvironment&) = delete;
+
+    private:
+        std::vector<std::pair<std::string, std::optional<std::string>>> _before;
+    };
+
+    // The environment for a load straight from the repository: the cache is a
+    // directory specific to the test, and the program started in the place of
+    // curl is this test binary, which serves the files located under
+    // `repository` via the URLs of
+    // hf://datasets/acrion/zelph-partial-load-test/ (curl_stand_in.hpp).
+    // `further` adds what a single case needs.
+    std::vector<std::pair<std::string, std::string>> repository_environment(const fs::path&                                  repository,
+                                                                            const fs::path&                                  cache,
+                                                                            std::vector<std::pair<std::string, std::string>> further = {})
+    {
+        REQUIRE(fs::exists(zelph::test::curl_stand_in::program()));
+        further.emplace_back("ZELPH_HF_CACHE_DIR", cache.string());
+        further.emplace_back("ZELPH_HF_CURL_BIN", zelph::test::curl_stand_in::program().string());
+        further.emplace_back(zelph::test::curl_stand_in::repository_variable, repository.string());
+        return further;
+    }
+}
+
+// What the chunk directory was made for: a partial load straight from the
+// repository. It fetches the .bin's header via the range specified in the
+// manifest and acquires the chunks individually, with no local file having a
+// size to check the directory against: the directory arrives alongside the
+// header range, and it is checked against the size of the remote object. The
+// repository is a local directory served by a stand-in for curl, as no test
+// can access the network, and the cache is a directory belonging to the test
+// itself. A remote .bin that has lost bytes no longer matches its directory,
+// and a manifest whose header range concludes within the directory cannot
+// have it read: either case is rejected before the session's network is
+// discarded.
+TEST_CASE("sharding: a load straight from the repository checks the directory against the remote object")
+{
+    const fs::path repository = artifact_root("remote");
+    const fs::path cache      = artifact_root("remote-cache");
+    fs::remove_all(repository);
+    fs::remove_all(cache);
+    fs::create_directories(repository);
+    const auto artifact = build_artifact(repository / "net");
+
+    const ScopedEnvironment environment(repository_environment(repository, cache));
+    const std::string       manifest = "hf://datasets/acrion/zelph-partial-load-test/net/net.hf-v2.json";
+
+    with_fresh_session([&](auto& collector, auto& interactive)
+                       {
+        interactive.process(".load-partial " + manifest);
+        CHECK(any_event_contains(collector, "has no local copy"));
+        const auto state = interactive.graph()->node_map_state();
+        CHECK(state.entries > 0);
+        CHECK(state.reserved == state.entries); });
+
+    const auto refused = [&](const std::string& reason)
+    {
+        with_fresh_session([&](auto& collector, auto& interactive)
+                           {
+            interactive.process("a p b");
+            CHECK_THROWS_WITH_AS(interactive.process(".load-partial " + manifest), doctest::Contains(reason), std::runtime_error);
+
+            collector.clear();
+            interactive.process("A p B");
+            CHECK(answers_contain(collector, "a p b")); });
+    };
+
+    const std::string bin  = read_file(artifact.bin);
+    const uint64_t    size = bin.size();
+    SUBCASE("a remote .bin that lost bytes")
+    {
+        std::ofstream(artifact.bin, std::ios::binary | std::ios::trunc).write(bin.data(), static_cast<std::streamsize>(size - 8));
+        refused("nodeOfName chunk 1 ends at byte " + std::to_string(size) + ", but the file ends at byte " + std::to_string(size - 8));
+    }
+    SUBCASE("a header range that ends inside the directory")
+    {
+        std::string text   = read_file(artifact.sharded_manifest);
+        const auto  needle = "\"headerLengthBytes\": " + std::to_string(artifact.header_length);
+        const auto  at     = text.find(needle);
+        REQUIRE(at != std::string::npos);
+        text.replace(at, needle.size(), "\"headerLengthBytes\": " + std::to_string(artifact.header_length - 8));
+        std::ofstream(artifact.sharded_manifest, std::ios::trunc) << text;
+        refused("its headerLengthBytes (" + std::to_string(artifact.header_length - 8) + ") do not cover the chunk directory");
+    }
+
+    fs::remove_all(repository);
+    fs::remove_all(cache);
+}
+
+// A load via a manifest discards the session's network before reading the
+// first chunk, and a chunk that fails to parse causes it to fall back to
+// reading the .bin sequentially. For a remote .bin, the file it falls back to
+// is the header range in the cache, whose chunk directory places the chunks
+// beyond its end, and that load is rejected due to the directory. The
+// session's network has already been discarded by then, and the message
+// indicates this, as every message following the discard does. The shard is
+// impaired at the location where the load retrieves it, within the
+// repository, and retains its length.
+TEST_CASE("sharding: a load straight from the repository that fails after discarding the session's network says so")
+{
+    const fs::path repository = artifact_root("remote-fallback");
+    const fs::path cache      = artifact_root("remote-fallback-cache");
+    fs::remove_all(repository);
+    fs::remove_all(cache);
+    fs::create_directories(repository);
+    const auto artifact = build_artifact(repository / "net");
+
+    const auto& chunk = artifact.sections.at("left").front();
+    std::ofstream(artifact.shards_dir / "left" / shard_file_name(chunk), std::ios::binary | std::ios::trunc)
+        << std::string(static_cast<size_t>(chunk.length), '\xff');
+
+    const ScopedEnvironment environment(repository_environment(repository, cache));
+
+    with_fresh_session([&](auto& collector, auto& interactive)
+                       {
+        interactive.process("a p b");
+        REQUIRE(node_count(collector, interactive) > 0);
+        try
+        {
+            interactive.process(".load-partial hf://datasets/acrion/zelph-partial-load-test/net/net.hf-v2.json");
+            FAIL("expected the load to fail");
+        }
+        catch (const std::runtime_error& e)
+        {
+            const std::string message(e.what());
+            CHECK(message.find("its chunk directory does not match the file") != std::string::npos);
+            CHECK(message.find("The previous network was already discarded -- use .new to start over") != std::string::npos);
+        }
+        CHECK(any_event_contains(collector, "falling back to sequential"));
+        CHECK(node_count(collector, interactive) == 0); });
+
+    fs::remove_all(repository);
+    fs::remove_all(cache);
+}
+
+// The size against which the directory of a remote .bin is held is the size of
+// the object to which the URL resolves. The repository responds to a request
+// for a large file by issuing a redirect to the file's actual location, and
+// curl logs the headers from each response in the chain: the relevant size
+// resides in the last block, while the redirect's block contains the length of
+// its own, brief body. In this case, the redirect claims a size that the .bin
+// lacks, so a load that relied on the first block's length would hold the
+// directory against that size and refuse a file that is sound.
+TEST_CASE("sharding: the size of a remote .bin is that of the last response of a redirect chain")
+{
+    const fs::path repository = artifact_root("redirect");
+    const fs::path cache      = artifact_root("redirect-cache");
+    fs::remove_all(repository);
+    fs::remove_all(cache);
+    fs::create_directories(repository);
+    const auto artifact = build_artifact(repository / "net");
+
+    const ScopedEnvironment environment(repository_environment(repository, cache, {{zelph::test::curl_stand_in::redirect_variable, "1340"}}));
+    REQUIRE(fs::file_size(artifact.bin) != 1340);
+
+    with_fresh_session([&](auto& collector, auto& interactive)
+                       {
+        interactive.process(".load-partial hf://datasets/acrion/zelph-partial-load-test/net/net.hf-v2.json");
+        CHECK(any_event_contains(collector, "has no local copy"));
+        const auto state = interactive.graph()->node_map_state();
+        CHECK(state.entries > 0);
+        CHECK(state.reserved == state.entries); });
+
+    fs::remove_all(repository);
+    fs::remove_all(cache);
+}
+
+// A chunk directory is believed once it matches the size of its file, and for a
+// remote .bin that size is the one the server reports for the object. A server
+// that reports none leaves the directory without anything to be held against,
+// and the load refuses the .bin for that, while the session's network is still
+// there, instead of reserving what an unchecked directory says.
+TEST_CASE("sharding: a remote .bin whose size the server does not report is refused")
+{
+    const fs::path repository = artifact_root("no-length");
+    const fs::path cache      = artifact_root("no-length-cache");
+    fs::remove_all(repository);
+    fs::remove_all(cache);
+    fs::create_directories(repository);
+    build_artifact(repository / "net");
+
+    const ScopedEnvironment environment(repository_environment(repository, cache, {{zelph::test::curl_stand_in::no_length_variable, "1"}}));
+    with_fresh_session([&](auto& collector, auto& interactive)
+                       {
+        interactive.process("a p b");
+        CHECK_THROWS_WITH_AS(interactive.process(".load-partial hf://datasets/acrion/zelph-partial-load-test/net/net.hf-v2.json"),
+                             doctest::Contains("the size of the remote .bin is unknown, so its chunk directory cannot be checked"),
+                             std::runtime_error);
+
+        collector.clear();
+        interactive.process("A p B");
+        CHECK(answers_contain(collector, "a p b")); });
+
+    fs::remove_all(repository);
+    fs::remove_all(cache);
+}
+
+// A .bin lacking a chunk directory, straight from the repository -- this is how
+// networks published before the directory are loaded from there: the header
+// range brings no directory, nothing is held against the object's size, and the
+// load reads the chunks while reserving nothing.
+TEST_CASE("sharding: a .bin without a chunk directory loads straight from the repository and reserves nothing")
+{
+    const fs::path repository = artifact_root("remote-no-directory");
+    const fs::path cache      = artifact_root("remote-no-directory-cache");
+    fs::remove_all(repository);
+    fs::remove_all(cache);
+    fs::create_directories(repository);
+    build_artifact(repository / "net", {.with_directory = false});
+
+    const ScopedEnvironment environment(repository_environment(repository, cache));
+    with_fresh_session([&](auto& collector, auto& interactive)
+                       {
+        interactive.process(".load-partial hf://datasets/acrion/zelph-partial-load-test/net/net.hf-v2.json");
+        CHECK(any_event_contains(collector, "has no local copy"));
+        CHECK(interactive.graph()->node_map_state().entries > 0);
+        CHECK(interactive.graph()->node_map_state().reserved == 0);
+
+        collector.clear();
+        interactive.process(".stat");
+        CHECK(any_output_contains(collector, "Languages: 2")); });
+
+    fs::remove_all(repository);
+    fs::remove_all(cache);
+}
+#endif
 
 TEST_CASE("sharding: an out-of-range chunk selector is rejected without collateral")
 {
@@ -669,6 +1181,32 @@ TEST_CASE("sharding: a manifest naming a .bin that is not there leaves the sessi
         interactive.process("a p b");
         interactive.process("A p B");
         CHECK(answers_contain(collector, "a p b")); });
+
+    fs::remove_all(artifact.root);
+}
+
+// The header of the .bin specified by a manifest is read before the session's
+// network is discarded, so a .bin that is no network at all results in the
+// session remaining unchanged: the load fails at the header, and the graph
+// still answers. While the header was read after the discard, such a manifest
+// left a network devoid even of its core nodes.
+TEST_CASE("sharding: a manifest naming a .bin that is not a network leaves the session alone")
+{
+    const auto artifact = build_artifact(artifact_root("no-network-bin"));
+    std::ofstream(artifact.bin, std::ios::binary | std::ios::trunc) << "hello, this is not a serialized network";
+
+    for (const auto& manifest : {artifact.sharded_manifest, artifact.seek_manifest})
+    {
+        CAPTURE(manifest.string());
+        with_fresh_session([&](auto& collector, auto& interactive)
+                           {
+            interactive.process("a p b");
+            CHECK_THROWS(interactive.process(".load-partial \"" + manifest.string() + "\""));
+
+            collector.clear();
+            interactive.process("A p B");
+            CHECK(answers_contain(collector, "a p b")); });
+    }
 
     fs::remove_all(artifact.root);
 }

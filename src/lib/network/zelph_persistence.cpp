@@ -29,6 +29,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 // emscripten there is no Cap'n Proto and no file to read, and the translation
 // unit is then empty on purpose.
 #ifndef __EMSCRIPTEN__
+    #include "io/chunk_directory.hpp"
     #include "io/zelph.capnp.h"
     #include "manifest_loader.hpp"
     #include "network.hpp"
@@ -42,6 +43,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
     #include <algorithm>
     #include <atomic>
+    #include <cerrno>
     #include <cstdint>
     #include <cstdio>
     #include <cstring>
@@ -49,6 +51,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
     #include <filesystem>
     #include <memory>
     #include <mutex>
+    #include <optional>
     #include <ostream>
     #include <shared_mutex>
     #include <stdexcept>
@@ -57,9 +60,161 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
     #include <unordered_map>
     #include <utility>
     #include <vector>
+
+    #if defined(_WIN32)
+        #include <io.h>
+    #else
+        #include <unistd.h>
+    #endif
 #endif
 
 using namespace zelph::network;
+
+#ifndef __EMSCRIPTEN__
+namespace
+{
+    // Reads the header of a .bin from `input` into `header` and says whether
+    // it declares the presence of a chunk directory, which then stands next
+    // in `input`. The header is copied so that its reader can be destroyed
+    // before the directory is read: its destructor bypasses whatever remains
+    // of the header, including any segment that nothing has read yet,
+    // ensuring the directory is read starting from the point where the
+    // header ends.
+    bool read_header(zelph::io::CountingBufferedInputStream& input, const ::capnp::ReaderOptions& options, ::capnp::MallocMessageBuilder& header)
+    {
+        {
+            ::capnp::PackedMessageReader reader(input, options);
+            header.setRoot(reader.getRoot<ZelphImpl>());
+        }
+        return header.getRoot<ZelphImpl>().getChunkDirectory();
+    }
+
+    // The chunk directory located immediately after the header that
+    // `header` holds, from a stream containing `readable_bytes` bytes
+    // of the file.
+    zelph::io::ChunkDirectory read_directory(zelph::io::CountingBufferedInputStream& input,
+                                             ::capnp::MallocMessageBuilder&          header,
+                                             const std::uint64_t                     readable_bytes)
+    {
+        return zelph::io::read_chunk_directory(input, input.bytes_read(), readable_bytes, zelph::io::declared_chunks(header.getRoot<ZelphImpl>().asReader()));
+    }
+
+    // The size of a local file, or none when the file system indicates no
+    // size, as with a pipe, which possesses no size until it is read to
+    // completion.
+    std::optional<std::uint64_t> local_file_size(const std::string& filename)
+    {
+        std::error_code      error;
+        const std::uintmax_t size = std::filesystem::file_size(filename, error);
+        if (error) return std::nullopt;
+        return size;
+    }
+
+    zelph::io::DirectoryRefusal directory_refusal(const std::string& filename, const std::vector<std::string>& deviations)
+    {
+        return zelph::io::DirectoryRefusal("Refused to load '" + filename + "': its chunk directory does not match the file (truncated or damaged): "
+                                           + zelph::io::describe_deviations(deviations));
+    }
+
+    // A local file possessing a chunk directory yet lacking a size, such as a
+    // pipe: the directory is checked against the file's actual size.
+    zelph::io::DirectoryRefusal unknown_size_refusal(const std::string& filename)
+    {
+        return zelph::io::DirectoryRefusal("Refused to load '" + filename
+                                           + "': the size of the file cannot be determined (it is not a regular file), so its chunk directory cannot be checked");
+    }
+
+    // The header of a local .bin and its associated chunk directory, which
+    // has to match the file. A file whose directory fails to match is
+    // rejected before the caller discards the session's graph, saying what
+    // contradicts it, and so is a file with a directory whose size cannot be
+    // ascertained. The size is requested only after the header declares the
+    // presence of a directory: a file lacking one loads from a pipe.
+    std::optional<zelph::io::ChunkDirectory> read_checked_header(const std::string&                      filename,
+                                                                 zelph::io::CountingBufferedInputStream& input,
+                                                                 const ::capnp::ReaderOptions&           options,
+                                                                 ::capnp::MallocMessageBuilder&          header)
+    {
+        if (!read_header(input, options, header)) return std::nullopt;
+
+        const std::optional<std::uint64_t> file_size = local_file_size(filename);
+        if (!file_size) throw unknown_size_refusal(filename);
+
+        zelph::io::ChunkDirectory directory;
+        try
+        {
+            directory = read_directory(input, header, *file_size);
+        }
+        catch (const zelph::io::DirectoryUnreadable& e)
+        {
+            throw directory_refusal(filename, {e.what()});
+        }
+        const auto deviations = zelph::io::directory_deviations(directory, zelph::io::declared_chunks(header.getRoot<ZelphImpl>().asReader()), *file_size);
+        if (!deviations.empty()) throw directory_refusal(filename, deviations);
+        return directory;
+    }
+
+    // Whether a load via a manifest reads a chunk from a shard of its own,
+    // as occurs for a chunk whose object path is provided by a v2 or v3
+    // manifest, rather than from the .bin.
+    bool read_from_shard(const detail::ManifestDescription& manifest, const detail::ManifestChunkRef& ref)
+    {
+        return (manifest.is_v2 || manifest.is_v3) && !ref.object_path.empty();
+    }
+
+    // What a manifest asserts that the chunk directory of its .bin does not
+    // state: a chunk absent from the directory, a chunk with a different
+    // length, or, for a chunk the load reads from the .bin, a different
+    // offset. A manifest is made from the index of a single file and
+    // applies exclusively to that file. One that lists fewer chunks than
+    // the file contains, down to none in the case of a header-only load,
+    // conveys nothing that conflicts with the directory.
+    std::vector<std::string> manifest_deviations(const detail::ManifestDescription& manifest, const zelph::io::ChunkDirectory& directory)
+    {
+        std::vector<std::string> deviations;
+        const auto               compare = [&](const detail::ManifestSection& section, const FileSection kind)
+        {
+            const auto        id     = static_cast<std::uint16_t>(kind);
+            const auto* const chunks = directory.find(kind);
+            const std::size_t listed = chunks == nullptr ? 0 : chunks->size();
+            for (const auto& ref : section.chunks)
+            {
+                const std::string name = zelph::io::chunk_name(id, ref.chunk_index);
+                if (ref.chunk_index >= listed)
+                {
+                    deviations.push_back("the manifest lists " + name + ", which the directory does not");
+                    continue;
+                }
+
+                const zelph::io::DirectoryChunk& chunk = (*chunks)[ref.chunk_index];
+                if (ref.length != chunk.length)
+                {
+                    deviations.push_back("the manifest gives " + name + " " + std::to_string(ref.length) + " bytes, the directory "
+                                         + std::to_string(chunk.length));
+                }
+                if (read_from_shard(manifest, ref)) continue;
+                if (!ref.has_source_offset)
+                {
+                    deviations.push_back("the manifest gives " + name + " no offset, the directory places it at byte " + std::to_string(chunk.offset));
+                }
+                else if (ref.source_offset != chunk.offset)
+                {
+                    deviations.push_back("the manifest places " + name + " at byte " + std::to_string(ref.source_offset) + ", the directory at byte "
+                                         + std::to_string(chunk.offset));
+                }
+            }
+        };
+        compare(manifest.left, FileSection::LEFT);
+        compare(manifest.right, FileSection::RIGHT);
+        compare(manifest.name_of_node, FileSection::NAME_OF_NODE);
+        compare(manifest.node_of_name, FileSection::NODE_OF_NAME);
+        return deviations;
+    }
+
+    // A load reads a section in its entirety when its selection is null.
+    constexpr const detail::chunk_selector* whole_section = nullptr;
+}
+#endif
 
 #ifndef __EMSCRIPTEN__
 std::string Zelph::Impl::pidx_path(const Node predicate) const
@@ -192,7 +347,7 @@ void Zelph::Impl::clear_loaded_state()
     _nodes.clear();
     _absent_left   = 0;
     _absent_right  = 0;
-    _load_buckets  = 0;
+    _load_buckets  = _nodes.bucket_count();
     _load_reserved = 0;
     _load_growths  = 0;
     _weights.clear();
@@ -255,7 +410,7 @@ void Zelph::Impl::loadSmallData(const ZelphImpl::Reader& impl)
 #endif
 
 #ifndef __EMSCRIPTEN__
-void Zelph::Impl::loadLeftRightChunks(kj::BufferedInputStreamWrapper& bufferedInput, const ::capnp::ReaderOptions& options, uint32_t leftChunkCount, uint32_t rightChunkCount, const detail::chunk_selector* leftSelection, const detail::chunk_selector* rightSelection)
+void Zelph::Impl::loadLeftRightChunks(kj::BufferedInputStream& bufferedInput, const ::capnp::ReaderOptions& options, uint32_t leftChunkCount, uint32_t rightChunkCount, const detail::chunk_selector* leftSelection, const detail::chunk_selector* rightSelection)
 {
     #ifdef CLEAR_ON_LOAD
     _nodes.clear();
@@ -327,7 +482,7 @@ void Zelph::Impl::loadLeftRightChunks(kj::BufferedInputStreamWrapper& bufferedIn
 #endif
 
 #ifndef __EMSCRIPTEN__
-void Zelph::Impl::loadNameOfNodeChunks(kj::BufferedInputStreamWrapper& bufferedInput, const ::capnp::ReaderOptions& options, uint32_t nameOfNodeChunkCount, const detail::chunk_selector* selection)
+void Zelph::Impl::loadNameOfNodeChunks(kj::BufferedInputStream& bufferedInput, const ::capnp::ReaderOptions& options, uint32_t nameOfNodeChunkCount, const detail::chunk_selector* selection)
 {
     #ifdef CLEAR_ON_LOAD
     _name_of_node.clear();
@@ -370,7 +525,7 @@ void Zelph::Impl::loadNameOfNodeChunks(kj::BufferedInputStreamWrapper& bufferedI
 #endif
 
 #ifndef __EMSCRIPTEN__
-void Zelph::Impl::loadNodeOfNameChunks(kj::BufferedInputStreamWrapper& bufferedInput, const ::capnp::ReaderOptions& options, uint32_t nodeOfNameChunkCount, const detail::chunk_selector* selection)
+void Zelph::Impl::loadNodeOfNameChunks(kj::BufferedInputStream& bufferedInput, const ::capnp::ReaderOptions& options, uint32_t nodeOfNameChunkCount, const detail::chunk_selector* selection)
 {
     #ifdef CLEAR_ON_LOAD
     _node_of_name.clear();
@@ -415,7 +570,7 @@ void Zelph::Impl::loadNodeOfNameChunks(kj::BufferedInputStreamWrapper& bufferedI
 // Read by a whole-file load after the name sections; a partial load halts
 // before them. The store is vacant at this point (clear_loaded_state), and the
 // file holds each key of a node exactly once, with distinct values.
-void Zelph::Impl::loadAnnotationChunks(kj::BufferedInputStreamWrapper& bufferedInput, const ::capnp::ReaderOptions& options, const uint32_t annotationChunkCount)
+void Zelph::Impl::loadAnnotationChunks(kj::BufferedInputStream& bufferedInput, const ::capnp::ReaderOptions& options, const uint32_t annotationChunkCount)
 {
     std::unique_lock<std::shared_mutex> lock(_mtx_annotations);
     // Raised before the first entry is stored: each reader and each removal
@@ -702,12 +857,12 @@ void Zelph::Impl::loadFromManifest(const std::string& manifest_path, const Zelph
         throw std::runtime_error("Manifest names a source .bin that is not there: " + header_source_path);
     }
 
-    clear_loaded_state();
-    _names_loaded_partially.store(skip_payload
-                                      || (nameOfNodeSelectionPtr != nullptr && nameOfNodeSelection.size() != nameOfNodeChunkCount)
-                                      || (nodeOfNameSelectionPtr != nullptr && nodeOfNameSelection.size() != nodeOfNameChunkCount),
-                                  std::memory_order_relaxed);
-
+    // The header of the .bin, and the chunk directory located behind it,
+    // which the header range of a remote .bin covers. Both are read and
+    // verified before the graph is discarded: the directory against the
+    // size of the .bin (of the remote object, in the case of a remote
+    // one), and the manifest against the directory, chunk by chunk.
+    std::uint64_t source_size = 0;
     if (header_is_remote)
     {
         if (manifest_description.source_header_length_bytes == 0)
@@ -715,30 +870,78 @@ void Zelph::Impl::loadFromManifest(const std::string& manifest_path, const Zelph
             throw std::runtime_error("Manifest headerLengthBytes required for remote source-bin loading");
         }
         header_source_path =
-            detail::fetch_chunk_to_cache(header_source, 0, manifest_description.source_header_length_bytes, "header").string();
+            detail::fetch_chunk_to_cache(header_source, 0, manifest_description.source_header_length_bytes, "header", &source_size).string();
     }
 
-    std::uint64_t node_count = 0;
-    FILE*         file       = detail::open_file_or_throw(header_source_path);
+    ::capnp::MallocMessageBuilder            header;
+    std::optional<zelph::io::ChunkDirectory> directory;
+    FILE*                                    file = detail::open_file_or_throw(header_source_path);
     try
     {
         ::capnp::ReaderOptions options;
         options.traversalLimitInWords = 1ULL << 32;
         options.nestingLimit          = 128;
 
-        kj::FdInputStream              raw_input(fileno(file));
-        kj::BufferedInputStreamWrapper buffered_input(raw_input);
-        ::capnp::PackedMessageReader   main_message(buffered_input, options);
-        auto                           impl = main_message.getRoot<ZelphImpl>();
-        loadSmallData(impl);
-        node_count = impl.getNodeCount();
+        kj::FdInputStream                      raw_input(fileno(file));
+        zelph::io::CountingBufferedInputStream buffered_input(raw_input);
+        if (read_header(buffered_input, options, header))
+        {
+            // The directory is read from the file that holds the header: the
+            // header range of a remote .bin, a file within the cache, or a
+            // local .bin, whose size is that of the .bin, a size that a pipe
+            // does not have.
+            const std::optional<std::uint64_t> readable = local_file_size(header_source_path);
+            if (!readable) throw unknown_size_refusal(header_source);
+            if (!header_is_remote) source_size = *readable;
+            directory = read_directory(buffered_input, header, *readable);
+        }
         fclose(file);
+    }
+    catch (const zelph::io::DirectoryUnreadable& e)
+    {
+        fclose(file);
+        // Only the portion of a remote .bin that the manifest designates
+        // as its header is available for reading, and a range that is
+        // too short terminates within the directory.
+        if (header_is_remote)
+        {
+            throw std::runtime_error("Refused to load '" + manifest_path + "': its headerLengthBytes ("
+                                     + std::to_string(manifest_description.source_header_length_bytes) + ") do not cover the chunk directory of '"
+                                     + header_source + "': " + e.what());
+        }
+        throw directory_refusal(header_source, {e.what()});
     }
     catch (...)
     {
         fclose(file);
         throw;
     }
+    const auto impl = header.getRoot<ZelphImpl>().asReader();
+
+    if (directory)
+    {
+        if (source_size == 0)
+        {
+            throw zelph::io::DirectoryRefusal("Refused to load '" + header_source
+                                              + "': the size of the remote .bin is unknown, so its chunk directory cannot be checked");
+        }
+        if (const auto deviations = zelph::io::directory_deviations(*directory, zelph::io::declared_chunks(impl), source_size); !deviations.empty())
+        {
+            throw directory_refusal(header_source, deviations);
+        }
+        if (const auto deviations = manifest_deviations(manifest_description, *directory); !deviations.empty())
+        {
+            throw std::runtime_error("Refused to load '" + manifest_path + "': it does not match the chunk directory of '" + header_source
+                                     + "': " + zelph::io::describe_deviations(deviations));
+        }
+    }
+
+    clear_loaded_state();
+    _names_loaded_partially.store(skip_payload
+                                      || (nameOfNodeSelectionPtr != nullptr && nameOfNodeSelection.size() != nameOfNodeChunkCount)
+                                      || (nodeOfNameSelectionPtr != nullptr && nodeOfNameSelection.size() != nodeOfNameChunkCount),
+                                  std::memory_order_relaxed);
+    loadSmallData(impl);
 
     io::OutputStream(_output, io::OutputChannel::Diagnostic, true)
         << "Partial loading from manifest: left chunks=" << requestedLeftChunks << "/"
@@ -754,7 +957,25 @@ void Zelph::Impl::loadFromManifest(const std::string& manifest_path, const Zelph
         return;
     }
 
-    reserve_for_load(node_map_sizing::load_reserve(node_count, node_map_sizing::chunks_read(leftChunkCount, rightChunkCount, leftSelectionPtr, rightSelectionPtr)));
+    // The nodes that the chunks read hold, as the .bin's directory records
+    // them. A load reads the chunks listed in the manifest, to the extent they
+    // are selected, and a manifest can list fewer than the .bin contains. A
+    // .bin lacking a directory lets the map expand instead.
+    if (directory)
+    {
+        const auto read = [](const detail::ManifestSection& section, const detail::chunk_selector* const selected)
+        {
+            detail::chunk_selector chunks;
+            for (const auto& ref : section.chunks)
+            {
+                if (selected == nullptr || selected->count(ref.chunk_index) == 1) chunks.insert(ref.chunk_index);
+            }
+            return chunks;
+        };
+        const detail::chunk_selector leftRead  = read(manifest_description.left, leftSelectionPtr);
+        const detail::chunk_selector rightRead = read(manifest_description.right, rightSelectionPtr);
+        reserve_for_load(node_map_sizing::load_reserve(directory->entries(FileSection::LEFT), directory->entries(FileSection::RIGHT), &leftRead, &rightRead));
+    }
 
     // Where one chunk is read from. A sharded reference is looked up
     // locally FIRST -- next to the manifest, then below shard-root --
@@ -1052,7 +1273,24 @@ void Zelph::Impl::saveToFile(const std::string& filename, const ankerl::unordere
     {
         throw std::runtime_error("Failed to open file for writing: " + filename);
     }
-    auto               fileGuard = std::unique_ptr<FILE, decltype(&fclose)>(file, &fclose);
+    auto fileGuard = std::unique_ptr<FILE, decltype(&fclose)>(file, &fclose);
+
+    // The chunk directory is written over its initial zeros once the
+    // chunks have been written (below), meaning the target must be capable
+    // of seeking back. One that cannot, such as a pipe, is refused before
+    // the first byte is written, rather than being given a whole file whose
+    // directory remains filled with zeros.
+    #if defined(_WIN32)
+    const bool seekable = _lseeki64(fileno(file), 0, SEEK_CUR) >= 0;
+    #else
+    const bool seekable = lseek(fileno(file), 0, SEEK_CUR) >= 0;
+    #endif
+    if (!seekable)
+    {
+        const std::string reason = std::strerror(errno);
+        throw std::runtime_error("Refused to save to '" + filename + "': it cannot seek back (" + reason
+                                 + "), which a save needs in order to write the chunk directory ahead of the chunks");
+    }
     kj::FdOutputStream output(fileno(file));
 
     // Main message (small data)
@@ -1074,6 +1312,7 @@ void Zelph::Impl::saveToFile(const std::string& filename, const ankerl::unordere
     impl.setLastVar(_last_var);
     impl.setTemplateIds(_older_rule_literals.empty());
     impl.setNegationConditions(!_older_negations);
+    impl.setChunkDirectory(true);
 
     const bool filtering = keep != nullptr;
 
@@ -1201,10 +1440,6 @@ void Zelph::Impl::saveToFile(const std::string& filename, const ankerl::unordere
     impl.setLeftChunkCount(static_cast<uint32_t>(leftChunkCount));
     impl.setRightChunkCount(static_cast<uint32_t>(rightChunkCount));
 
-    // The nodes jointly held by the two sections, which a load reserves
-    // the node map for: each entry holds at least one of its sides.
-    impl.setNodeCount(count_kept(_nodes, _nodes.size(), filtering));
-
     // Annotations are associated with their respective nodes, meaning a
     // filtered save outputs only those belonging to the kept nodes. Each key
     // has a single entry, with nodes ordered by ID; read again below, where
@@ -1225,7 +1460,36 @@ void Zelph::Impl::saveToFile(const std::string& filename, const ankerl::unordere
     const size_t annotationChunkCount = (annotationEntries + chunkSize - 1) / chunkSize;
     impl.setAnnotationChunkCount(static_cast<uint32_t>(annotationChunkCount));
 
-    ::capnp::writePackedMessage(output, mainMessage);
+    // The chunk directory comes after the header, initially filled with
+    // zeros: the location of each chunk becomes known once it is written,
+    // and at the end the directory goes over the zeros, occupying the same
+    // number of bytes. A save that halts mid-process produces a file whose
+    // directory does not match it, which a load will reject.
+    enum DirectoryPosition : std::size_t
+    {
+        left_position,
+        right_position,
+        name_of_node_position,
+        node_of_name_position,
+        annotation_position
+    };
+    zelph::io::ChunkDirectoryWriter directory({{FileSection::LEFT, leftChunkCount},
+                                               {FileSection::RIGHT, rightChunkCount},
+                                               {FileSection::NAME_OF_NODE, nameOfNodeChunkTotal},
+                                               {FileSection::NODE_OF_NAME, nodeOfNameChunkTotal},
+                                               {FileSection::ANNOTATIONS, annotationChunkCount}});
+    zelph::io::CountingOutputStream counted(output);
+
+    ::capnp::writePackedMessage(counted, mainMessage);
+    const std::uint64_t directoryOffset = counted.bytes_written();
+    directory.write(counted);
+
+    const auto write_chunk = [&](const DirectoryPosition position, const std::uint64_t index, ::capnp::MessageBuilder& chunk, const std::uint64_t entries)
+    {
+        const std::uint64_t offset = counted.bytes_written();
+        ::capnp::writePackedMessage(counted, chunk);
+        directory.record(position, index, {offset, counted.bytes_written() - offset, entries});
+    };
 
     // Chunk the left sides
     auto leftIt = _nodes.begin();
@@ -1254,7 +1518,7 @@ void Zelph::Impl::saveToFile(const std::string& filename, const ankerl::unordere
             }
             ++pIdx;
         }
-        ::capnp::writePackedMessage(output, chunkMessage);
+        write_chunk(left_position, chunkIdx, chunkMessage, thisChunkSize);
     }
 
     // Chunk the right sides
@@ -1284,7 +1548,7 @@ void Zelph::Impl::saveToFile(const std::string& filename, const ankerl::unordere
             }
             ++pIdx;
         }
-        ::capnp::writePackedMessage(output, chunkMessage);
+        write_chunk(right_position, chunkIdx, chunkMessage, thisChunkSize);
     }
 
     // Chunk _name_of_node
@@ -1321,7 +1585,7 @@ void Zelph::Impl::saveToFile(const std::string& filename, const ankerl::unordere
             ::capnp::MallocMessageBuilder chunkMessage(firstSegmentWords(thisSize));
             auto                          chunk = chunkMessage.initRoot<NameChunk>();
             chunk.setLang(lang);
-            chunk.setChunkIndex(nameOfNodeChunkIndex++);
+            chunk.setChunkIndex(nameOfNodeChunkIndex);
 
             auto pairs = chunk.initPairs(thisSize);
             for (size_t i = 0; i < thisSize; ++i, ++it)
@@ -1330,7 +1594,7 @@ void Zelph::Impl::saveToFile(const std::string& filename, const ankerl::unordere
                 // Pool-backed string_view: data() is null-terminated
                 pairs[i].setValue(it->second.data());
             }
-            ::capnp::writePackedMessage(output, chunkMessage);
+            write_chunk(name_of_node_position, nameOfNodeChunkIndex++, chunkMessage, thisSize);
         }
     }
 
@@ -1360,7 +1624,7 @@ void Zelph::Impl::saveToFile(const std::string& filename, const ankerl::unordere
             ::capnp::MallocMessageBuilder chunkMessage(firstSegmentWords(thisSize));
             auto                          chunk = chunkMessage.initRoot<NodeNameChunk>();
             chunk.setLang(lang);
-            chunk.setChunkIndex(nodeOfNameChunkIndex++);
+            chunk.setChunkIndex(nodeOfNameChunkIndex);
 
             auto pairs = chunk.initPairs(thisSize);
             for (size_t i = 0; i < thisSize; ++i, ++it)
@@ -1369,7 +1633,7 @@ void Zelph::Impl::saveToFile(const std::string& filename, const ankerl::unordere
                 pairs[i].setKey(it->first.data());
                 pairs[i].setValue(it->second);
             }
-            ::capnp::writePackedMessage(output, chunkMessage);
+            write_chunk(node_of_name_position, nodeOfNameChunkIndex++, chunkMessage, thisSize);
         }
     }
 
@@ -1408,9 +1672,24 @@ void Zelph::Impl::saveToFile(const std::string& filename, const ankerl::unordere
                 for (size_t j = 0; j < values.size(); ++j)
                     texts.set(static_cast<::capnp::uint>(j), ::capnp::Text::Reader(values[j].data(), values[j].size()));
             }
-            ::capnp::writePackedMessage(output, chunkMessage);
+            write_chunk(annotation_position, chunkIdx, chunkMessage, thisSize);
         }
     }
+
+    // Every chunk now occupies its designated position, and the directory
+    // is written over its zeros. The output writes directly to the
+    // descriptor without buffering, so the descriptor is where the output
+    // stands.
+    #if defined(_WIN32)
+    const bool positioned = _lseeki64(fileno(file), static_cast<__int64>(directoryOffset), SEEK_SET) >= 0;
+    #else
+    const bool positioned = lseek(fileno(file), static_cast<off_t>(directoryOffset), SEEK_SET) >= 0;
+    #endif
+    if (!positioned)
+    {
+        throw std::runtime_error("Failed to write the chunk directory of " + filename);
+    }
+    directory.write(output);
 }
 #endif
 
@@ -1421,14 +1700,40 @@ void Zelph::Impl::saveToFile(const std::string& filename, const ankerl::unordere
 // they had is still the graph they have.
 std::string Zelph::Impl::read_error_text(const std::string& filename, const kj::Exception& e, const bool state_discarded)
 {
-    std::string text = "Failed to read '" + filename
-                     + "' as a zelph .bin file (truncated, or not a .bin at all): "
-                     + std::string(e.getDescription().cStr());
+    const std::string text = "Failed to read '" + filename
+                           + "' as a zelph .bin file (truncated, or not a .bin at all): "
+                           + std::string(e.getDescription().cStr());
+    return state_discarded ? discarded_text(text) : text;
+}
+
+// The message accompanying a load that failed after discarding the
+// session's graph: it states this, unless it already does.
+std::string Zelph::Impl::discarded_text(const std::string& message)
+{
+    static const std::string note = ". The previous network was already discarded -- use .new to start over";
+    return message.find(note) == std::string::npos ? message + note : message;
+}
+
+// Rethrows the exception that a load raised and that the caller is handling.
+// After the load has discarded the session's graph, any subsequent failure
+// says so: a chunk read via a manifest, the sequential load of the .bin it
+// falls back to, the reserve of the node map. A failure occurring before the
+// discard leaves the graph unchanged, and it is rethrown in its original
+// state.
+void Zelph::Impl::rethrow_load_failure(const bool state_discarded)
+{
     if (state_discarded)
     {
-        text += ". The previous network was already discarded -- use .new to start over";
+        try
+        {
+            throw;
+        }
+        catch (const std::exception& e)
+        {
+            throw std::runtime_error(discarded_text(e.what()));
+        }
     }
-    return text;
+    throw;
 }
 #endif
 
@@ -1452,11 +1757,12 @@ bool Zelph::Impl::loadFromFile(const std::string& filename, bool& negation_condi
         options.traversalLimitInWords = 1ULL << 32;
         options.nestingLimit          = 128;
 
-        kj::FdInputStream              rawInput(fileno(file));
-        kj::BufferedInputStreamWrapper bufferedInput(rawInput);
+        kj::FdInputStream                      rawInput(fileno(file));
+        zelph::io::CountingBufferedInputStream bufferedInput(rawInput);
 
-        ::capnp::PackedMessageReader mainMessage(bufferedInput, options);
-        auto                         impl = mainMessage.getRoot<ZelphImpl>();
+        ::capnp::MallocMessageBuilder header;
+        const auto                    directory = read_checked_header(filename, bufferedInput, options, header);
+        const auto                    impl      = header.getRoot<ZelphImpl>().asReader();
 
         const bool template_ids = impl.getTemplateIds();
         negation_conditions     = impl.getNegationConditions();
@@ -1467,16 +1773,23 @@ bool Zelph::Impl::loadFromFile(const std::string& filename, bool& negation_condi
         uint32_t nodeOfNameChunkCount = impl.getNodeOfNameChunkCount();
         uint32_t annotationChunkCount = impl.getAnnotationChunkCount();
 
-        // Following the header, on which a file that is not a network fails:
-        // in such a case, the session's graph remains unchanged. From this
-        // point forward, the file takes the place of the graph, meaning the
-        // session's nodes, names, and clusters are discarded before the first
-        // write, and a failure occurring during the process leaves a part of
-        // the file in the graph.
+        // Following the header, on which a file that is not a network fails,
+        // and its chunk directory, which refuses a file that it does not
+        // match: in such a case, the session's graph is not altered. From
+        // this point onward, the file takes the place of the graph, meaning
+        // the session's nodes, names, and clusters are discarded before the
+        // first write, and a failure during the operation results in a part
+        // of the file being retained in the graph.
         clear_loaded_state();
         state_cleared = true;
         loadSmallData(impl);
-        reserve_for_load(node_map_sizing::load_reserve(impl.getNodeCount(), node_map_sizing::chunks_read(leftChunkCount, rightChunkCount)));
+        // The node map takes every node stored in the chunks, as recorded by
+        // the directory; a file lacking a directory allows it to expand
+        // instead.
+        if (directory)
+        {
+            reserve_for_load(node_map_sizing::load_reserve(directory->entries(FileSection::LEFT), directory->entries(FileSection::RIGHT), whole_section, whole_section));
+        }
 
         {
             io::OutputStream line(_output, io::OutputChannel::Diagnostic, true);
@@ -1544,11 +1857,12 @@ void Zelph::Impl::loadFromFile(const std::string& filename, const Zelph::BinChun
         options.traversalLimitInWords = 1ULL << 32;
         options.nestingLimit          = 128;
 
-        kj::FdInputStream              rawInput(fileno(file));
-        kj::BufferedInputStreamWrapper bufferedInput(rawInput);
+        kj::FdInputStream                      rawInput(fileno(file));
+        zelph::io::CountingBufferedInputStream bufferedInput(rawInput);
 
-        ::capnp::PackedMessageReader mainMessage(bufferedInput, options);
-        auto                         impl = mainMessage.getRoot<ZelphImpl>();
+        ::capnp::MallocMessageBuilder header;
+        const auto                    directory = read_checked_header(filename, bufferedInput, options, header);
+        const auto                    impl      = header.getRoot<ZelphImpl>().asReader();
 
         uint32_t leftChunkCount       = impl.getLeftChunkCount();
         uint32_t rightChunkCount      = impl.getRightChunkCount();
@@ -1627,7 +1941,12 @@ void Zelph::Impl::loadFromFile(const std::string& filename, const Zelph::BinChun
         // offset instead of streaming past the others.
         if (want_left_right || want_name_of_node || want_node_of_name)
         {
-            reserve_for_load(node_map_sizing::load_reserve(impl.getNodeCount(), node_map_sizing::chunks_read(leftChunkCount, rightChunkCount, leftSelectorPtr, rightSelectorPtr)));
+            // The nodes contained within the selected chunks, as recorded by
+            // the directory, and nothing for a chunk that is merely read past.
+            if (directory)
+            {
+                reserve_for_load(node_map_sizing::load_reserve(directory->entries(FileSection::LEFT), directory->entries(FileSection::RIGHT), leftSelectorPtr, rightSelectorPtr));
+            }
             loadLeftRightChunks(bufferedInput,
                                 options,
                                 leftChunkCount,

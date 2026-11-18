@@ -30,6 +30,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <vector>
 
 // How the node map (Network::node_map) is sized: the number of buckets, which
 // determines the RAM cost of a large network, and the reserve a load makes.
@@ -97,50 +98,28 @@ namespace zelph::network::node_map_sizing
         return static_cast<std::uint64_t>(static_cast<float>(max_buckets) * large_factor);
     }
 
-    // The chunk numbers a load reads in either section, for a load that
-    // reads each section in its entirety or solely the chunks specified by
-    // a selection. A selection holds distinct numbers beneath its
-    // section's chunk count, as loads verify before reserving.
-    constexpr std::uint64_t chunks_read(const std::uint64_t left_chunks, const std::uint64_t right_chunks)
-    {
-        return (std::max)(left_chunks, right_chunks);
-    }
+    // The entries a load reserves before inserting any: the nodes held by
+    // the chunks it reads, as the chunk directory of its file records them,
+    // `left` and `right` holding the entries of each chunk within the two
+    // sections. A null selection reads its section in full; any other holds
+    // distinct numbers beneath its section's chunk count, as loads verify
+    // before reserving. Both sections of a file a session saved are written
+    // following the order of the one node map, so chunk i of the left
+    // section and chunk i of the right section contain identical nodes: a
+    // chunk number is counted once, using the larger of its two entry
+    // counts, regardless of whether the load reads it in one section or in
+    // both. A directory is trusted only after it matches its file, which
+    // bounds the entries of each chunk via serialization::chunk_entries and
+    // through its byte size.
     template <typename Selection>
-    std::uint64_t chunks_read(const std::uint64_t left_chunks, const std::uint64_t right_chunks, const Selection* const left, const Selection* const right)
+    std::uint64_t load_reserve(const std::vector<std::uint64_t>& left, const std::vector<std::uint64_t>& right, const Selection* const left_selected, const Selection* const right_selected)
     {
-        if (left == nullptr && right == nullptr) return chunks_read(left_chunks, right_chunks);
-        if (left == nullptr || right == nullptr)
-        {
-            const std::uint64_t whole    = left == nullptr ? left_chunks : right_chunks;
-            const Selection&    selected = left == nullptr ? *right : *left;
-            std::uint64_t       chunks   = whole;
-            for (const auto index : selected)
-                if (index >= whole) ++chunks;
-            return chunks;
-        }
-        std::uint64_t chunks = left->size();
-        for (const auto index : *right)
-            if (left->count(index) == 0) ++chunks;
-        return chunks;
-    }
+        const auto read = [](const std::vector<std::uint64_t>& entries, const Selection* const selected, const std::size_t chunk) -> std::uint64_t
+        { return chunk < entries.size() && (selected == nullptr || selected->count(static_cast<std::uint32_t>(chunk)) != 0) ? entries[chunk] : 0; };
 
-    // The entries a load reserves before inserting any, for a load that reads
-    // `chunks` chunk numbers (chunks_read). Both sections of a file a session
-    // saved are written according to the order of the one node map, so chunk
-    // i of the left section and chunk i of the right section hold the same
-    // nodes, up to at most serialization::chunk_entries of them. A load reads
-    // no more nodes than its chunks can accommodate and none beyond the node
-    // count recorded in the header, and reserves the smaller of the two. That
-    // is also what keeps a damaged header from sizing the map by a single
-    // number: a node count beyond what the chunks can hold is not reserved,
-    // nor are chunks beyond the node count. A header from an older engine
-    // records no node count (0); every chunk of a section except its last one
-    // is full, so a load reserves that amount for all its chunks except one
-    // and lets the map grow for the rest.
-    constexpr std::uint64_t load_reserve(const std::uint64_t node_count, const std::uint64_t chunks)
-    {
-        const std::uint64_t chunk = serialization::chunk_entries;
-        if (node_count == 0) return chunks == 0 ? 0 : (chunks - 1) * chunk;
-        return (std::min)(node_count, chunks * chunk);
+        std::uint64_t nodes = 0;
+        for (std::size_t chunk = 0; chunk < (std::max)(left.size(), right.size()); ++chunk)
+            nodes += (std::max)(read(left, left_selected, chunk), read(right, right_selected, chunk));
+        return nodes;
     }
 }
