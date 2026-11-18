@@ -621,7 +621,8 @@ namespace zelph::network
         }
 
         // The load factor the node map uses once its bucket array reaches
-        // node_map_sizing::large_buckets; otherwise, it uses the default. A
+        // node_map_sizing::large_buckets; otherwise, it uses
+        // node_map_sizing::default_load_factor. A
         // map that already has them adopts a new factor immediately, while
         // any other map does so when it grows there or when a load reserves
         // them.
@@ -632,6 +633,16 @@ namespace zelph::network
             std::unique_lock<std::shared_mutex> lock_right(_smtx_right);
             _large_load_factor = factor;
             apply_load_factor();
+        }
+
+        // The factor that `default` names for this engine: the one it was made
+        // with, which is node_map_sizing::default_load_factor unless the host
+        // gave it a different one. Setting it also sets the factor.
+        float default_large_load_factor() const { return _default_large_load_factor; }
+        void  set_default_large_load_factor(const float factor)
+        {
+            _default_large_load_factor = factor;
+            set_large_load_factor(factor);
         }
 
         // The size and factor of the node map, along with what the last load
@@ -1917,6 +1928,7 @@ namespace zelph::network
 
         // See set_large_load_factor and apply_load_factor.
         float       _large_load_factor{node_map_sizing::default_load_factor};
+        float       _default_large_load_factor{node_map_sizing::default_load_factor};
         std::size_t _large_factor_from{std::numeric_limits<std::size_t>::max()};
 
         // See reserve_for_load and NodeMapState: the number of buckets the

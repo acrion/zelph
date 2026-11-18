@@ -28,8 +28,13 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include "serialization_layout.hpp"
 
 #include <algorithm>
+#include <charconv>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
+#include <string_view>
+#include <system_error>
 #include <vector>
 
 // How the node map (Network::node_map) is sized: the number of buckets, which
@@ -60,6 +65,45 @@ namespace zelph::network::node_map_sizing
     // of a map that full.
     inline constexpr float min_large_load_factor = default_load_factor;
     inline constexpr float max_large_load_factor = 0.95F;
+
+    // Whether a map may use `factor` from large_buckets onward. A NaN is not a
+    // factor.
+    constexpr bool is_large_load_factor(const float factor)
+    {
+        return factor >= min_large_load_factor && factor <= max_large_load_factor;
+    }
+
+    // The factor named by `text`, or none: a number that the text represents
+    // as a whole and that a map can utilize from large_buckets onward. One
+    // reading for the command, for the command line of the binary, and for any
+    // other context requiring a factor as text; from_chars reads the number in
+    // the same manner across all locales.
+    inline std::optional<float> large_load_factor_from(const std::string_view text)
+    {
+        float             factor = 0;
+        const char* const first  = text.data();
+        const char* const last   = first + text.size();
+        const auto [end, error]  = std::from_chars(first, last, factor);
+        if (error != std::errc{} || end != last || !is_large_load_factor(factor)) return std::nullopt;
+        return factor;
+    }
+
+    // `factor` as the double that a program writes for it: the value of the
+    // shortest decimal representation that names the float. The float
+    // widened is a distinct number -- 0.9F widens to 0.89999997615814209,
+    // which does not print as 0.9 and is not equal to it -- and nine digits
+    // suffice to name every float.
+    inline double as_written(const float factor)
+    {
+        double scale = 1;
+        for (int digits = 1; digits <= 9; ++digits)
+        {
+            scale *= 10;
+            const double candidate = std::round(static_cast<double>(factor) * scale) / scale;
+            if (static_cast<float>(candidate) == factor) return candidate;
+        }
+        return factor;
+    }
 
     // The entries that `buckets` buckets hold at `factor` before the array
     // doubles, according to ankerl's own float arithmetic. An array of

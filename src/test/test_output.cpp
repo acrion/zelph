@@ -670,6 +670,13 @@ TEST_CASE("help: .node-map-load-factor is documented and listed with the engine 
     // exceeds the factor.
     CHECK(any_output_contains(collector, "exceed the load factor times the"));
 
+    // What `default` names, and the two other ways to the factor: the option
+    // provided by the binary, which establishes the default for a session, and
+    // the Janet binding.
+    CHECK(any_output_contains(collector, "the factor the session started with"));
+    CHECK(any_output_contains(collector, "zelph --node-map-load-factor <factor>"));
+    CHECK(any_output_contains(collector, "(zelph/node-map-load-factor)"));
+
     collector.clear();
     interactive.process(".help");
     CHECK(any_output_contains(collector, ".node-map-load-factor [<factor>|default]"));

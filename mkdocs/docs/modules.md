@@ -55,6 +55,11 @@ zelph stdlib/examples/english.zph      # a session: echoes, derives, prints
 zelph < stdlib/examples/english.zph    # the same session, read from a pipe
 ```
 
+`zelph --node-map-load-factor <factor> <script>` starts the session with the
+specified load factor for the node map as its default, as detailed by
+`.help .node-map-load-factor`. The option precedes the script’s name: behind
+the name, the identical two words are passed to the script as its arguments.
+
 Inside the REPL the same file is a module:
 
     .import examples/english

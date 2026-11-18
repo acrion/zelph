@@ -92,6 +92,16 @@ namespace zelph::console
         bool               is_auto_run_active() const;
         bool               is_accumulating() const;
 
+        // Gives the session a default of its own for the load factor of the
+        // node map (.node-map-load-factor): the engine has it from now on, and
+        // so does every engine that .new makes, ensuring that `default` names
+        // it and .new restores it. `factor` is read as the command reads its
+        // argument; a text that is not a number within the range 0.8 to 0.95
+        // throws std::invalid_argument, whose message names the range, and
+        // causes no alteration. The binary calls it for
+        // --node-map-load-factor.
+        void set_node_map_default_load_factor(const std::string& factor) const;
+
         // Dispatch whatever process() is still accumulating. Call this when
         // the input ENDS: a piped session or a script that stops inside a
         // keyword block, a multi-line statement or a Janet block would

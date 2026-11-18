@@ -407,6 +407,19 @@ if (Python3_Interpreter_FOUND)
         endif ()
     endif ()
 
+    # --- the options of the binary ---------------------------------------------
+    #
+    # What a command line option does to a session is the library's part, and
+    # the doctest suite pins it there; this pins what main() performs with its
+    # arguments, which only a process shows: that an option counts where it is
+    # positioned before a script, that after the script's name its words arrive
+    # at the script as arguments, and that an option whose value cannot be read
+    # ends the process with status 1 prior to any execution.
+    if (TARGET zelph)
+        zelph_add_check_test(options_of_the_binary "${CMAKE_SOURCE_DIR}/tools/check_options.py"
+                "$<TARGET_FILE:zelph>" 0)
+    endif ()
+
     # --- the version a citation names ------------------------------------------
     #
     # CITATION.cff mirrors the version specified by project(), with no

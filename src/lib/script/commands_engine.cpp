@@ -29,14 +29,13 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include "script/script_engine.hpp"
 #include "string/string_utils.hpp"
 
-#include <charconv>
 #include <cstddef>
 #include <exception>
 #include <limits>
+#include <optional>
 #include <sstream>
 #include <stdexcept>
 #include <string>
-#include <system_error>
 #include <vector>
 
 using namespace zelph;
@@ -259,7 +258,7 @@ namespace zelph::console
         {
             const float        factor = _n->node_map_load_factor();
             std::ostringstream text;
-            text << "Node map load factor from 2^31 buckets: " << factor << (factor == sizing::default_load_factor ? " (default)" : "");
+            text << "Node map load factor from 2^31 buckets: " << factor << (factor == _n->node_map_default_load_factor() ? " (default)" : "");
             return text.str();
         };
 
@@ -279,16 +278,14 @@ namespace zelph::console
         };
         if (cmd.size() != 2) throw usage();
 
-        float factor = sizing::default_load_factor;
+        // `default` is the factor with which the engine was built, set for each
+        // engine it produces by a session using --node-map-load-factor.
+        float factor = _n->node_map_default_load_factor();
         if (cmd[1] != "default")
         {
-            // from_chars reads the number in the same manner across all
-            // locales.
-            const char* const first = cmd[1].data();
-            const char* const last  = first + cmd[1].size();
-            const auto [end, error] = std::from_chars(first, last, factor);
-            const bool in_range     = factor >= sizing::min_large_load_factor && factor <= sizing::max_large_load_factor;
-            if (error != std::errc{} || end != last || !in_range) throw usage();
+            const std::optional<float> given = sizing::large_load_factor_from(cmd[1]);
+            if (!given) throw usage();
+            factor = *given;
         }
 
         _n->set_node_map_load_factor(factor);

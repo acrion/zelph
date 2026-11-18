@@ -337,7 +337,7 @@ Assigning a node a name that another node already holds in that language **merge
 - `.contradiction-records [on|off]` – Show or disable writing each contradiction into the graph (memory vs. repeated reports)
 - `.negation-records [on|off]` – Show or set whether records of what negations derived are maintained, to warn when a later fact defeats one (default: off)
 - `.explain-budget [<units>|default|unlimited]` – Show or adjust the amount of work `.explain` can allocate toward the complete proof under a depth limit (default: 80000)
-- `.node-map-load-factor [<factor>|default]` – Show or set the load factor of the node map from 2^31 buckets onward (balancing memory usage against performance, default: 0.8)
+- `.node-map-load-factor [<factor>|default]` – Show or set the load factor of the node map from 2^31 buckets onward (balancing memory usage against performance, default: 0.8, or the factor with which `zelph --node-map-load-factor <factor>` started the session)
 
 ### Logging & Profiling
 

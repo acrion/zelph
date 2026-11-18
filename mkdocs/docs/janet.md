@@ -670,6 +670,9 @@ Listing all rules:
 - **`(zelph/negation-records &opt on)`**  
   Fetches the current state of the `.negation-records` switch, or sets it to `true` or `false` to control whether a run logs every fact that a rule with a negated condition produces – enabling later runs to reference the facts whose negated condition has become satisfied. Returns the resulting state; if no argument is provided, no modification occurs. Any input other than a boolean is rejected, meaning that the string `"off"` does not activate the records merely by being truthy. Off by default, as each record consumes memory (refer to [Stratified Evaluation](logic.md#stratified-evaluation)); switching it off drops the records, unless check mode keeps them. This switch is a session-level configuration: when a load replaces the graph, the setting persists but the records are discarded, as they refer to the nodes of the replaced graph. Available only in the main thread.
 
+- **`(zelph/node-map-load-factor &opt factor)`**  
+  Fetches the load factor that the node map can attain once its bucket array reaches 2^31 buckets, or sets it as the `.node-map-load-factor` command does: to a number from 0.8 to 0.95, or with `:default` to the factor the session started with. Returns the factor afterwards. A number containing up to seven decimals is returned exactly as supplied; the engine keeps the factor in single precision, thus additional decimals are not kept. Any other argument is rejected, including a string such as `"0.9"`. A program constructing a very large network sets the factor before doing so; `.help .node-map-load-factor` says what the factor trades off. The factor is a setting of the engine, so `.new` restores the default. Available only in the main thread.
+
 Auto-run is tied to _processing an input line_: it fires after a statement, and after a Janet block closes. Code that only calls the Janet API — a program driving zelph as a library, or a long-running script that keeps asserting facts between queries — never triggers it, and so has to run the engine itself.
 
 Given this script:
@@ -1707,6 +1710,7 @@ Error in line "kw John is": refused
 | `.run-delta`                    | `(zelph/run-delta)`                                 | Run inference seeded only by the facts added since the last run             |
 | `.strata`                       | `(zelph/strata)`                                    | Array of negation levels for the rules, with a single table dedicated to each rule |
 | `.negation-records on`          | `(zelph/negation-records true)`                     | Switch the negation records on; without an argument, read the switch        |
+| `.node-map-load-factor 0.9`     | `(zelph/node-map-load-factor 0.9)`                  | Set the load factor of the node map; when no argument is provided, retrieve it |
 | `.cluster <name>`               | `(zelph/cluster "name")`                            | Activate a cluster; returns the active name, or `nil` for the default       |
 | `.cluster-drop <name>`          | `(zelph/cluster-drop "name")`                       | Roll back everything created in the cluster; returns the node count removed |
 | `.cluster` (listing)            | `(zelph/clusters)`                                  | Array of `[name node-count]` tuples                                         |

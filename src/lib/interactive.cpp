@@ -37,6 +37,10 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include <chrono>
 #include <cstdio>
 #include <memory>
+#include <optional>
+#include <sstream>
+#include <stdexcept>
+#include <string>
 #include <utility>
 
 using namespace zelph;
@@ -79,6 +83,10 @@ public:
     {
         _n             = std::make_unique<network::Reasoning>(output);
         _script_engine = std::make_unique<ScriptEngine>(_n.get());
+
+        // The session's own default, if present, for the engine that a .new
+        // has just created, as well as for the first.
+        if (_node_map_default_load_factor) _n->set_node_map_default_load_factor(*_node_map_default_load_factor);
 
         _n->set_lang("zelph");
 
@@ -178,6 +186,10 @@ public:
 
     // The prompt as it reads when nothing is currently being accumulated.
     std::string full_prompt() const;
+
+    // The default provided to the session by set_node_map_default_load_factor,
+    // if any was given: init() passes it along to every engine it makes.
+    std::optional<float> _node_map_default_load_factor;
 
     std::unique_ptr<network::Reasoning> _n;
     std::unique_ptr<ScriptEngine>       _script_engine;
@@ -758,6 +770,23 @@ void console::Interactive::run(const bool print_deductions, const bool export_de
 std::string console::Interactive::get_lang() const
 {
     return _pImpl->_n->get_lang();
+}
+
+void console::Interactive::set_node_map_default_load_factor(const std::string& factor) const
+{
+    namespace sizing = network::node_map_sizing;
+
+    const std::optional<float> given = sizing::large_load_factor_from(factor);
+    if (!given)
+    {
+        std::ostringstream text;
+        text << "the load factor of the node map is a number from " << sizing::min_large_load_factor << " to "
+             << sizing::max_large_load_factor << ", the factor the map may reach once it has 2^31 buckets, not '" << factor << "'";
+        throw std::invalid_argument(text.str());
+    }
+
+    _pImpl->_node_map_default_load_factor = *given;
+    _pImpl->_n->set_node_map_default_load_factor(*given);
 }
 
 void console::Interactive::set_prompt_available(const bool available) const

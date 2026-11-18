@@ -130,7 +130,7 @@ namespace zelph::console
             "  .contradiction-records [on|off]           – Show or disable writing each contradiction into the graph (memory vs. repeated reports)",
             "  .negation-records [on|off]                – Show or set recording what negations derived, to warn when a later fact defeats one (default: off)",
             "  .explain-budget [<units>|default|unlimited] – Show or set the work .explain may spend on the complete proof under a depth limit (default: 80000)",
-            "  .node-map-load-factor [<factor>|default]  – Show or set the load factor of the node map from 2^31 buckets on (memory vs. speed, default: 0.8)",
+            "  .node-map-load-factor [<factor>|default]  – Show or set the load factor of the node map from 2^31 buckets on (memory vs. speed, default: 0.8 or the factor of --node-map-load-factor)",
             "",
             "Logging & Profiling",
             "  .log <max-depth>                          – Enable detailed reasoning logging up to given recursion depth (0 = off, -1 = counters only)",
@@ -1037,7 +1037,7 @@ namespace zelph::console
                       "Shows current network statistics:\n"
                       "- Number of nodes\n"
                       "- The load factor of the node map from 2^31 buckets, shown only when it\n"
-                      "  differs from the default (see .help .node-map-load-factor)\n"
+                      "  is not 0.8 (see .help .node-map-load-factor)\n"
                       "- RAM usage (in GiB, if available)\n"
                       "- Total entries in name-of-node mappings\n"
                       "- Total entries in node-of-name mappings\n"
@@ -1313,20 +1313,25 @@ namespace zelph::console
                                       "number of buckets; below 2^31 buckets the factor is always 0.8. The\n"
                                       "array has 2^31 buckets beyond 858,993,472 nodes and takes 16 GiB then,\n"
                                       "and its one remaining doubling adds another 16 GiB at once: at node\n"
-                                      "1,717,986,945 at the default 0.8, at node 1,932,735,233 at 0.9, at node\n"
+                                      "1,717,986,945 at 0.8, at node 1,932,735,233 at 0.9, at node\n"
                                       "2,040,109,441 at 0.95. A higher factor defers that step, and a lookup\n"
                                       "in so full a map takes longer (memory vs. speed).\n"
                                       "  (no argument) – show the current factor\n"
                                       "  <factor>  – a number from 0.8 to 0.95\n"
-                                      "  default   – 0.8, the factor below 2^31 buckets\n"
+                                      "  default   – the factor the session started with: 0.8, the factor\n"
+                                      "              below 2^31 buckets, unless its command line gave another\n"
                                       "Set it before the .load or the import that builds so large a network:\n"
                                       "a load sizes the node map once, for the nodes that the chunk directory\n"
                                       "of its file records, and a map that has 2^31 buckets already takes a\n"
                                       "new factor at once. A file without a chunk directory gives a load\n"
-                                      "nothing to size the map from: the map then grows at the default 0.8\n"
+                                      "nothing to size the map from: the map then grows at 0.8\n"
                                       "while the file loads, and takes the factor when the load has finished.\n"
                                       "The factor is a setting of the engine, so .new restores the default;\n"
-                                      ".stat shows it while it differs from the default."},
+                                      ".stat shows it while it is not 0.8.\n"
+                                      "A session started as 'zelph --node-map-load-factor <factor>' has that\n"
+                                      "factor as its default, from its first line on and after every .new;\n"
+                                      "the option stands ahead of the name of a script. From Janet,\n"
+                                      "(zelph/node-map-load-factor) reads the factor and sets it."},
             {".fact-stores", ".fact-stores [on|off]\n"
                              "Shows or disables the fact-path acceleration stores: the genuine-\n"
                              "structure store (exact triple per created fact node) and the\n"

@@ -676,16 +676,33 @@ float Zelph::node_map_load_factor() const
     return _pImpl->large_load_factor();
 }
 
-void Zelph::set_node_map_load_factor(const float factor) const
+namespace
 {
-    if (!(factor >= node_map_sizing::min_large_load_factor && factor <= node_map_sizing::max_large_load_factor))
+    void require_large_load_factor(const float factor, const char* const setter)
     {
+        if (node_map_sizing::is_large_load_factor(factor)) return;
         std::ostringstream text;
-        text << "Zelph::set_node_map_load_factor: the factor must lie from " << node_map_sizing::min_large_load_factor
+        text << setter << ": the factor must lie from " << node_map_sizing::min_large_load_factor
              << " to " << node_map_sizing::max_large_load_factor << ", not " << factor;
         throw std::invalid_argument(text.str());
     }
+}
+
+void Zelph::set_node_map_load_factor(const float factor) const
+{
+    require_large_load_factor(factor, "Zelph::set_node_map_load_factor");
     _pImpl->set_large_load_factor(factor);
+}
+
+float Zelph::node_map_default_load_factor() const
+{
+    return _pImpl->default_large_load_factor();
+}
+
+void Zelph::set_node_map_default_load_factor(const float factor) const
+{
+    require_large_load_factor(factor, "Zelph::set_node_map_default_load_factor");
+    _pImpl->set_default_large_load_factor(factor);
 }
 
 Network::NodeMapState Zelph::node_map_state() const

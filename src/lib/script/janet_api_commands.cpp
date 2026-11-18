@@ -33,6 +33,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include <cstdint>
 #include <exception>
 #include <filesystem>
+#include <limits>
 #include <memory>
 #include <stdexcept>
 #include <string>
@@ -503,6 +504,54 @@ namespace zelph
 
         Janet res = janet_wrap_boolean(s_instance->_n->record_negations() ? 1 : 0);
         if (s_instance->_log_janet_functions) s_instance->log_janet_call("zelph/negation-records", argc, argv, false, res);
+        return res;
+    }
+
+    // The .node-map-load-factor command for a front end that drives zelph
+    // through Janet: when invoked without an argument, it reads the factor,
+    // and when provided with a number or with :default, it sets it as the
+    // command does, returning the factor afterwards in each instance. The
+    // argument has to be a number, just as the switch of
+    // zelph/negation-records has to be a boolean: the string "0.9" is refused
+    // rather than interpreted. The value returned is the number as a program
+    // writes it (node_map_sizing::as_written), which equals the input number
+    // when it contains no more than seven decimals.
+    Janet ScriptEngine::Impl::janet_cfun_zelph_node_map_load_factor(int32_t argc, Janet* argv)
+    {
+        namespace sizing = network::node_map_sizing;
+
+        janet_arity(argc, 0, 1);
+        if (!s_instance) return janet_wrap_nil();
+        if (s_instance->_log_janet_functions) s_instance->log_janet_call("zelph/node-map-load-factor", argc, argv, true);
+
+        require_main_thread("zelph/node-map-load-factor");
+
+        if (argc == 1)
+        {
+            float factor = std::numeric_limits<float>::quiet_NaN();
+            if (janet_checktype(argv[0], JANET_NUMBER))
+            {
+                // Narrowed only where a float holds the number: a double
+                // beyond the range of a float lacks a float to transform into.
+                const double number = janet_unwrap_number(argv[0]);
+                if (number >= 0.0 && number <= 1.0) factor = static_cast<float>(number);
+            }
+            else if (janet_keyeq(argv[0], "default"))
+            {
+                factor = s_instance->_n->node_map_default_load_factor();
+            }
+            if (!sizing::is_large_load_factor(factor))
+            {
+                janet_panicf("zelph/node-map-load-factor: the argument is a number from %g to %g, the load factor the node map may reach once it has 2^31 buckets, or :default, got %v",
+                             sizing::as_written(sizing::min_large_load_factor),
+                             sizing::as_written(sizing::max_large_load_factor),
+                             argv[0]);
+            }
+            s_instance->_n->set_node_map_load_factor(factor);
+        }
+
+        Janet res = janet_wrap_number(sizing::as_written(s_instance->_n->node_map_load_factor()));
+        if (s_instance->_log_janet_functions) s_instance->log_janet_call("zelph/node-map-load-factor", argc, argv, false, res);
         return res;
     }
 

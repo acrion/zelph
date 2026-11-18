@@ -45,6 +45,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include <chrono>
 #include <cstdio>
 #include <iostream>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -96,6 +97,27 @@ int main(int argc, char** argv)
             if (arg == "-v" || arg == "--version")
             {
                 show_version = true;
+            }
+            else if (arg == "--node-map-load-factor" && script_files.empty())
+            {
+                // This option applies solely when positioned before the
+                // script: behind the script's name, its two words function as
+                // arguments to the script. The factor serves as the default
+                // for the process, such that a .new in the session restores
+                // it, and a factor that cannot be read ends the process before
+                // any execution begins.
+                if (i + 1 == argc)
+                {
+                    throw std::runtime_error("Option --node-map-load-factor needs a factor: zelph --node-map-load-factor <factor> [<script> [<args>...]]");
+                }
+                try
+                {
+                    interactive.set_node_map_default_load_factor(argv[++i]);
+                }
+                catch (const std::invalid_argument& e)
+                {
+                    throw std::runtime_error(std::string("Option --node-map-load-factor: ") + e.what());
+                }
             }
             else if (script_files.empty())
             {

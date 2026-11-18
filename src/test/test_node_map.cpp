@@ -31,6 +31,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include "network/reasoning.hpp"
 #include "test_helpers.hpp"
 
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
@@ -531,6 +532,66 @@ TEST_CASE("load: a file without a chunk directory reserves nothing, however many
     std::filesystem::remove(older);
 }
 
+// The command, the command line of the binary, and the default of a session
+// each accept a factor as text, and one function reads it for all three: a
+// number that the text represents as a whole and that lies within the
+// specified range. Whatever else the text contains renders it no factor,
+// including a blank preceding or following the number.
+TEST_CASE("node-map-load-factor: the text of a factor is one number within the range")
+{
+    CHECK(sizing::large_load_factor_from("0.8").value_or(0.0F) == sizing::default_load_factor);
+    CHECK(sizing::large_load_factor_from("0.9").value_or(0.0F) == 0.9F);
+    CHECK(sizing::large_load_factor_from("0.95").value_or(0.0F) == sizing::max_large_load_factor);
+    CHECK(sizing::large_load_factor_from("9e-1").value_or(0.0F) == 0.9F);
+    for (const char* text : {"", " ", "abc", "0.9x", " 0.9", "0.9 ", ",9", "0,9", "0.79", "0.96", "1", "-0.9", "nan", "inf", "default"})
+    {
+        CAPTURE(text);
+        CHECK_FALSE(sizing::large_load_factor_from(text).has_value());
+    }
+}
+
+// The engine keeps the factor as a float, and a Janet program reads it as a
+// double. Widened, 0.9F becomes 0.89999997615814209, which neither prints as
+// 0.9 nor equals the 0.9 that the program set. as_written gives the double
+// corresponding to the shortest decimal representation that names the float,
+// ensuring a factor with up to seven decimals reads back as the number that
+// was originally written, and setting what was read changes nothing. A factor
+// written with more decimals reads back as the shortest name of the float it
+// transformed into.
+TEST_CASE("node-map-load-factor: a factor reads back as the number that was written")
+{
+    CHECK(sizing::as_written(0.8F) == 0.8);
+    CHECK(sizing::as_written(0.9F) == 0.9);
+    CHECK(sizing::as_written(0.95F) == 0.95);
+    CHECK(sizing::as_written(0.875F) == 0.875);
+    CHECK(static_cast<double>(0.9F) != 0.9);
+
+    // Each factor containing up to seven decimal places is read back exactly
+    // as written: decimals of that length are spaced farther apart than the
+    // floats within this range, meaning each possesses its own distinct float,
+    // and that float lacks any shorter name. An eighth decimal exceeds the
+    // limit the float can keep.
+    std::size_t changed = 0;
+    for (int written = 8000000; written <= 9500000; ++written)
+    {
+        const double factor = written / 1e7;
+        if (sizing::as_written(static_cast<float>(factor)) != factor) ++changed;
+    }
+    CHECK(changed == 0);
+    CHECK(sizing::as_written(static_cast<float>(0.87654321)) == 0.8765432);
+
+    // The two floats adjacent to a factor having three decimal places require
+    // more digits, up to eight within this range: the value read names the
+    // float from which it was retrieved.
+    for (int thousandths = 800; thousandths <= 950; ++thousandths)
+    {
+        CAPTURE(thousandths);
+        const float kept = static_cast<float>(thousandths / 1000.0);
+        for (const float beside : {std::nextafter(kept, 0.0F), std::nextafter(kept, 1.0F)})
+            CHECK(static_cast<float>(sizing::as_written(beside)) == beside);
+    }
+}
+
 // The setting consists of a single line, similar to the other engine
 // settings, and says whether the factor is set to the default.
 TEST_CASE("node-map-load-factor: without an argument it shows the factor, and whether it is the default")
@@ -573,13 +634,68 @@ TEST_CASE("node-map-load-factor: a factor out of range or malformed is refused")
     CHECK(interactive.graph()->node_map_load_factor() == 0.9F);
 
     // The library's setter refuses the same factors, for a caller that does
-    // not proceed via the command.
+    // not proceed via the command, and likewise the setter of the default
+    // refuses them.
     for (const float factor : {0.5F, 0.96F, 1.0F, std::numeric_limits<float>::quiet_NaN()})
     {
         CAPTURE(factor);
         CHECK_THROWS_AS(interactive.graph()->set_node_map_load_factor(factor), std::invalid_argument);
+        CHECK_THROWS_AS(interactive.graph()->set_node_map_default_load_factor(factor), std::invalid_argument);
     }
     CHECK(interactive.graph()->node_map_load_factor() == 0.9F);
+    CHECK(interactive.graph()->node_map_default_load_factor() == sizing::default_load_factor);
+}
+
+// A session may possess its own default, which the binary assigns via
+// --node-map-load-factor. From that point onward, the engine adopts that
+// factor, regardless of any prior value, and the command names it as the
+// default, in its status line as for its argument: 0.8 functions as a factor
+// just like any other within such a session.
+TEST_CASE("node-map-load-factor: the default of a session is what the command names the default")
+{
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+    interactive.process(".node-map-load-factor 0.95");
+    interactive.set_node_map_default_load_factor("0.9");
+    CHECK(interactive.graph()->node_map_load_factor() == 0.9F);
+    CHECK(interactive.graph()->node_map_default_load_factor() == 0.9F);
+
+    collector.clear();
+    interactive.process(".node-map-load-factor");
+    CHECK(any_output_contains(collector, "Node map load factor from 2^31 buckets: 0.9 (default)"));
+
+    collector.clear();
+    interactive.process(".node-map-load-factor 0.8");
+    CHECK(any_output_contains(collector, "Node map load factor from 2^31 buckets: 0.8"));
+    CHECK_FALSE(any_output_contains(collector, "(default)"));
+
+    collector.clear();
+    interactive.process(".node-map-load-factor default");
+    CHECK(any_output_contains(collector, "Node map load factor from 2^31 buckets: 0.9 (default)"));
+    CHECK(interactive.graph()->node_map_load_factor() == 0.9F);
+}
+
+// The default of a session is read as the command reads its argument, and a
+// text that is no factor preserves both the factor and the default unchanged.
+// The binary terminates upon encountering such an option before any execution;
+// a host that continues maintains the session it previously held. The message
+// names the range and the text.
+TEST_CASE("node-map-load-factor: a default that is no factor is refused and changes nothing")
+{
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+    interactive.set_node_map_default_load_factor("0.9");
+    interactive.process(".node-map-load-factor 0.85");
+    for (const char* text : {"", "abc", "0.5", "0.96", "1", "0.9x", "default"})
+    {
+        CAPTURE(text);
+        CHECK_THROWS_WITH_AS(interactive.set_node_map_default_load_factor(text),
+                             doctest::Contains("a number from 0.8 to 0.95"),
+                             std::invalid_argument);
+    }
+    CHECK_THROWS_WITH_AS(interactive.set_node_map_default_load_factor("abc"), doctest::Contains("not 'abc'"), std::invalid_argument);
+    CHECK(interactive.graph()->node_map_load_factor() == 0.85F);
+    CHECK(interactive.graph()->node_map_default_load_factor() == 0.9F);
 }
 
 // The factor is a setting of the engine, much like .explain-budget, and
@@ -591,12 +707,30 @@ TEST_CASE("node-map-load-factor: .new restores the default")
     interactive.process(".node-map-load-factor 0.9");
     interactive.process(".new");
     CHECK(interactive.graph()->node_map_load_factor() == sizing::default_load_factor);
+
+    // A session possessing its own default reclaims that one. The engine
+    // created by .new holds no awareness of the prior engine, thus the session
+    // hands its default to every engine it makes, the third just as the
+    // second.
+    interactive.set_node_map_default_load_factor("0.9");
+    for (int round = 0; round < 2; ++round)
+    {
+        CAPTURE(round);
+        interactive.process(".node-map-load-factor 0.95");
+        interactive.process(".new");
+        CHECK(interactive.graph()->node_map_load_factor() == 0.9F);
+        collector.clear();
+        interactive.process(".node-map-load-factor");
+        CHECK(any_output_contains(collector, "Node map load factor from 2^31 buckets: 0.9 (default)"));
+    }
 }
 
-// .stat names the factor while it differs from the default, and only then:
-// the statistics for every other session remain exactly as the
-// documentation shows them.
-TEST_CASE("node-map-load-factor: .stat shows the factor while it is not the default")
+// .stat names the factor while it differs from 0.8, and only then: the
+// statistics for every other session remain exactly as the documentation shows
+// them. The measure is 0.8 also when the session has a default of its own,
+// meaning that the statistics of a session started with a different factor
+// show that factor.
+TEST_CASE("node-map-load-factor: .stat shows the factor while it is not 0.8")
 {
     zelph::io::OutputCollector  collector;
     zelph::console::Interactive interactive(collector.sink());
@@ -607,4 +741,65 @@ TEST_CASE("node-map-load-factor: .stat shows the factor while it is not the defa
     collector.clear();
     interactive.process(".stat");
     CHECK(any_output_contains(collector, "Node map load factor from 2^31 buckets: 0.9"));
+
+    interactive.set_node_map_default_load_factor("0.95");
+    collector.clear();
+    interactive.process(".stat");
+    CHECK(any_output_contains(collector, "Node map load factor from 2^31 buckets: 0.95"));
+
+    interactive.process(".node-map-load-factor 0.8");
+    collector.clear();
+    interactive.process(".stat");
+    CHECK_FALSE(any_output_contains(collector, "Node map load factor"));
+}
+
+// A front end managing zelph through Janet is unable to input the command, and
+// a program constructing a large network sets the factor before it does so.
+// The binding reads the factor without an argument and sets it with a number
+// or with :default, as the command does, then returns the factor. The number
+// it returns equals the number supplied, provided that it contains up to seven
+// decimals, which the float that the engine keeps does not once it is widened.
+TEST_CASE("node-map-load-factor: zelph/node-map-load-factor reads and sets the factor")
+{
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+
+    CHECK(janet_value(collector, interactive, "(zelph/node-map-load-factor)") == "0.8");
+    CHECK(janet_value(collector, interactive, "(zelph/node-map-load-factor 0.9)") == "0.9");
+    CHECK(interactive.graph()->node_map_load_factor() == 0.9F);
+    CHECK(janet_value(collector, interactive, "(= 0.9 (zelph/node-map-load-factor))") == "true");
+
+    collector.clear();
+    interactive.process(".node-map-load-factor");
+    CHECK(any_output_contains(collector, "Node map load factor from 2^31 buckets: 0.9"));
+
+    CHECK(janet_value(collector, interactive, "(zelph/node-map-load-factor :default)") == "0.8");
+    CHECK(interactive.graph()->node_map_load_factor() == sizing::default_load_factor);
+
+    // :default serves as the default within the session when that session
+    // possesses its own.
+    interactive.set_node_map_default_load_factor("0.95");
+    CHECK(janet_value(collector, interactive, "(zelph/node-map-load-factor 0.85)") == "0.85");
+    CHECK(janet_value(collector, interactive, "(zelph/node-map-load-factor :default)") == "0.95");
+    CHECK(interactive.graph()->node_map_load_factor() == 0.95F);
+}
+
+// A number outside the range is refused just as the command refuses it, and so
+// is anything that is not a number. A string is not read: "0.9" would
+// otherwise be interpreted as a factor, and a truthy value of any kind is no
+// factor either. A keyword that is not :default is a misspelling. Each refusal
+// specifies the range and leaves the factor unchanged.
+TEST_CASE("node-map-load-factor: zelph/node-map-load-factor refuses what is no factor")
+{
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+    interactive.process(".node-map-load-factor 0.9");
+    for (const char* argument : {"0.5", "0.79", "0.96", "1", "-0.9", "1e300", "-1e300", "math/nan", "math/inf", "\"0.9\"", "true", "nil", ":standard", "'default"})
+    {
+        CAPTURE(argument);
+        CHECK_THROWS_WITH(interactive.process(std::string("%(zelph/node-map-load-factor ") + argument + ")"),
+                          doctest::Contains("zelph/node-map-load-factor: the argument is a number from 0.8 to 0.95"));
+    }
+    CHECK_THROWS(interactive.process("%(zelph/node-map-load-factor 0.9 0.9)"));
+    CHECK(interactive.graph()->node_map_load_factor() == 0.9F);
 }
