@@ -508,6 +508,16 @@ TEST_CASE("sharding: a seek-only manifest reads chunks from the .bin")
                        {
         interactive.process(".load-partial \"" + artifact.seek_manifest.string() + "\"");
 
+        // A chunk that cannot be read at its offset makes the load fall back
+        // to reading the whole .bin sequentially, constructing an identical
+        // network, so only this line tells the two apart. On macOS, a load of
+        // this type fell back at the first chunk that does not start at a
+        // block boundary: the chunk was sought through the stream and read
+        // through the stream's descriptor, and the C library of BSD leaves
+        // the descriptor positioned after the buffer that a seek fills, not
+        // at the target of the seek.
+        CHECK_FALSE(any_event_contains(collector, "falling back to sequential"));
+
         collector.clear();
         interactive.process(".lang de");
         interactive.process(".node beta_de");

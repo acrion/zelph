@@ -39,6 +39,12 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include <unordered_set>
 #include <vector>
 
+#if defined(_WIN32)
+    #include <io.h>
+#else
+    #include <unistd.h>
+#endif
+
 #include "hf_cache.hpp"
 #include "hf_transfer.hpp"
 #include "zelph.hpp"
@@ -1659,21 +1665,31 @@ namespace zelph::network
 
         // Chunk offsets are file positions in a .bin that is gigabytes large:
         // the pruned Wikidata network passes 2 GiB after eight left chunks.
-        // fseek() takes a long, which is 32 bits on Windows, so it cannot
+        // _lseek() takes a long, which is 32 bits on Windows, so it cannot
         // express those offsets at all -- every seek past 2 GiB would land
         // somewhere else and read a chunk of garbage. The 64-bit variants are
         // spelled differently per platform.
+        //
+        // The seek positions the stream's descriptor, not the stream itself,
+        // since a chunk is read via the descriptor (kj::FdInputStream) and
+        // never through the stream. A seek on the stream does not consistently
+        // place the descriptor at the target across all platforms: unless the
+        // target aligns with a block boundary, the fseeko() function from
+        // BSD's C library, which macOS employs, advances the descriptor to the
+        // block boundary immediately preceding the target and fills the
+        // stream's buffer from that point, causing a read through the
+        // descriptor to begin beyond that buffer.
         inline void seek_offset_or_throw(FILE* file, uint64_t offset)
         {
             if (offset == 0) return;
 
 #if defined(_WIN32)
-            const int result = _fseeki64(file, static_cast<__int64>(offset), SEEK_SET);
+            const bool positioned = _lseeki64(_fileno(file), static_cast<__int64>(offset), SEEK_SET) >= 0;
 #else
-            const int result = fseeko(file, static_cast<off_t>(offset), SEEK_SET);
+            const bool positioned = lseek(fileno(file), static_cast<off_t>(offset), SEEK_SET) >= 0;
 #endif
 
-            if (result != 0)
+            if (!positioned)
             {
                 throw std::runtime_error("Failed to seek to chunk source offset "
                                          + std::to_string(offset));
