@@ -94,8 +94,12 @@ int main(int argc, char** argv)
         for (int i = 1; i < argc; ++i)
         {
             std::string arg = argv[i];
-            if (arg == "-v" || arg == "--version")
+            if ((arg == "-v" || arg == "--version") && script_files.empty())
             {
+                // Read only ahead of the script's name, just as with every
+                // option of the binary: behind the name, each word functions
+                // as an argument to the script, and otherwise a script could
+                // never receive `-v` or `--version`.
                 show_version = true;
             }
             else if (arg == "--node-map-load-factor" && script_files.empty())

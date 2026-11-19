@@ -12,6 +12,11 @@ behind the name of a script its two words reach the script as arguments, and
 that an option whose factor cannot be read ends the process with status 1
 before anything has run.
 
+``zelph -v`` and ``zelph --version`` print the version and what the binary
+incorporates, and start no session. Like the option above they are read ahead
+of a script's name only: behind the name both words are arguments of the
+script.
+
 Every case starts the binary with its arguments, pipes the lines of the case
 into it unless the case names a script, and holds the status and the output to
 what the case says.
@@ -33,6 +38,13 @@ SHOW = ".node-map-load-factor\n"
 # What a session outputs upon commencing input from a pipe, and thus the
 # mark of a process that initiated execution.
 BANNER = "REPL mode"
+
+# A line that is printed exclusively by the version report.
+VERSION_REPORT = "zelph incorporates the following third-party software:"
+
+# A script that says it ran, and one that prints its arguments.
+RAN = '%(zelph/out "the script ran")\n'
+ARGUMENTS = '%(zelph/out (string "arguments: " (string/join (dyn :args) " ")))\n'
 
 # Each case: a name, arguments positioned before a script, the lines of
 # the session (provided via piping or written into a script when
@@ -116,6 +128,55 @@ CASES = [
         "status": 1,
         "holds": ["a number from 0.8 to 0.95", "not '0.96'"],
         "lacks": ["a b c"],
+    },
+    {
+        "name": "-v prints the version and starts no session",
+        "before": ["-v"],
+        "lines": "a b c\n",
+        "status": 0,
+        "holds": [VERSION_REPORT],
+        "lacks": [BANNER, "a b c"],
+    },
+    {
+        "name": "--version prints the version and starts no session",
+        "before": ["--version"],
+        "lines": "a b c\n",
+        "status": 0,
+        "holds": [VERSION_REPORT],
+        "lacks": [BANNER, "a b c"],
+    },
+    {
+        "name": "-v ahead of a script prints the version and does not run the script",
+        "before": ["-v"],
+        "lines": RAN,
+        "as_script": True,
+        "status": 0,
+        "holds": [VERSION_REPORT],
+        "lacks": ["the script ran"],
+    },
+    {
+        # Behind the name of a script, both words serve as arguments just
+        # like any others. For as long as they were read in that location
+        # too, such a run printed the version and did not run the script,
+        # meaning no script could receive either word.
+        "name": "behind the name of a script -v and --version belong to the script",
+        "before": [],
+        "lines": RAN + ARGUMENTS,
+        "as_script": True,
+        "after": ["-v", "--version"],
+        "status": 0,
+        "holds": ["the script ran", "arguments: -v --version"],
+        "lacks": [VERSION_REPORT],
+    },
+    {
+        "name": "behind the name of a script --version alone belongs to the script",
+        "before": [],
+        "lines": ARGUMENTS,
+        "as_script": True,
+        "after": ["--version"],
+        "status": 0,
+        "holds": ["arguments: --version"],
+        "lacks": [VERSION_REPORT],
     },
 ]
 
