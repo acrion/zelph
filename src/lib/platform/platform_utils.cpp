@@ -27,6 +27,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #include <cstdlib>
 #include <cstring>
+#include <stdexcept>
 
 #ifdef __linux__
     #include <fstream>
@@ -243,3 +244,45 @@ std::string zelph::platform::to_utf8(const std::u8string& text)
 {
     return std::string(text.begin(), text.end());
 }
+
+#ifdef _WIN32
+int zelph::platform::run_command_line(const std::string& command_line, const std::filesystem::path& standard_output)
+{
+    // The file is opened at this point and handed to the program as
+    // standard output, requiring its handle to be one that a child
+    // process can inherit.
+    SECURITY_ATTRIBUTES inheritable{};
+    inheritable.nLength        = sizeof(inheritable);
+    inheritable.bInheritHandle = TRUE;
+    const HANDLE output        = CreateFileW(standard_output.c_str(), GENERIC_WRITE, FILE_SHARE_READ, &inheritable, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (output == INVALID_HANDLE_VALUE)
+    {
+        throw std::runtime_error("Failed to create '" + standard_output.string() + "' for the output of: " + command_line);
+    }
+
+    STARTUPINFOA startup{};
+    startup.cb         = sizeof(startup);
+    startup.dwFlags    = STARTF_USESTDHANDLES;
+    startup.hStdInput  = GetStdHandle(STD_INPUT_HANDLE);
+    startup.hStdOutput = output;
+    startup.hStdError  = GetStdHandle(STD_ERROR_HANDLE);
+
+    // CreateProcess might write into the line it is given.
+    std::string         line = command_line;
+    PROCESS_INFORMATION process{};
+    const BOOL          started = CreateProcessA(nullptr, line.data(), nullptr, nullptr, TRUE, 0, nullptr, nullptr, &startup, &process);
+    const DWORD         error   = started ? 0 : GetLastError();
+    CloseHandle(output);
+    if (!started)
+    {
+        throw std::runtime_error("Failed to start (Windows error " + std::to_string(error) + "): " + command_line);
+    }
+
+    WaitForSingleObject(process.hProcess, INFINITE);
+    DWORD status = 1;
+    GetExitCodeProcess(process.hProcess, &status);
+    CloseHandle(process.hThread);
+    CloseHandle(process.hProcess);
+    return static_cast<int>(status);
+}
+#endif

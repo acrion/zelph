@@ -142,8 +142,38 @@ namespace zelph::network::detail::hf_transfer
         return limits;
     }
 
-    inline std::string shell_quote(const std::string& value)
+    // One argument of the command that initiates curl, quoted for whatever
+    // reads that command. On Windows, curl itself interprets it, following the
+    // rules of the C runtime, because the program is started without a command
+    // interpreter (platform::run_command_line): an argument that is empty or
+    // contains a blank, a tab or a quote is placed within double quotes, with
+    // a backslash preceding each quote and any existing backslashes before a
+    // quote being doubled. Everywhere else, std::system hands the command to a
+    // POSIX shell, and the argument is enclosed in single quotes.
+    inline std::string quote_argument(const std::string& value)
     {
+#if defined(_WIN32)
+        if (!value.empty() && value.find_first_of(" \t\"") == std::string::npos) return value;
+        std::string out         = "\"";
+        std::size_t backslashes = 0;
+        for (const char c : value)
+        {
+            if (c == '\\')
+            {
+                ++backslashes;
+                continue;
+            }
+            // Before a quote, each backslash is doubled in count, and the quote
+            // receives an additional one; for anything else, backslashes remain
+            // unchanged.
+            out.append(c == '"' ? 2 * backslashes + 1 : backslashes, '\\');
+            out.push_back(c);
+            backslashes = 0;
+        }
+        out.append(2 * backslashes, '\\');
+        out += "\"";
+        return out;
+#else
         std::string out = "'";
         for (const char c : value)
         {
@@ -154,8 +184,20 @@ namespace zelph::network::detail::hf_transfer
         }
         out += "'";
         return out;
+#endif
     }
 
+    // The device that takes what a probe is not asked to keep.
+#if defined(_WIN32)
+    inline constexpr const char* null_device = "NUL";
+#else
+    inline constexpr const char* null_device = "/dev/null";
+#endif
+
+    // The program started as curl: `curl`, or whatever ZELPH_HF_CURL_BIN
+    // names, which the tests configure as a stand-in. On Windows it must be an
+    // executable: a batch file is executed via cmd.exe whatever starts it, and
+    // cmd.exe then reads the arguments according to its own rules after all.
     inline std::string curl_binary_from_environment()
     {
         const char* configured = std::getenv("ZELPH_HF_CURL_BIN");
@@ -261,13 +303,13 @@ namespace zelph::network::detail::hf_transfer
         const uint64_t max_time = request.operation == Operation::probe
                                     ? limits.probe_timeout_seconds
                                     : payload_timeout_seconds(request.planned_bytes, rate, limits);
-        std::string    command  = shell_quote(curl_binary_from_environment()) + " -fsSL --retry 2 --connect-timeout "
+        std::string    command  = quote_argument(curl_binary_from_environment()) + " -fsSL --retry 2 --connect-timeout "
                                 + std::to_string(limits.connect_timeout_seconds)
                                 + " --max-time " + std::to_string(max_time);
         if (request.operation == Operation::probe)
         {
             command += " -I --retry-max-time " + std::to_string(limits.probe_timeout_seconds)
-                     + " -o /dev/null -D " + shell_quote(request.header_path);
+                     + " -o " + null_device + " -D " + quote_argument(request.header_path);
         }
         else
         {
@@ -278,10 +320,15 @@ namespace zelph::network::detail::hf_transfer
                 command += " --range " + std::to_string(request.offset) + "-"
                          + std::to_string(request.offset + request.planned_bytes - 1);
             }
-            command += " -o " + shell_quote(request.output_path);
+            command += " -o " + quote_argument(request.output_path);
         }
-        command += " --write-out " + shell_quote("%{json}\\n") + " " + shell_quote(request.url)
-                 + " > " + shell_quote(request.metrics_path);
+        command += " --write-out " + quote_argument("%{json}\\n") + " " + quote_argument(request.url);
+#if !defined(_WIN32)
+        // A shell sends the line requested by --write-out into the metrics
+        // file. On Windows, where no shell reads the command, the program is
+        // started with that file designated as its standard output.
+        command += " > " + quote_argument(request.metrics_path);
+#endif
         return command;
     }
 

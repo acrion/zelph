@@ -108,6 +108,56 @@ TEST_CASE("HF transfer command includes phase-aware curl limits")
     CHECK(fetch_command.find("--speed-limit 1024") != std::string::npos);
     CHECK(fetch_command.find("--speed-time 90") != std::string::npos);
     CHECK(fetch_command.find("--range 10-29") != std::string::npos);
+
+    // Where the transfer line is placed, and what takes the body of a probe.
+    // A POSIX shell runs the command, so the command redirects the line on
+    // its own; on Windows no shell reads it, and the program launching curl
+    // supplies the metrics file as its standard output.
+#if defined(_WIN32)
+    CHECK(probe_command.find(" -o NUL ") != std::string::npos);
+    CHECK(probe_command.find('>') == std::string::npos);
+    CHECK(fetch_command.find('>') == std::string::npos);
+    CHECK(fetch_command.find('\'') == std::string::npos);
+#else
+    CHECK(probe_command.find(" -o /dev/null ") != std::string::npos);
+    CHECK(probe_command.find(" > '/tmp/metrics'") != std::string::npos);
+    CHECK(fetch_command.find(" > '/tmp/metrics'") != std::string::npos);
+#endif
+}
+
+// An argument to the command that starts curl is quoted for whatever reads the
+// command. A POSIX shell reads single quotes. On Windows, the command was
+// previously passed to cmd.exe within those same single quotes, which cmd.exe
+// does not read as quotation marks: it rejected the redirection into a path
+// enclosed in such quotes and never started curl, so nothing could be loaded
+// from a repository in that context. Now curl is started directly and reads
+// its arguments according to the rules of the C runtime, where a backslash is
+// significant only when followed by a quote; the cases here involve a path
+// containing a blank, one ending in a backslash, and quotes with and without a
+// preceding backslash.
+TEST_CASE("HF transfer command quotes each argument for what reads the command")
+{
+    using namespace zelph::network::detail::hf_transfer;
+
+#if defined(_WIN32)
+    const std::string path_with_blank     = "C:\\Program Files\\curl\\curl.exe";
+    const std::string ends_in_backslash   = "C:\\cache dir\\";
+    const std::string quoted_word         = "say \"hi\"";
+    const std::string backslash_and_quote = "a\\\"b c";
+    CHECK(quote_argument("curl") == "curl");
+    CHECK(quote_argument("%{json}\\n") == "%{json}\\n");
+    CHECK(quote_argument("https://example.test/a%20b") == "https://example.test/a%20b");
+    CHECK(quote_argument(path_with_blank) == "\"C:\\Program Files\\curl\\curl.exe\"");
+    CHECK(quote_argument(ends_in_backslash) == "\"C:\\cache dir\\\\\"");
+    CHECK(quote_argument(quoted_word) == "\"say \\\"hi\\\"\"");
+    CHECK(quote_argument(backslash_and_quote) == "\"a\\\\\\\"b c\"");
+    CHECK(quote_argument("") == "\"\"");
+#else
+    CHECK(quote_argument("curl") == "'curl'");
+    CHECK(quote_argument("/tmp/a b") == "'/tmp/a b'");
+    CHECK(quote_argument("it's") == "'it'\"'\"'s'");
+    CHECK(quote_argument("") == "''");
+#endif
 }
 
 TEST_CASE("HF transfer metrics classify completed slow and stalled calls")

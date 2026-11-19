@@ -41,6 +41,13 @@ int main(int argc, char** argv)
     {
         return stand_in::serve(argc, argv, repository, std::getenv(stand_in::redirect_variable));
     }
+#if defined(_WIN32)
+    // The C runtime is aware of the file it executes, regardless of the name
+    // under which the binary was launched.
+    char* running = nullptr;
+    if (_get_pgmptr(&running) == 0 && running != nullptr) stand_in::program() = running;
+#else
     if (argc > 0) stand_in::program() = stand_in::locate(argv[0]);
+#endif
     return doctest::Context(argc, argv).run();
 }

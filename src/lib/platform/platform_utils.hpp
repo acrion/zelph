@@ -70,4 +70,18 @@ namespace zelph::platform
     // its link did not lead to it.
     std::filesystem::path path_from_utf8(const std::string& utf8);
     std::string           to_utf8(const std::u8string& text);
+
+#ifdef _WIN32
+    // Starts the program identified by the first word of `command_line`, using
+    // the rest of the line as its arguments, waits for its completion, and
+    // returns its exit status. The output that the program generates on
+    // standard output is directed into the file `standard_output`. The program
+    // gets the line exactly as provided, with no command interpreter
+    // intervening: cmd.exe, which std::system would normally pass the line to,
+    // replaces every %NAME% within it with the value of an environment
+    // variable, including within quoted sections, and processes quotes
+    // according to its own rules. Throws if the file cannot be created or the
+    // program cannot be started.
+    int run_command_line(const std::string& command_line, const std::filesystem::path& standard_output);
+#endif
 }

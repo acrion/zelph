@@ -47,6 +47,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #include "hf_cache.hpp"
 #include "hf_transfer.hpp"
+#include "platform/platform_utils.hpp"
 #include "zelph.hpp"
 
 namespace zelph::network
@@ -372,9 +373,17 @@ namespace zelph::network
             return "https://huggingface.co/" + relative;
         }
 
-        inline void run_shell_command(const std::string& cmd)
+        // Runs the command assembled by hf_transfer::build_curl_command, with
+        // the line that it causes curl to output about the transfer going into
+        // `metrics_path`. A POSIX shell runs the command, which specifies the
+        // file name itself; on Windows, curl is started without a shell.
+        inline void run_curl_command(const std::string& cmd, [[maybe_unused]] const std::filesystem::path& metrics_path)
         {
+#if defined(_WIN32)
+            const int rc = platform::run_command_line(cmd, metrics_path);
+#else
             const int rc = std::system(cmd.c_str());
+#endif
             if (rc != 0)
             {
                 throw std::runtime_error("Command failed with code " + std::to_string(rc) + ": " + cmd);
@@ -1176,7 +1185,7 @@ namespace zelph::network
             std::string command_error;
             try
             {
-                run_shell_command(command);
+                run_curl_command(command, metrics_path);
             }
             catch (const std::exception& error)
             {

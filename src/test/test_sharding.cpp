@@ -1057,13 +1057,9 @@ TEST_CASE("sharding: a .bin without a chunk directory loads through a manifest a
     }
 }
 
-// The cases that load straight from the repository are omitted on Windows. The
-// engine composes the command that starts curl for a POSIX shell, with its
-// arguments enclosed in single quotes, and hands it to std::system; on Windows
-// this is cmd.exe, which does not read single quotes as quote markers, so the
-// stand-in for curl could not be initiated via that command. The cases also
-// set their environment using setenv and unsetenv.
-#ifndef _WIN32
+// The cases that load straight from the repository run on every platform: the
+// engine starts the stand-in for curl just as it starts curl, via a POSIX
+// shell or, on Windows, directly.
 namespace
 {
     // Sets environment variables for the scope of a single test and reinstates
@@ -1077,23 +1073,32 @@ namespace
             {
                 const char* before = std::getenv(name.c_str());
                 _before.emplace_back(name, before == nullptr ? std::nullopt : std::optional<std::string>(before));
-                setenv(name.c_str(), value.c_str(), 1);
+                set(name, value);
             }
         }
         ~ScopedEnvironment()
         {
             for (const auto& [name, before] : _before)
-            {
-                if (before)
-                    setenv(name.c_str(), before->c_str(), 1);
-                else
-                    unsetenv(name.c_str());
-            }
+                set(name, before);
         }
         ScopedEnvironment(const ScopedEnvironment&)            = delete;
         ScopedEnvironment& operator=(const ScopedEnvironment&) = delete;
 
     private:
+        // Assigns a value to a variable, or removes it. The C runtime on
+        // Windows removes a variable when it is given the empty value.
+        static void set(const std::string& name, const std::optional<std::string>& value)
+        {
+#if defined(_WIN32)
+            _putenv_s(name.c_str(), value ? value->c_str() : "");
+#else
+            if (value)
+                setenv(name.c_str(), value->c_str(), 1);
+            else
+                unsetenv(name.c_str());
+#endif
+        }
+
         std::vector<std::pair<std::string, std::optional<std::string>>> _before;
     };
 
@@ -1319,7 +1324,6 @@ TEST_CASE("sharding: a .bin without a chunk directory loads straight from the re
     fs::remove_all(repository);
     fs::remove_all(cache);
 }
-#endif
 
 TEST_CASE("sharding: an out-of-range chunk selector is rejected without collateral")
 {
