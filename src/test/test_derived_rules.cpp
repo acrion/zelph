@@ -3557,7 +3557,7 @@ b p k
         CHECK_FALSE(any_output_contains(collector, "- Z in @{Z} (ID ")); });
 }
 
-TEST_CASE("derived rules: printing a collection that a firing built reads none of the containers that hold it")
+TEST_CASE("derived rules: printing a collection that a firing built reads none of the containers that hold it" * doctest::test_suite("slow"))
 {
     // A collection a firing built is data, and its identifier indicates
     // this: printing it reads its own members and nothing above it.
@@ -4407,7 +4407,7 @@ TEST_CASE("derived rules: a rule found among others is found again when another 
         rerun_adds_no_node(collector, interactive); });
 }
 
-TEST_CASE("derived rules: a rule is found again behind any number of collections left by removed rules")
+TEST_CASE("derived rules: a rule is found again behind any number of collections left by removed rules" * doctest::test_suite("slow"))
 {
     // Taking away the condition from a generated rule in turn eliminates the
     // rule and leaves its collection, which includes the members from the
@@ -6276,7 +6276,7 @@ k r k
         } });
 }
 
-TEST_CASE("derived rules: a data collection holds no membership that a generated rule's text states in it")
+TEST_CASE("derived rules: a data collection holds no membership that a generated rule's text states in it" * doctest::test_suite("slow"))
 {
     // A generator that binds a data collection through `(box has C)` writes
     // rules that name that exact collection. A ground membership stated by

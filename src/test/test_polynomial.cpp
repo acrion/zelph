@@ -213,7 +213,7 @@ TEST_CASE("polynomial: a pouter cycle is reported once, naming both declarations
 // (V pouter V) => ! leaves no record, thus it is re-announced
 // following each subsequent input line, whose run re-derives
 // everything.
-TEST_CASE("polynomial: a reported pouter cycle is not announced again on later input")
+TEST_CASE("polynomial: a reported pouter cycle is not announced again on later input" * doctest::test_suite("slow"))
 {
     run_both_modes([](auto& collector, auto& interactive)
                    {
@@ -233,7 +233,7 @@ TEST_CASE("polynomial: a reported pouter cycle is not announced again on later i
 // x pouter y, y pouter z, z pouter x: transitivity derives the reverse
 // of each declared pair, thus each of the three pairs is reported, and
 // each appears exactly once.
-TEST_CASE("polynomial: a longer pouter cycle is reported through the pairs transitivity closes")
+TEST_CASE("polynomial: a longer pouter cycle is reported through the pairs transitivity closes" * doctest::test_suite("slow"))
 {
     run_both_modes([](auto& collector, auto& interactive)
                    {
@@ -264,7 +264,7 @@ TEST_CASE("polynomial: a longer pouter cycle is reported through the pairs trans
 // The closure x pouter z, which transitivity derives, is no cycle. A
 // rule that matched any two chained pouter facts would issue a report
 // here.
-TEST_CASE("polynomial: a strict pouter order reports nothing")
+TEST_CASE("polynomial: a strict pouter order reports nothing" * doctest::test_suite("slow"))
 {
     run_both_modes([](auto& collector, auto& interactive)
                    {
@@ -447,7 +447,7 @@ TEST_CASE("polynomial: multiplication -- same-main-variable schoolbook (all arit
         } });
 }
 
-TEST_CASE("polynomial: multiplication -- cross-variable nesting (all arithmetic modules)")
+TEST_CASE("polynomial: multiplication -- cross-variable nesting (all arithmetic modules)" * doctest::test_suite("slow"))
 {
     run_arithmetic_modules([](auto& collector, auto& interactive)
                            {

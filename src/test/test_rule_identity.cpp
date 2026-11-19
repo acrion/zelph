@@ -903,7 +903,7 @@ TEST_CASE("rule identity: symmetric conditions are paired together with the conc
 // paired by trying the conditions of the other rule until the same one
 // emerges. Counted starting from its first pair, the second rule was written
 // beside the first.
-TEST_CASE("rule identity: a rule over many conditions, entered twice, stays one rule")
+TEST_CASE("rule identity: a rule over many conditions, entered twice, stays one rule" * doctest::test_suite("slow"))
 {
     run_both_modes([](auto& collector, auto& interactive)
                    {
@@ -1866,7 +1866,7 @@ u1 q k1
 // rules, the typed generator derives `e f g` wherever its rule lands on its own
 // list; entered first, it writes its rules before the rule over rules is
 // entered and derives all it derives alone.
-TEST_CASE("rule identity: the consequences of a rule that a rule writes are read as its firing writes them, at any depth")
+TEST_CASE("rule identity: the consequences of a rule that a rule writes are read as its firing writes them, at any depth" * doctest::test_suite("slow"))
 {
     // Generators of the second shape write a generator in turn.
     struct Shape

@@ -333,7 +333,7 @@ namespace
     }
 } // namespace
 
-TEST_CASE("unification: anchors on and off answer every nested pattern alike")
+TEST_CASE("unification: anchors on and off answer every nested pattern alike" * doctest::test_suite("slow"))
 {
     // The completeness net for the anchor lookups and the subject-predicate
     // hint: every pattern corresponds to a statement from the graph in
@@ -626,7 +626,7 @@ namespace
 // fact does not already provide. The anchors, the subject-predicate hint,
 // and the climb took a statement for the sole node capable of matching it;
 // the cases below pin each of these pathways individually.
-TEST_CASE("unification: anchors on and off answer every nested pattern alike over facts with more objects")
+TEST_CASE("unification: anchors on and off answer every nested pattern alike over facts with more objects" * doctest::test_suite("slow"))
 {
     const std::vector<Term> facts = {
         statement(wide(atom("j"), atom("sub"), {atom("k"), atom("k2")}), atom("noted"), atom("yes")),

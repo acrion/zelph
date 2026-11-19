@@ -1068,7 +1068,7 @@ TEST_CASE("load: a file without a chunk directory loads from a pipe, and one wit
 // load now starts from a blank graph and discards any knowledge the session
 // kept about the old one; the subcases take each piece in sequence, mirroring
 // how a session reaches it.
-TEST_CASE("load: a network file replaces the session's graph")
+TEST_CASE("load: a network file replaces the session's graph" * doctest::test_suite("slow"))
 {
     const fs::path plain     = fs::temp_directory_path() / "zelph_load_replaces.bin";
     const fs::path rules     = fs::temp_directory_path() / "zelph_load_replaces_rules.bin";
@@ -1407,7 +1407,7 @@ TEST_CASE("bin inspection: a mistyped chunk selector leaves the session alone")
     fs::remove_all(f.root);
 }
 
-TEST_CASE("load-partial: a partial load marks the label index incomplete")
+TEST_CASE("load-partial: a partial load marks the label index incomplete" * doctest::test_suite("slow"))
 {
     // Every load retrieves the carriers associated with a shared label,
     // drawing from both name sections. When a load examines only a portion of

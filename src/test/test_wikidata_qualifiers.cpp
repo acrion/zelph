@@ -71,7 +71,7 @@ namespace
     }
 }
 
-TEST_CASE("wikidata qualifiers: full import materializes statement structures")
+TEST_CASE("wikidata qualifiers: full import materializes statement structures" * doctest::test_suite("slow"))
 {
     const auto dump = write_dump();
     run_both_modes([&](auto& collector, auto& interactive)

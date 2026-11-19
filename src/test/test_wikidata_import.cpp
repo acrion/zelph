@@ -168,7 +168,7 @@ TEST_CASE("wikidata import: every item keeps its label, and the lowest number ho
     remove_dump(dump);
 }
 
-TEST_CASE("wikidata import: the holder does not depend on the line order")
+TEST_CASE("wikidata import: the holder does not depend on the line order" * doctest::test_suite("slow"))
 {
     // Four threads take batches of lines, so the label that arrives last
     // depends on timing. The holder is the minimum among the carriers, and
@@ -391,7 +391,7 @@ TEST_CASE("wikidata import: a qualifier or a reference yields no claim of the en
     remove_dump(dump);
 }
 
-TEST_CASE("wikidata import: the import writes the marker, and .cleanup keeps it")
+TEST_CASE("wikidata import: the import writes the marker, and .cleanup keeps it" * doctest::test_suite("slow"))
 {
     // A network that has labels assigned in this manner indicates its origin
     // via a node named `wikidata:labels-v2` in the `zelph` language; a
@@ -444,7 +444,7 @@ TEST_CASE("wikidata import: the import writes the marker, and .cleanup keeps it"
 // creates the marker there; the second import finds it. The drop removed the
 // marker along with the first import, and the network the second import left
 // behind no longer said how its items were labelled.
-TEST_CASE("wikidata import: a dropped cluster an earlier import ran in leaves the marker to the later one")
+TEST_CASE("wikidata import: a dropped cluster an earlier import ran in leaves the marker to the later one" * doctest::test_suite("slow"))
 {
     const auto first  = write_lines("zelph_marker_in_cluster", {entity("Q8441", text("en", "man"))});
     const auto second = write_lines("zelph_marker_after_cluster", {entity("Q5", text("en", "human"))});
@@ -466,7 +466,7 @@ TEST_CASE("wikidata import: a dropped cluster an earlier import ran in leaves th
     remove_dump(second);
 }
 
-TEST_CASE("wikidata import: .name keeps its takeover semantics after an import")
+TEST_CASE("wikidata import: .name keeps its takeover semantics after an import" * doctest::test_suite("slow"))
 {
     // The assignment by rank belongs exclusively to the importer. In all
     // other contexts, a name goes to its most recent recipient, regardless
@@ -648,7 +648,7 @@ TEST_CASE("wikidata import: an import, its cache, a save and a load mark no pred
 // name chunk does not elect, so in this case the label resolves solely based on
 // the file's recorded data. Q29719014 comes first in both the dump and the
 // slice, and Q709369 is ranked first.
-TEST_CASE("wikidata import: a slice that leaves a label's holder behind records the carrier ranked first")
+TEST_CASE("wikidata import: a slice that leaves a label's holder behind records the carrier ranked first" * doctest::test_suite("slow"))
 {
     const auto dump = write_lines("zelph_label_slice",
                                   {entity("Q29719014", text("en", "man"), claim("P279", "Q5")),
@@ -748,7 +748,7 @@ TEST_CASE("wikidata import: a file without a label's holder loads with one, and 
 // of a file adjacent to the dump, and the cache written by an import into a
 // session contained the session's own facts, which every later .load of the
 // dump would restore.
-TEST_CASE("wikidata import: the cache stands in for the import into an empty graph only")
+TEST_CASE("wikidata import: the cache stands in for the import into an empty graph only" * doctest::test_suite("slow"))
 {
     namespace fs = std::filesystem;
 
@@ -902,7 +902,7 @@ TEST_CASE("wikidata import: a cache that cannot be written is a failure of the s
     std::filesystem::remove(dump);
 }
 
-TEST_CASE("wikidata import: a cache damaged in its last chunk is reported, and left as it is")
+TEST_CASE("wikidata import: a cache damaged in its last chunk is reported, and left as it is" * doctest::test_suite("slow"))
 {
     // A cache corrupted within a chunk encounters failure after the header,
     // once the load has already discarded the graph and begun reading part of
@@ -980,7 +980,7 @@ TEST_CASE("wikidata import: a cache damaged in its last chunk is reported, and l
 // the refused file formerly made way for the dump beside it, which overwrote
 // the file in an empty session and was incorporated into the network of any
 // other.
-TEST_CASE("wikidata import: a cache cut short is refused, and replaced by its dump only when the dump is named")
+TEST_CASE("wikidata import: a cache cut short is refused, and replaced by its dump only when the dump is named" * doctest::test_suite("slow"))
 {
     namespace fs = std::filesystem;
 

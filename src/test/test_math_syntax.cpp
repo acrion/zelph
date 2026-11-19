@@ -490,7 +490,7 @@ TEST_CASE("math-syntax: a declared operator parses, associates and round-trips" 
         } });
 }
 
-TEST_CASE("math-syntax: right associativity and rejected operator tables")
+TEST_CASE("math-syntax: right associativity and rejected operator tables" * doctest::test_suite("slow"))
 {
     run_both_modes([](auto& collector, auto& interactive)
                    {

@@ -1222,7 +1222,7 @@ TEST_CASE("explain: a generated rule that names a bound condition set and its da
 // every solution, the construction would build a rule per solution: an
 // additional unit of work per rule, and half again as long for one such rule
 // among three thousand.
-TEST_CASE("explain: a generated rule over a data term asks the construction only for the solution that binds its collection")
+TEST_CASE("explain: a generated rule over a data term asks the construction only for the solution that binds its collection" * doctest::test_suite("slow"))
 {
     const auto work = [](const std::size_t rules)
     {
@@ -1823,7 +1823,7 @@ TEST_CASE("explain: a depth limit never prints a fact below itself through a sec
 // whose simplification marks the same subterms from several directions. At
 // limit 12, (&1 eml &1) simp e appeared beneath itself, and
 // "[depth limit]" was positioned above the limit.
-TEST_CASE("explain: a depth limit never prints a fact below itself on eml terms")
+TEST_CASE("explain: a depth limit never prints a fact below itself on eml terms" * doctest::test_suite("slow"))
 {
     zelph::io::OutputCollector  collector;
     zelph::console::Interactive interactive(collector.sink());
@@ -2264,7 +2264,7 @@ TEST_CASE("explain-budget: default restores the default budget")
 // searches the complete proof regardless of the amount of work required,
 // which is precisely what a session demands when large proofs must still
 // be shown as the top of the complete proof.
-TEST_CASE("explain-budget: unlimited never falls back to the search within the limit")
+TEST_CASE("explain-budget: unlimited never falls back to the search within the limit" * doctest::test_suite("slow"))
 {
     zelph::io::OutputCollector  collector;
     zelph::console::Interactive interactive(collector.sink());
@@ -2638,7 +2638,7 @@ namespace
 // burden the budget of 10 000 units cannot sustain. The same facts under a
 // different predicate are read the same way and subjected to no attempts, and
 // the proof is searched whole.
-TEST_CASE("explain: the candidates a condition tries in vain count against the budget")
+TEST_CASE("explain: the candidates a condition tries in vain count against the budget" * doctest::test_suite("slow"))
 {
     struct Session
     {
@@ -3267,7 +3267,7 @@ q3 P279 q2
         } });
 }
 
-TEST_CASE("explain: a premise that is not well-founded is not searched again on every path")
+TEST_CASE("explain: a premise that is not well-founded is not searched again on every path" * doctest::test_suite("slow"))
 {
     // Investigating every potential instantiation, as necessitated by the
     // case above, revealed a premise that lacked a well-founded proof along a
@@ -3432,7 +3432,7 @@ b p c
         CHECK(explained(collector) == "a q c  [asserted; no derivation found]"); });
 }
 
-TEST_CASE("explain: a derivative is explained without trying every way to its numerals")
+TEST_CASE("explain: a derivative is explained without trying every way to its numerals" * doctest::test_suite("slow"))
 {
     // Because the simplifier tests its numeral leaves, a numeral within a
     // derivative undergoes testing from two sides: as a leaf in the
@@ -3491,7 +3491,7 @@ x ~ symvar
 // whole component, thus, without a depth limit, the number of searches
 // equals the number of facts. A time bound applies too, because a count
 // cannot discern the cost incurred by each individual search.
-TEST_CASE("explain: every intermediate result is searched once")
+TEST_CASE("explain: every intermediate result is searched once" * doctest::test_suite("slow"))
 {
     SUBCASE("a fifth-degree polynomial times ln x")
     {
@@ -3568,7 +3568,7 @@ TEST_CASE("explain: every intermediate result is searched once")
 // bound end was the hub z, thereby examining every `ok` fact for each one it
 // explained: a quadratic expense in addition to the depth. It now begins
 // where the bindings restrict it, at (X next n_i).
-TEST_CASE("explain: a proof deeper than the call stack is searched without a crash")
+TEST_CASE("explain: a proof deeper than the call stack is searched without a crash" * doctest::test_suite("slow"))
 {
     zelph::io::OutputCollector  collector;
     zelph::console::Interactive interactive(collector.sink());
@@ -3632,7 +3632,7 @@ TEST_CASE("explain: a proof deeper than the call stack is searched without a cra
 // names the proof's height and the bound a max-depth must keep. When the
 // max-depth exceeded the bound, it named the max-depth as the proof's
 // height and recommended a max-depth, even though one was already provided.
-TEST_CASE("explain: a tree too deep to print names the proof's height and the bound")
+TEST_CASE("explain: a tree too deep to print names the proof's height and the bound" * doctest::test_suite("slow"))
 {
     zelph::io::OutputCollector  collector;
     zelph::console::Interactive interactive(collector.sink());
@@ -3668,7 +3668,7 @@ TEST_CASE("explain: a tree too deep to print names the proof's height and the bo
 // for each fact in the chain, and the facts being searched were gathered
 // once more for each walk -- the square of the chain's length, 8 s at
 // 10 000.
-TEST_CASE("explain: a walk to a hub costs no more than the steps it takes")
+TEST_CASE("explain: a walk to a hub costs no more than the steps it takes" * doctest::test_suite("slow"))
 {
     zelph::io::OutputCollector  collector;
     zelph::console::Interactive interactive(collector.sink());
@@ -3700,7 +3700,7 @@ TEST_CASE("explain: a walk to a hub costs no more than the steps it takes")
 // the default depth, where the budget stops the search after 80 000 units
 // of work; twenty thousand took 4.7 GB. A further walk takes the facts
 // being searched exactly as they stand when it is taken.
-TEST_CASE("explain: a walk to a hub holds no more than the steps it takes")
+TEST_CASE("explain: a walk to a hub holds no more than the steps it takes" * doctest::test_suite("slow"))
 {
     zelph::io::OutputCollector  collector;
     zelph::console::Interactive interactive(collector.sink());
@@ -4251,7 +4251,7 @@ TEST_CASE("explain: a level of a join with no match left holds nothing while its
 // the majority of the rules' conditions are positioned afterwards -- more
 // than a level takes ahead (Join::suspend). The names are established before
 // the rules, guaranteeing that both sessions choose the identical one.
-TEST_CASE("explain: a level whose candidates left are conditions of rules is not read again")
+TEST_CASE("explain: a level whose candidates left are conditions of rules is not read again" * doctest::test_suite("slow"))
 {
     constexpr std::size_t length = 200;
     constexpr std::size_t rules  = 1000;
@@ -4312,7 +4312,7 @@ TEST_CASE("explain: a level whose candidates left are conditions of rules is not
 // names, the one that gives the rule the lowest id, thereby ensuring that
 // the majority of the thousand rules follow it; those preceding it are
 // tested at each step along the way.
-TEST_CASE("explain: a level whose candidates left are rules with variables in their conditions is not read again")
+TEST_CASE("explain: a level whose candidates left are rules with variables in their conditions is not read again" * doctest::test_suite("slow"))
 {
     constexpr std::size_t length = 200;
     constexpr std::size_t rules  = 1000;
@@ -4382,7 +4382,7 @@ TEST_CASE("explain: a level whose candidates left are rules with variables in th
 // its remaining instantiations regardless and concluded those whose
 // premises needed no search, thus the bound did not bound the enumeration,
 // and whether the annotation surfaced depended on the order of the rules.
-TEST_CASE("explain: the root looks no further once its bound for a second justification is spent")
+TEST_CASE("explain: the root looks no further once its bound for a second justification is spent" * doctest::test_suite("slow"))
 {
     zelph::io::OutputCollector  collector;
     zelph::console::Interactive interactive(collector.sink());
@@ -4410,7 +4410,7 @@ TEST_CASE("explain: the root looks no further once its bound for a second justif
     CHECK(graph->last_explain_counts().searches < 5000);
 }
 
-TEST_CASE("explain: the rules in force are read again only when they change")
+TEST_CASE("explain: the rules in force are read again only when they change" * doctest::test_suite("slow"))
 {
     zelph::io::OutputCollector  collector;
     zelph::console::Interactive interactive(collector.sink());
@@ -4644,7 +4644,7 @@ TEST_CASE("explain: a rule read before a .load is read again from the loaded fil
 // cost a predicate-wide prune of the Wikidata class hierarchy by 3 to 5
 // percent, and a capped record of them would have needed to be discarded
 // entirely once full.
-TEST_CASE("explain: a rule is read again after a removal touched it among many others")
+TEST_CASE("explain: a rule is read again after a removal touched it among many others" * doctest::test_suite("slow"))
 {
     const auto session = [](const bool explain_first)
     {

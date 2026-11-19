@@ -402,7 +402,7 @@ c ~ symconst
         } });
 }
 
-TEST_CASE("symbolic: a constant product has one raw derivative, however deep (all arithmetic modules)")
+TEST_CASE("symbolic: a constant product has one raw derivative, however deep (all arithmetic modules)" * doctest::test_suite("slow"))
 {
     // A constant composite used to receive the constancy &0 and every
     // combination the product rule could assemble from its children's

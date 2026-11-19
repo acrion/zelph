@@ -1560,7 +1560,7 @@ TEST_CASE("capi: a network can be evaluated from several threads while another t
 // Every read path in the C ABI traverses the sequence lock, so each one is
 // queried: evaluation per node and per slot, the accumulator calls, and the
 // snapshot, whose copy is also what a write-back reads.
-TEST_CASE("capi: an evaluation that overlaps a restore reads one whole set of weights")
+TEST_CASE("capi: an evaluation that overlaps a restore reads one whole set of weights" * doctest::test_suite("slow"))
 {
     // Wide enough that the durations of a read and a restore frequently
     // intersect: with just a few weights, both operations conclude within

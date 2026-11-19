@@ -162,7 +162,7 @@ namespace
     }
 }
 
-TEST_CASE("predicate index: a sidecar written by an older format is rebuilt, not trusted")
+TEST_CASE("predicate index: a sidecar written by an older format is rebuilt, not trusted" * doctest::test_suite("slow"))
 {
     const Fixture f = build_fixture();
 

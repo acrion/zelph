@@ -344,7 +344,7 @@ alpha ~ beta
 // registration: display registrations, which name nodes by their id, are
 // discarded with the load, and any keyword re-registered supersedes its
 // prior handler.
-TEST_CASE("import: a module imported again after a load registers what it registered before")
+TEST_CASE("import: a module imported again after a load registers what it registered before" * doctest::test_suite("slow"))
 {
     zelph::io::OutputCollector  collector;
     zelph::console::Interactive interactive(collector.sink());

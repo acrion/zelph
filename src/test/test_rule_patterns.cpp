@@ -764,7 +764,7 @@ TEST_CASE("rule patterns: a rule over rules asserts no part of a typed rule it r
         CHECK(any_output_contains(collector, "e r f  [rule pattern; not asserted]")); });
 }
 
-TEST_CASE("rule patterns: a derivation's claim reads no term that earlier firings filled")
+TEST_CASE("rule patterns: a derivation's claim reads no term that earlier firings filled" * doctest::test_suite("slow"))
 {
     // A term into which each firing writes a member is not entered by the
     // claim of a firing: it retains the content all prior firings
@@ -5162,7 +5162,7 @@ namespace
 // second rule with the first requires approximately two and a half megabytes of it. Rules
 // over sets that hold one another, the shape this test exhibited, nest considerably less
 // deeply because the comparison pairs each of those sets just once.
-TEST_CASE("nested condition sets: a comparison of rules over a set that holds itself ends on a thread with a small stack")
+TEST_CASE("nested condition sets: a comparison of rules over a set that holds itself ends on a thread with a small stack" * doctest::test_suite("slow"))
 {
     std::vector<std::string> lines;
     std::string              failure;
@@ -5229,7 +5229,7 @@ namespace
 // its own failed to find the part in four of those. Over sets that all hold one another,
 // which the comparison pairs once each, it found the generator in every layout, and so
 // did the search of its own.
-TEST_CASE("nested condition sets: a focus on a consequence over sets that hold one another is the part of the rule kept")
+TEST_CASE("nested condition sets: a focus on a consequence over sets that hold one another is the part of the rule kept" * doctest::test_suite("slow"))
 {
     for (int focus = 1; focus <= 2; ++focus)
     {
@@ -5334,7 +5334,7 @@ TEST_CASE("nested condition sets: a rendering over sets that hold one another be
 // are entered after four distinct numbers of unrelated facts: when this test was written,
 // the second statement took about a hundred thousand steps in each of them, and between
 // two and four and a half million with the cap tested first.
-TEST_CASE("nested condition sets: a comparison over sets that hold one another beyond the depth cap stays within its budget")
+TEST_CASE("nested condition sets: a comparison over sets that hold one another beyond the depth cap stays within its budget" * doctest::test_suite("slow"))
 {
     for (int shift = 0; shift < 4; ++shift)
     {

@@ -2865,7 +2865,7 @@ TEST_CASE("stratified: .strata says so when there is nothing to stratify")
         CHECK_FALSE(any_event_contains(collector, "Unknown command")); });
 }
 
-TEST_CASE("stratified: the NAND bootstrap completes before the simplifier's fallback in one evaluation")
+TEST_CASE("stratified: the NAND bootstrap completes before the simplifier's fallback in one evaluation" * doctest::test_suite("slow"))
 {
     // The digit tables in binary-nand-arithmetic are generated via a negated
     // gate rule; symbolic-core's identity fallback negates (T rw S). When

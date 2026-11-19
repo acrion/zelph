@@ -844,7 +844,7 @@ namespace
     }
 } // namespace
 
-TEST_CASE("wikidata import: each import reports the triples it left unwritten")
+TEST_CASE("wikidata import: each import reports the triples it left unwritten" * doctest::test_suite("slow"))
 {
     // The portion designated as the library half is pinned above; this area
     // corresponds to the importers' half. The main import and the qualifier

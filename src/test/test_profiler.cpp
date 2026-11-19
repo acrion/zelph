@@ -82,7 +82,7 @@ TEST_CASE("profiler: .prof without active logging explains how to enable counter
         CHECK_FALSE(any_event_contains(collector, "[prof] epoch=")); });
 }
 
-TEST_CASE("profiler: every fs_cache miss is answered by one genuine hit or one walk")
+TEST_CASE("profiler: every fs_cache miss is answered by one genuine hit or one walk" * doctest::test_suite("slow"))
 {
     // `fs_cache misses == genuine hits + genuine walks` is verified on each
     // protocol in internals/measurement.md: a miss goes to the genuine

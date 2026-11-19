@@ -92,7 +92,7 @@ namespace
     }
 } // namespace
 
-TEST_CASE("numeric comparison: each relation holds exactly for its order")
+TEST_CASE("numeric comparison: each relation holds exactly for its order" * doctest::test_suite("slow"))
 {
     run_both_modes([](auto& collector, auto& interactive)
                    {
@@ -219,7 +219,7 @@ TEST_CASE("numeric comparison: no comparison has a node before something names i
 // one. A rule that wrote one would name it, and that name would correspond to a
 // node. A module that began employing them would make those sentences false,
 // and it fails here.
-TEST_CASE("numeric comparison: no module of the mathematical stack names a comparison")
+TEST_CASE("numeric comparison: no module of the mathematical stack names a comparison" * doctest::test_suite("slow"))
 {
     for (const std::string module : {"decimal-arithmetic", "binary-arithmetic", "binary-nand-arithmetic", "integer-arithmetic", "primes", "primes-naf", "eml", "polynomial", "topoly", "symbolic-core", "symbolic-integers", "symbolic-minus", "symbolic-pow", "diff", "math-syntax", "math"})
     {
@@ -245,7 +245,7 @@ TEST_CASE("numeric comparison: the Jacobian example names no comparison" * docte
 
 // They have no value to order, and a comparison is no place for an error: a
 // data check executes across whatever the graph holds, numbers or otherwise.
-TEST_CASE("numeric comparison: a term that is no number satisfies no relation, and raises no error")
+TEST_CASE("numeric comparison: a term that is no number satisfies no relation, and raises no error" * doctest::test_suite("slow"))
 {
     run_both_modes([](auto& collector, auto& interactive)
                    {
@@ -321,7 +321,7 @@ TEST_CASE("numeric comparison: the comparator answers none for a form that is no
 // first would make the value rely on the order of a set. A narrower cell
 // compares as usual, so it is the width that takes the number away and nothing
 // else concerning these terms.
-TEST_CASE("numeric comparison: a cell or a signed term with several objects satisfies no relation")
+TEST_CASE("numeric comparison: a cell or a signed term with several objects satisfies no relation" * doctest::test_suite("slow"))
 {
     run_both_modes([](auto& collector, auto& interactive)
                    {
@@ -597,7 +597,7 @@ s v (neg zint &5)
 // digit. With an empty alphabet, no number remains, not even nil, which is read
 // without a digit, whereas `cmp`, whose digit tables consist of facts,
 // continues to answer. Once digits are re-registered, the numbers return.
-TEST_CASE("numeric comparison: an empty digit alphabet leaves no number to compare, and registering it again restores them")
+TEST_CASE("numeric comparison: an empty digit alphabet leaves no number to compare, and registering it again restores them" * doctest::test_suite("slow"))
 {
     run_both_modes([](auto& collector, auto& interactive)
                    {
@@ -627,7 +627,7 @@ nothing r nil
 // identically: the list featuring leading zeros that subtraction derives
 // (<007>), and nil, the exhausted list that every digit recursion ends at,
 // which `cmp` treats as zero.
-TEST_CASE("numeric comparison: leading zeros and nil compare by value, as cmp compares them")
+TEST_CASE("numeric comparison: leading zeros and nil compare by value, as cmp compares them" * doctest::test_suite("slow"))
 {
     run_both_modes([](auto& collector, auto& interactive)
                    {
@@ -793,7 +793,7 @@ unregistered r &3
 // re-registration, the identical term becomes a number once more. Each case
 // maintains its own pair: a derived relation persists even when the
 // registration is removed.
-TEST_CASE("zelph/set-number-signs: no argument clears the signed form, and registering it again restores it")
+TEST_CASE("zelph/set-number-signs: no argument clears the signed form, and registering it again restores it" * doctest::test_suite("slow"))
 {
     run_both_modes([](auto& collector, auto& interactive)
                    {
@@ -930,7 +930,7 @@ c v (neg zint &7)
 // The sign relation and the positive sign are registered nodes too, each
 // carrying its own identifier for transfer: a term constructed from either is
 // interpreted via the survivor, just as one built from the negative sign is.
-TEST_CASE("numeric comparison: a name merge of the sign relation or the positive sign hands the registration to the survivor")
+TEST_CASE("numeric comparison: a name merge of the sign relation or the positive sign hands the registration to the survivor" * doctest::test_suite("slow"))
 {
     zelph::io::OutputCollector  collector;
     zelph::console::Interactive interactive(collector.sink());
@@ -1236,7 +1236,7 @@ large v &98
 // nothing either, which enables a check to process many pairs without
 // necessitating a node for each. A term that is not a number under its bindings
 // fails, just as a variable bound to one does.
-TEST_CASE("numeric comparison: a structured term needs no fact and creates none")
+TEST_CASE("numeric comparison: a structured term needs no fact and creates none" * doctest::test_suite("slow"))
 {
     run_both_modes([](auto& collector, auto& interactive)
                    {
@@ -1261,7 +1261,7 @@ b v alice
 // whether it arrives at all, so every mode derives this in the first run, even
 // when the rule that writes the term is positioned at a later negation level
 // than the comparison.
-TEST_CASE("numeric comparison: a structured term does not depend on when its fact arrives")
+TEST_CASE("numeric comparison: a structured term does not depend on when its fact arrives" * doctest::test_suite("slow"))
 {
     run_both_modes([](auto& collector, auto& interactive)
                    {
@@ -1303,7 +1303,7 @@ x v &5
 // interpreted with the same rigour as what a node holds: a part that is not a
 // digit, a bound relation or sign that is none, and a term comprising several
 // objects make it not a number.
-TEST_CASE("numeric comparison: every part of a structured term can come from a binding")
+TEST_CASE("numeric comparison: every part of a structured term can come from a binding" * doctest::test_suite("slow"))
 {
     run_both_modes([](auto& collector, auto& interactive)
                    {
@@ -1559,7 +1559,7 @@ a sub &1
 // term that the graph does not hold explains just like any other, and the same
 // value determines the outcome: (neg zint &0) equals zero, which no comparison
 // puts below zero.
-TEST_CASE("numeric comparison: .explain reads a structured term by value as well")
+TEST_CASE("numeric comparison: .explain reads a structured term by value as well" * doctest::test_suite("slow"))
 {
     run_both_modes([](auto& collector, auto& interactive)
                    {

@@ -99,7 +99,7 @@ TEST_CASE("math: Cayley-Hamilton for a symbolic 2x2 matrix" * doctest::test_suit
     CHECK_FALSE(proves(collector, interactive, "$( a*a + b*c - (a+d)*a ) ≡ $( 0 )"));
 }
 
-TEST_CASE("math: Newton's identities in three indeterminates")
+TEST_CASE("math: Newton's identities in three indeterminates" * doctest::test_suite("slow"))
 {
     // Power sums from elementary symmetric polynomials:
     //
@@ -408,7 +408,7 @@ t2 rhs $( a^2 + b^2 )
     CHECK(collect_answers(collector).size() == 2);
 }
 
-TEST_CASE("math: a rule generator drives the differentiation layer")
+TEST_CASE("math: a rule generator drives the differentiation layer" * doctest::test_suite("slow"))
 {
     // Three layers that never meet elsewhere: a generator writes one rule per
     // indeterminate, each generated rule derives a differentiation REQUEST,
@@ -431,7 +431,7 @@ $( x*y ) interesting yes
     CHECK(answers_contain(collector, "((x * y) diffby y) = x"));
 }
 
-TEST_CASE("math: a cluster rolls back generated rules and derived mathematics")
+TEST_CASE("math: a cluster rolls back generated rules and derived mathematics" * doctest::test_suite("slow"))
 {
     // .cluster-drop promises to remove exactly what was created while the
     // cluster was active. Here that is a generated RULE plus everything the

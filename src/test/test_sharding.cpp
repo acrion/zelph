@@ -733,7 +733,7 @@ TEST_CASE("sharding: a manifest over a local .bin that lost bytes is refused bef
 // single chunk, that approximation yields zero as well, hence the second
 // subcase, a network with two chunks in the left section and two chunks in
 // the right section.
-TEST_CASE("sharding: a .bin without a chunk directory loads through a manifest and reserves nothing")
+TEST_CASE("sharding: a .bin without a chunk directory loads through a manifest and reserves nothing" * doctest::test_suite("slow"))
 {
     SUBCASE("one chunk per section, from shards and from byte ranges of the .bin")
     {

@@ -355,7 +355,7 @@ TEST_CASE("load: a partial load reserves for the chunks it reads")
 // with the final chunk being short. A partial load of that chunk reserves the
 // nodes it holds, on either side and on both, and a load that reads chunk 0 on
 // one side and the last chunk on the other reserves the nodes of both.
-TEST_CASE("load: a partial load of the short last chunk reserves the nodes it holds")
+TEST_CASE("load: a partial load of the short last chunk reserves the nodes it holds" * doctest::test_suite("slow"))
 {
     constexpr std::size_t chunk = zelph::network::serialization::chunk_entries;
     const auto            file  = std::filesystem::temp_directory_path() / "zelph_node_map_last_chunk.bin";
@@ -504,7 +504,7 @@ TEST_CASE("load: a file without a chunk directory lets the node map grow while i
 // undergoes no verification. Here, a network with two chunks per section is
 // written in the format of every network published before the directory, as
 // an older engine wrote it, and loaded in full or in part.
-TEST_CASE("load: a file without a chunk directory reserves nothing, however many chunks it has")
+TEST_CASE("load: a file without a chunk directory reserves nothing, however many chunks it has" * doctest::test_suite("slow"))
 {
     const auto        saved = std::filesystem::temp_directory_path() / "zelph_node_map_two_chunks.bin";
     const auto        older = std::filesystem::temp_directory_path() / "zelph_node_map_two_chunks_older.bin";

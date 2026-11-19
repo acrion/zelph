@@ -908,7 +908,7 @@ TEST_CASE("pruning: pruning the holder of a shared label re-elects the lowest su
     remove_dump(dump);
 }
 
-TEST_CASE("pruning: a label keeps resolving through .save, .load, a prune and .cleanup")
+TEST_CASE("pruning: a label keeps resolving through .save, .load, a prune and .cleanup" * doctest::test_suite("slow"))
 {
     // The networks that have been published are cut the way this case cuts
     // one, with each stage in a process of its own: the import saves; a prune
