@@ -31,6 +31,8 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include "network/serialization_layout.hpp"
 #include "test_helpers.hpp"
 
+#include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -40,8 +42,16 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include <optional>
 #include <sstream>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
+
+#ifndef _WIN32
+    #include <csignal>
+    #include <fcntl.h>
+    #include <sys/stat.h>
+    #include <unistd.h>
+#endif
 
 using namespace zelph::test;
 
@@ -694,10 +704,9 @@ TEST_CASE("sharding: a manifest that does not match the chunk directory of its .
 // .bin is local or remote, before discarding the session's network. A local
 // .bin missing its last bytes, as a copy that broke off would leave it, is
 // refused at that point. The case asks the graph and not merely the message:
-// without this comparison, the load discards the graph, fails at the chunk that
-// is truncated, falls back to the .bin, then refuses the file using identical
-// wording, and when the shards are located alongside the manifest, it even
-// succeeds.
+// without this comparison, the load discards the graph and fails at the chunk
+// that is truncated, and when the shards are located alongside the manifest,
+// it even succeeds.
 TEST_CASE("sharding: a manifest over a local .bin that lost bytes is refused before the session's network is discarded")
 {
     const auto        artifact = build_artifact(artifact_root("cut-bin"));
@@ -722,6 +731,280 @@ TEST_CASE("sharding: a manifest over a local .bin that lost bytes is refused bef
 
     fs::remove_all(artifact.root);
 }
+
+// A chunk that the load reads from the .bin stands at the offset specified by
+// the chunk directory, which the load has compared with the manifest's before
+// any reading. A chunk that cannot be read at that offset is either damaged,
+// or the read operation itself is at fault, and the load ends on it, naming
+// the chunk and its offset. Previously, it would fall back to reading the
+// whole .bin from its start, which reaches the same bytes: for a damaged
+// chunk, this only added a second, less precise failure, and for a faulty
+// read, it built the right network and thus concealed the fault. Here, the
+// bytes of the first left chunk are overwritten in place, which leaves the
+// directory matching the file.
+TEST_CASE("sharding: a chunk that cannot be read at the offset its chunk directory gives ends the load")
+{
+    const auto  artifact = build_artifact(artifact_root("damaged-chunk"));
+    const auto& chunk    = artifact.sections.at("left").front();
+    {
+        std::fstream bin(artifact.bin, std::ios::binary | std::ios::in | std::ios::out);
+        REQUIRE(bin.is_open());
+        bin.seekp(static_cast<std::streamoff>(chunk.offset));
+        bin << std::string(static_cast<size_t>(chunk.length), '\xff');
+    }
+
+    // The same manifest, with its .bin named by a URI as a published one names
+    // it: the load finds the copy beside the manifest and reads it, and the
+    // message names the copy, which is the file that is damaged.
+    const auto  by_uri = artifact.root / "net.seek-uri.json";
+    std::string text   = read_file(artifact.seek_manifest);
+    const auto  named  = text.find(artifact.bin.generic_string());
+    REQUIRE(named != std::string::npos);
+    text.replace(named, artifact.bin.generic_string().size(), "hf://datasets/acrion/zelph-partial-load-test/net/net.bin");
+    std::ofstream(by_uri) << text;
+
+    for (const auto& manifest : {artifact.seek_manifest, by_uri})
+    {
+        CAPTURE(manifest.string());
+        with_fresh_session([&](auto& collector, auto& interactive)
+                           {
+            interactive.process(".stat-file \"" + artifact.bin.string() + "\"");
+            REQUIRE(any_output_contains(collector, "Chunk Directory: matches the file"));
+
+            interactive.process("a p b");
+            try
+            {
+                interactive.process(".load-partial \"" + manifest.string() + "\"");
+                FAIL("expected the load to fail");
+            }
+            catch (const std::runtime_error& e)
+            {
+                const std::string message(e.what());
+                CAPTURE(message);
+                CHECK(message.find("Failed to read left chunk 0 of '") != std::string::npos);
+                CHECK(message.find("net.bin' at byte " + std::to_string(chunk.offset) + ": ") != std::string::npos);
+                CHECK(message.find("hf://") == std::string::npos);
+                CHECK(message.find("The previous network was already discarded -- use .new to start over") != std::string::npos);
+                // The content that kj adds to its own message stays out of this message.
+                CHECK(message.find("stack:") == std::string::npos);
+                CHECK(message.find(".c++") == std::string::npos);
+            }
+            CHECK_FALSE(any_event_contains(collector, "falling back to sequential"));
+            CHECK(node_count(collector, interactive) == 0); });
+    }
+
+    fs::remove_all(artifact.root);
+}
+
+// A .bin lacking a chunk directory, which every network published so far is,
+// contains nothing against which a manifest could be held, so a chunk that
+// cannot be read at the location the manifest specifies may instead reside
+// elsewhere. For such a file the load continues to fall back to the whole
+// .bin, reading it from the beginning, and reports this fact. Here the
+// manifest places the first left chunk eight bytes beyond where it should be,
+// as one made from the index of a different file would: the load reports the
+// fallback, and the network arrives as a whole.
+TEST_CASE("sharding: a chunk that a .bin without a chunk directory does not have where the manifest says is read from the whole .bin")
+{
+    const auto artifact = build_artifact(artifact_root("stale-manifest"), {.with_directory = false});
+    const auto manifest = artifact.root / "net.stale.json";
+    {
+        std::ostringstream text;
+        text << "{\n  \"source\": {\"binPath\": \"" << artifact.bin.generic_string() << "\", \"headerLengthBytes\": " << artifact.header_length
+             << "},\n  \"sections\": {\n";
+        bool first_section = true;
+        for (const char* name : {"left", "right", "nameOfNode", "nodeOfName"})
+        {
+            text << (first_section ? "" : ",\n") << "    \"" << name << "\": {\"chunks\": [";
+            first_section    = false;
+            const auto& list = artifact.sections.at(name);
+            for (size_t i = 0; i < list.size(); ++i)
+            {
+                const uint64_t offset = list[i].offset + (std::string(name) == "left" && i == 0 ? 8 : 0);
+                text << (i == 0 ? "" : ", ") << "{\"chunkIndex\": " << list[i].index << ", \"length\": " << list[i].length << ", \"offset\": " << offset << "}";
+            }
+            text << "]}";
+        }
+        text << "\n  }\n}\n";
+        std::ofstream(manifest) << text.str();
+    }
+
+    with_fresh_session([&](auto& collector, auto& interactive)
+                       {
+        interactive.process(".load-partial \"" + manifest.string() + "\"");
+        CHECK(any_event_contains(collector, "Shard chunk left/0 failed"));
+        CHECK(any_event_contains(collector, "falling back to sequential"));
+        CHECK(interactive.graph()->node_map_state().entries > 0);
+
+        collector.clear();
+        interactive.process(".lang de");
+        interactive.process(".node beta_de");
+        CHECK(any_event_contains(collector, "beta_de")); });
+
+    fs::remove_all(artifact.root);
+}
+
+// A pipe named as the .bin of a manifest. A chunk that the load reads from the
+// .bin is read at its offset, and since a pipe cannot be sought, such a load
+// is refused prior to opening the pipe and while the session's network remains
+// in place. It previously read the header from the pipe, discarded the
+// network, and opened the pipe once more for the first chunk, waiting for a
+// writer that had already concluded; with a writer that serves every reader,
+// it could not seek and instead fell back to reading the whole .bin from the
+// pipe. In this case, the writer offers the file to each reader that opens the
+// pipe, ensuring that a load which does open it ends as well, and shows in
+// what it leaves behind rather than in a case that never returns. The .bin
+// lacks a chunk directory: one possessing a directory is refused from a pipe
+// anyway, due to its unknown size. A load that reads no chunk from the .bin
+// needs no seek and is not refused: the header alone, a selection with no
+// chunk, and a manifest where all chunks originate from shards.
+#ifndef _WIN32
+namespace
+{
+    // A named pipe in which a writer offers `content` to a reader that opens
+    // the pipe, mirroring the behaviour of `cat file > pipe`, and re-offers it
+    // solely after the reader has closed the pipe. The writer never blocks
+    // during a call: it asks every millisecond whether a reader holds the pipe
+    // open, guaranteeing termination on every exit path, even in the case of
+    // an exception. A reader that opens the pipe within that millisecond
+    // following another's closure is treated as the same reader and offered
+    // nothing, so a case ensures each load has its own pipe.
+    class OfferedPipe
+    {
+    public:
+        OfferedPipe(fs::path path, std::string content)
+            : _path(std::move(path))
+            , _content(std::move(content))
+        {
+            REQUIRE(mkfifo(_path.c_str(), 0600) == 0);
+            _writer = std::thread([this]
+                                  { offer(); });
+        }
+        ~OfferedPipe()
+        {
+            _stop = true;
+            _writer.join();
+            std::error_code ignored;
+            fs::remove(_path, ignored);
+        }
+        OfferedPipe(const OfferedPipe&)            = delete;
+        OfferedPipe& operator=(const OfferedPipe&) = delete;
+
+        // How many readers have been presented with the content.
+        int offered() const { return _offered.load(); }
+
+    private:
+        // Opening a pipe for writing, without waiting, succeeds precisely when
+        // a reader holds it open.
+        bool has_reader(int& descriptor) const
+        {
+            descriptor = open(_path.c_str(), O_WRONLY | O_NONBLOCK);
+            return descriptor >= 0;
+        }
+
+        void offer()
+        {
+            // A reader that closes the pipe early must not end the process.
+            sigset_t pipe_signal;
+            sigemptyset(&pipe_signal);
+            sigaddset(&pipe_signal, SIGPIPE);
+            pthread_sigmask(SIG_BLOCK, &pipe_signal, nullptr);
+
+            const auto pause = []
+            { std::this_thread::sleep_for(std::chrono::milliseconds(1)); };
+            while (!_stop)
+            {
+                int out = -1;
+                if (!has_reader(out))
+                {
+                    pause();
+                    continue;
+                }
+                ++_offered;
+                const auto written = write(out, _content.data(), _content.size());
+                (void)written;
+                close(out);
+
+                // The subsequent offer is intended for the next reader, thus
+                // this one must close the pipe first.
+                while (!_stop && has_reader(out))
+                {
+                    close(out);
+                    pause();
+                }
+            }
+        }
+
+        fs::path          _path;
+        std::string       _content;
+        std::atomic<bool> _stop{false};
+        std::atomic<int>  _offered{0};
+        std::thread       _writer;
+    };
+}
+
+TEST_CASE("sharding: a manifest that reads chunks from a .bin that is no regular file is refused before the pipe is opened")
+{
+    const auto        artifact = build_artifact(artifact_root("pipe-bin"), {.with_directory = false});
+    const std::string bin      = read_file(artifact.bin);
+    const fs::path    path     = artifact.root / "net.pipe";
+
+    std::string manifest_text = read_file(artifact.seek_manifest);
+    const auto  named         = manifest_text.find(artifact.bin.generic_string());
+    REQUIRE(named != std::string::npos);
+    manifest_text.replace(named, artifact.bin.generic_string().size(), path.generic_string());
+    const fs::path manifest = artifact.root / "net.pipe.json";
+    std::ofstream(manifest) << manifest_text;
+
+    with_fresh_session([&](auto& collector, auto& interactive)
+                       {
+        interactive.process("a p b");
+        {
+            const OfferedPipe pipe(path, bin);
+            CHECK_THROWS_WITH_AS(interactive.process(".load-partial \"" + manifest.string() + "\""),
+                                 doctest::Contains("it reads chunks at their offsets in '" + path.generic_string() + "', which is not a regular file"),
+                                 std::runtime_error);
+            CHECK(pipe.offered() == 0);
+            CHECK_FALSE(any_event_contains(collector, "falling back to sequential"));
+        }
+        collector.clear();
+        interactive.process("A p B");
+        CHECK(answers_contain(collector, "a p b"));
+
+        // The header by itself requires no seek, and it is read from the pipe.
+        {
+            const OfferedPipe pipe(path, bin);
+            collector.clear();
+            interactive.process(".load-partial \"" + manifest.string() + "\" meta-only");
+            CHECK(any_event_contains(collector, "Header-only manifest load complete."));
+            CHECK(pipe.offered() == 1);
+        }
+
+        // Neither does a selection that reads no chunk.
+        {
+            const OfferedPipe pipe(path, bin);
+            collector.clear();
+            interactive.process(".load-partial \"" + manifest.string() + "\" left=none right=none nameOfNode=none nodeOfName=none");
+            CHECK(any_event_contains(collector, "left chunks=0/1"));
+            CHECK(pipe.offered() == 1);
+        }
+
+        // Nor a manifest whose chunks all come from shards: only its header is
+        // read from the pipe, which is named as its .bin in this context.
+        {
+            const OfferedPipe pipe(path, bin);
+            collector.clear();
+            interactive.process(".load-partial \"" + artifact.sharded_manifest.string() + "\" source-bin=\"" + path.string() + "\"");
+            CHECK_FALSE(any_event_contains(collector, "falling back to sequential"));
+            CHECK(pipe.offered() == 1);
+            collector.clear();
+            interactive.process(".stat");
+            CHECK(any_output_contains(collector, "Languages: 2"));
+        } });
+
+    fs::remove_all(artifact.root);
+}
+#endif
 
 // No network published before the chunk directory possesses one, and a load
 // via a manifest is the method by which such a network is loaded in part.
@@ -898,14 +1181,15 @@ TEST_CASE("sharding: a load straight from the repository checks the directory ag
 }
 
 // A load via a manifest discards the session's network before reading the
-// first chunk, and a chunk that fails to parse causes it to fall back to
-// reading the .bin sequentially. For a remote .bin, the file it falls back to
-// is the header range in the cache, whose chunk directory places the chunks
-// beyond its end, and that load is rejected due to the directory. The
-// session's network has already been discarded by then, and the message
-// indicates this, as every message following the discard does. The shard is
-// impaired at the location where the load retrieves it, within the
-// repository, and retains its length.
+// first chunk, causing a shard that fails to parse to do so after the discard,
+// and the message indicates this, as every message following the discard does.
+// For a remote .bin, only the header range is accessible, leaving nothing that
+// can stand in for the shard, and the load ends there, naming the chunk and
+// the file it read. Previously, it would fall back regardless: it read the
+// header range from the cache as though it were the .bin and reported that
+// file's chunk directory as not matching it, which conveyed no information
+// about the shard. The shard is impaired at the location where the load
+// retrieves it, within the repository, and retains its length.
 TEST_CASE("sharding: a load straight from the repository that fails after discarding the session's network says so")
 {
     const fs::path repository = artifact_root("remote-fallback");
@@ -933,10 +1217,12 @@ TEST_CASE("sharding: a load straight from the repository that fails after discar
         catch (const std::runtime_error& e)
         {
             const std::string message(e.what());
-            CHECK(message.find("its chunk directory does not match the file") != std::string::npos);
+            CAPTURE(message);
+            CHECK(message.find("Failed to read left chunk 0 from its shard '") != std::string::npos);
+            CHECK(message.find("its chunk directory does not match the file") == std::string::npos);
             CHECK(message.find("The previous network was already discarded -- use .new to start over") != std::string::npos);
         }
-        CHECK(any_event_contains(collector, "falling back to sequential"));
+        CHECK_FALSE(any_event_contains(collector, "falling back to sequential"));
         CHECK(node_count(collector, interactive) == 0); });
 
     fs::remove_all(repository);
@@ -1199,7 +1485,10 @@ TEST_CASE("sharding: a manifest naming a .bin that is not there leaves the sessi
 // network is discarded, so a .bin that is no network at all results in the
 // session remaining unchanged: the load fails at the header, and the graph
 // still answers. While the header was read after the discard, such a manifest
-// left a network devoid even of its core nodes.
+// left a network devoid even of its core nodes. The message says what the file
+// is not, using the words a .load of that file employs for it. It once was the
+// exception of the reader as it stood, with the place in its source and its
+// stack trace.
 TEST_CASE("sharding: a manifest naming a .bin that is not a network leaves the session alone")
 {
     const auto artifact = build_artifact(artifact_root("no-network-bin"));
@@ -1211,7 +1500,24 @@ TEST_CASE("sharding: a manifest naming a .bin that is not a network leaves the s
         with_fresh_session([&](auto& collector, auto& interactive)
                            {
             interactive.process("a p b");
-            CHECK_THROWS(interactive.process(".load-partial \"" + manifest.string() + "\""));
+            try
+            {
+                interactive.process(".load-partial \"" + manifest.string() + "\"");
+                FAIL("expected the load to fail");
+            }
+            catch (const std::runtime_error& e)
+            {
+                const std::string message(e.what());
+                CAPTURE(message);
+                CHECK(message.find("net.bin' as a zelph .bin file (truncated, or not a .bin at all): ") != std::string::npos);
+                // The file that was read is named: the sharded manifest names
+                // its .bin via a URI, and the copy located alongside it is the
+                // one that failed.
+                CHECK(message.find("hf://") == std::string::npos);
+                CHECK(message.find("stack:") == std::string::npos);
+                CHECK(message.find(".c++") == std::string::npos);
+                CHECK(message.find("already discarded") == std::string::npos);
+            }
 
             collector.clear();
             interactive.process("A p B");
@@ -1242,6 +1548,10 @@ TEST_CASE("sharding: an unreadable shard falls back to the .bin and says so")
         // is only worth anything if the line appears when it should.
         CHECK(any_event_contains(collector, "falling back to sequential"));
         CHECK_FALSE(any_event_contains(collector, "has no local copy"));
+
+        // The line gives the reason in words, excluding the stack trace that
+        // the reader's exception carries.
+        CHECK_FALSE(any_event_contains(collector, "stack:"));
 
         // And the network is complete, because the .bin next to the manifest
         // can serve what the shard could not.

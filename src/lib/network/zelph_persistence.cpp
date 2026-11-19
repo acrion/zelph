@@ -154,6 +154,16 @@ namespace
         return directory;
     }
 
+    // What an exception says. For an exception originating from kj, this
+    // is its description: its what() carries a C++ source location and a
+    // stack trace as well, neither of which belongs in a message
+    // concerning a file.
+    std::string description_of(const std::exception& e)
+    {
+        if (const auto* const from_kj = dynamic_cast<const kj::Exception*>(&e)) return from_kj->getDescription().cStr();
+        return e.what();
+    }
+
     // Whether a load via a manifest reads a chunk from a shard of its own,
     // as occurs for a chunk whose object path is provided by a v2 or v3
     // manifest, rather than from the .bin.
@@ -857,6 +867,30 @@ void Zelph::Impl::loadFromManifest(const std::string& manifest_path, const Zelph
         throw std::runtime_error("Manifest names a source .bin that is not there: " + header_source_path);
     }
 
+    // Before the .bin is opened, too. A chunk that the load reads from the
+    // .bin is read at its offset, requiring a file that supports seeking, and
+    // a load that falls back reads the .bin a second time from its start. A
+    // pipe allows neither: named as the .bin, it had its header read and the
+    // graph discarded, and the load subsequently reopened the pipe for the
+    // first chunk and awaited a writer that had already completed.
+    const auto is_read = [](const detail::chunk_selector* const selected, const detail::ManifestChunkRef& ref)
+    { return selected == nullptr || selected->count(ref.chunk_index) == 1; };
+    const bool bin_is_regular_file = !header_is_remote && std::filesystem::is_regular_file(header_source_path);
+    if (!header_is_remote && !bin_is_regular_file && !skip_payload)
+    {
+        const auto reads_bin = [&](const detail::ManifestSection& section, const detail::chunk_selector* const selected)
+        {
+            return std::any_of(section.chunks.begin(), section.chunks.end(), [&](const detail::ManifestChunkRef& ref)
+                               { return is_read(selected, ref) && !read_from_shard(manifest_description, ref); });
+        };
+        if (reads_bin(manifest_description.left, leftSelectionPtr) || reads_bin(manifest_description.right, rightSelectionPtr)
+            || reads_bin(manifest_description.name_of_node, nameOfNodeSelectionPtr) || reads_bin(manifest_description.node_of_name, nodeOfNameSelectionPtr))
+        {
+            throw std::runtime_error("Refused to load '" + manifest_path + "': it reads chunks at their offsets in '" + header_source_path
+                                     + "', which is not a regular file and cannot be sought");
+        }
+    }
+
     // The header of the .bin, and the chunk directory located behind it,
     // which the header range of a remote .bin covers. Both are read and
     // verified before the graph is discarded: the directory against the
@@ -872,6 +906,11 @@ void Zelph::Impl::loadFromManifest(const std::string& manifest_path, const Zelph
         header_source_path =
             detail::fetch_chunk_to_cache(header_source, 0, manifest_description.source_header_length_bytes, "header", &source_size).string();
     }
+
+    // The .bin as a message regarding its content names it: the file that was
+    // read, which for a .bin named by a URI is the local copy if available,
+    // and the URI otherwise.
+    const std::string bin_name = header_is_remote ? header_source : header_source_path;
 
     ::capnp::MallocMessageBuilder            header;
     std::optional<zelph::io::ChunkDirectory> directory;
@@ -910,6 +949,15 @@ void Zelph::Impl::loadFromManifest(const std::string& manifest_path, const Zelph
                                      + header_source + "': " + e.what());
         }
         throw directory_refusal(header_source, {e.what()});
+    }
+    catch (const kj::Exception& e)
+    {
+        fclose(file);
+        // A .bin that is not a network, or that terminates prematurely within
+        // its header: stated as a .load of that file states it, and not
+        // through the source location and stack trace that kj puts into
+        // what().
+        throw std::runtime_error(read_error_text(bin_name, e, false));
     }
     catch (...)
     {
@@ -963,12 +1011,12 @@ void Zelph::Impl::loadFromManifest(const std::string& manifest_path, const Zelph
     // .bin lacking a directory lets the map expand instead.
     if (directory)
     {
-        const auto read = [](const detail::ManifestSection& section, const detail::chunk_selector* const selected)
+        const auto read = [&is_read](const detail::ManifestSection& section, const detail::chunk_selector* const selected)
         {
             detail::chunk_selector chunks;
             for (const auto& ref : section.chunks)
             {
-                if (selected == nullptr || selected->count(ref.chunk_index) == 1) chunks.insert(ref.chunk_index);
+                if (is_read(selected, ref)) chunks.insert(ref.chunk_index);
             }
             return chunks;
         };
@@ -1016,6 +1064,34 @@ void Zelph::Impl::loadFromManifest(const std::string& manifest_path, const Zelph
         return header_source_path;
     };
 
+    // What happens to a chunk that could not be read. When the whole .bin can
+    // stand in for it, the load indicates this and reads the .bin starting
+    // from its beginning: for a shard that is damaged, and for a chunk of a
+    // .bin lacking a chunk directory, whose offset nothing has validated. In
+    // all other cases the failure ends the load, naming the chunk. A chunk
+    // read from the .bin at an offset verified by the chunk directory yields
+    // precisely the same bytes as a sequential read would, so falling back
+    // there could only mask a flaw in the read operation itself, as it hid for
+    // months that every such load on macOS read the whole .bin. And only a
+    // local regular file can be read in its entirety: for a remote .bin, only
+    // the header range is accessible, and a pipe cannot be read a second time.
+    const auto chunk_failed = [&](const FileSection kind, const detail::ManifestChunkRef& ref, const bool is_sharded_ref, const uint64_t source_offset, const std::string& source_file, const std::exception& ex)
+    {
+        const auto        id     = static_cast<std::uint16_t>(kind);
+        const std::string reason = description_of(ex);
+        if (!ref.has_source_offset || !bin_is_regular_file || (directory.has_value() && !is_sharded_ref))
+        {
+            throw std::runtime_error("Failed to read " + zelph::io::chunk_name(id, ref.chunk_index)
+                                     + (is_sharded_ref ? " from its shard '" + source_file + "'"
+                                                       : " of '" + bin_name + "' at byte " + std::to_string(source_offset))
+                                     + ": " + reason);
+        }
+        io::OutputStream(_output, io::OutputChannel::Diagnostic, true)
+            << "Shard chunk " << zelph::io::section_name(id) << "/" << ref.chunk_index << " failed (" << reason
+            << "); falling back to sequential bin load";
+        loadFromFile(header_source_path, selection, skip_payload);
+    };
+
     if (leftSelectionPtr == nullptr || !leftSelection.empty())
     {
         for (const auto& ref : manifest_description.left.chunks)
@@ -1035,14 +1111,7 @@ void Zelph::Impl::loadFromManifest(const std::string& manifest_path, const Zelph
             }
             catch (const std::exception& ex)
             {
-                if (!ref.has_source_offset)
-                {
-                    throw;
-                }
-                io::OutputStream(_output, io::OutputChannel::Diagnostic, true)
-                    << "Shard chunk left/" << ref.chunk_index << " failed (" << ex.what()
-                    << "); falling back to sequential bin load";
-                loadFromFile(header_source_path, selection, skip_payload);
+                chunk_failed(FileSection::LEFT, ref, is_sharded_ref, source_offset, source_file, ex);
                 return;
             }
         }
@@ -1071,14 +1140,7 @@ void Zelph::Impl::loadFromManifest(const std::string& manifest_path, const Zelph
             }
             catch (const std::exception& ex)
             {
-                if (!ref.has_source_offset)
-                {
-                    throw;
-                }
-                io::OutputStream(_output, io::OutputChannel::Diagnostic, true)
-                    << "Shard chunk right/" << ref.chunk_index << " failed (" << ex.what()
-                    << "); falling back to sequential bin load";
-                loadFromFile(header_source_path, selection, skip_payload);
+                chunk_failed(FileSection::RIGHT, ref, is_sharded_ref, source_offset, source_file, ex);
                 return;
             }
         }
@@ -1104,14 +1166,7 @@ void Zelph::Impl::loadFromManifest(const std::string& manifest_path, const Zelph
             }
             catch (const std::exception& ex)
             {
-                if (!ref.has_source_offset)
-                {
-                    throw;
-                }
-                io::OutputStream(_output, io::OutputChannel::Diagnostic, true)
-                    << "Shard chunk nameOfNode/" << ref.chunk_index << " failed (" << ex.what()
-                    << "); falling back to sequential bin load";
-                loadFromFile(header_source_path, selection, skip_payload);
+                chunk_failed(FileSection::NAME_OF_NODE, ref, is_sharded_ref, source_offset, source_file, ex);
                 return;
             }
         }
@@ -1135,14 +1190,7 @@ void Zelph::Impl::loadFromManifest(const std::string& manifest_path, const Zelph
             }
             catch (const std::exception& ex)
             {
-                if (!ref.has_source_offset)
-                {
-                    throw;
-                }
-                io::OutputStream(_output, io::OutputChannel::Diagnostic, true)
-                    << "Shard chunk nodeOfName/" << ref.chunk_index << " failed (" << ex.what()
-                    << "); falling back to sequential bin load";
-                loadFromFile(header_source_path, selection, skip_payload);
+                chunk_failed(FileSection::NODE_OF_NAME, ref, is_sharded_ref, source_offset, source_file, ex);
                 return;
             }
         }
