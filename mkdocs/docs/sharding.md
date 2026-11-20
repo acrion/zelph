@@ -364,6 +364,8 @@ budget. The latter starts from a conservative per-host throughput estimate, so
 larger requested ranges receive more time without allowing a stuck process to
 wait indefinitely.
 
+The program initiated by these calls is `curl`, which zelph requires to be present in the search path. Set `ZELPH_HF_CURL_BIN` to the name or path of an alternative program in order to start that one instead: a curl installed in a different location, or a program that accepts curl’s arguments and writes what curl would produce, just as the fake curl in the diagnostic helper above does. On Windows zelph starts the program directly, bypassing a command interpreter, so in that environment the variable must specify an executable. A batch file is not such a program: Windows executes it via `cmd.exe`, which reads the arguments according to its own rules.
+
 Zelph records the completed call's operation, range, planned and received
 bytes, cache state, remote identity, DNS/connect/TLS/first-byte/total timings,
 average throughput, and outcome. A normal run prints only failures and slow
