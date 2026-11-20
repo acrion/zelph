@@ -92,15 +92,24 @@ namespace zelph::console
         bool               is_auto_run_active() const;
         bool               is_accumulating() const;
 
-        // Gives the session a default of its own for the load factor of the
-        // node map (.node-map-load-factor): the engine has it from now on, and
-        // so does every engine that .new makes, ensuring that `default` names
-        // it and .new restores it. `factor` is read as the command reads its
-        // argument; a text that is not a number within the range 0.8 to 0.95
-        // throws std::invalid_argument, whose message names the range, and
-        // causes no alteration. The binary calls it for
-        // --node-map-load-factor.
-        void set_node_map_default_load_factor(const std::string& factor) const;
+        // Makes a setting line a default of the process: the line executes
+        // immediately, without producing output, and again for each engine
+        // that .new makes, ensuring the session maintains the setting from its
+        // initial line onward and regains it following every .new invocation.
+        // The line is among the setting commands enumerated by
+        // CommandExecutor::apply_default, specifying the value it sets
+        // (".lang de", ".node-map-load-factor 0.9"; a toggle like ".parallel"
+        // stands alone). A session-level setting (.auto-run, .deductions,
+        // .timer) executes now and never again: .new preserves these, and any
+        // subsequent changes made by the session are not undone. A toggle
+        // transitions from the state it finds: a host gives such a line before
+        // the session has switched the setting on its own, as the binary does,
+        // or the engine in use and the engines of a later .new differ. A line
+        // that is not such a command, lacks its value, or fails as a command
+        // throws std::invalid_argument, whose message names the line and the
+        // cause, and is no default afterwards. The binary calls it for every
+        // --default.
+        void add_default(const std::string& line) const;
 
         // Dispatch whatever process() is still accumulating. Call this when
         // the input ENDS: a piped session or a script that stops inside a

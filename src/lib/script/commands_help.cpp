@@ -60,6 +60,7 @@ namespace zelph::console
             "Scripts, Loading & Saving",
             "  .import <script> [args...]                – Load a MODULE: quiet (no echo, no focus anchors, one run at the end), .zph/.janet only, falls back to the standard library",
             "  (from the shell) zelph <script> [args...] – Run a script as a SESSION: exactly as if its lines had been typed. Same resolution, any file name",
+            "  (from the shell) zelph --default '<line>' – Make a setting line a default of the process: it holds from the first line on and again after every .new (see .help .new)",
             "  .provides <id> [id2 ...]                  – Claim module IDs in the import registry",
 #ifndef __EMSCRIPTEN__
             "  .load <file>                              – Replace the network by a saved one (.bin), or import a Wikidata JSON dump (read from its .bin cache when the network is empty)",
@@ -130,7 +131,7 @@ namespace zelph::console
             "  .contradiction-records [on|off]           – Show or disable writing each contradiction into the graph (memory vs. repeated reports)",
             "  .negation-records [on|off]                – Show or set recording what negations derived, to warn when a later fact defeats one (default: off)",
             "  .explain-budget [<units>|default|unlimited] – Show or set the work .explain may spend on the complete proof under a depth limit (default: 80000)",
-            "  .node-map-load-factor [<factor>|default]  – Show or set the load factor of the node map from 2^31 buckets on (memory vs. speed, default: 0.8 or the factor of --node-map-load-factor)",
+            "  .node-map-load-factor [<factor>|default]  – Show or set the load factor of the node map from 2^31 buckets on (memory vs. speed, default: 0.8 or the factor of a --default line)",
             "",
             "Logging & Profiling",
             "  .log <max-depth>                          – Enable detailed reasoning logging up to given recursion depth (0 = off, -1 = counters only)",
@@ -1051,6 +1052,14 @@ namespace zelph::console
                      ".negation-records, the clusters, and every Janet definition.\n"
                      "What belongs to the session stays:\n"
                      ".deductions, .auto-run and .timer keep their mode.\n"
+                     "A process started as zelph --default '<setting line>' has that line as a\n"
+                     "default: it runs before the first line of the session, without output,\n"
+                     "and again for every engine that .new creates, so the setting returns to\n"
+                     "what the line set. The line is one of the settings named above with the\n"
+                     "value it sets (--default '.lang de'), or a toggle alone (--default\n"
+                     ".parallel); a setting of the session is set once, at the start. The\n"
+                     "option can be given several times, ahead of the name of a script, and a\n"
+                     "line that cannot be a default ends the process before anything runs.\n"
                      "A module loaded with .import cannot run it: a module does not clear the\n"
                      "session that loads it. A script run as 'zelph script.zph' can, and its\n"
                      "following lines run on the cleared network, as they do when piped in."},
@@ -1325,7 +1334,8 @@ namespace zelph::console
                                 "              however much work that takes\n"
                                 "'.explain <fact> 0' has no depth limit and therefore no budget: it\n"
                                 "always searches the complete proof. The budget is a setting of the\n"
-                                "engine, so .new restores the default.\n"
+                                "engine, so .new restores the default, or the budget that a --default\n"
+                                "line of the command line set (see .help .new).\n"
                                 "The same budget bounds the search of (zelph/dependents <fact>) from\n"
                                 "Janet, which ends its answer with :truncated where the budget ran out."},
             {".node-map-load-factor", ".node-map-load-factor [<factor>|default]\n"
@@ -1350,9 +1360,9 @@ namespace zelph::console
                                       "while the file loads, and takes the factor when the load has finished.\n"
                                       "The factor is a setting of the engine, so .new restores the default;\n"
                                       ".stat shows it while it is not 0.8.\n"
-                                      "A session started as 'zelph --node-map-load-factor <factor>' has that\n"
-                                      "factor as its default, from its first line on and after every .new;\n"
-                                      "the option stands ahead of the name of a script. From Janet,\n"
+                                      "A session started as zelph --default '.node-map-load-factor <factor>'\n"
+                                      "has that factor as its default, from its first line on and after every\n"
+                                      ".new; the option stands ahead of the name of a script. From Janet,\n"
                                       "(zelph/node-map-load-factor) reads the factor and sets it."},
             {".fact-stores", ".fact-stores [on|off]\n"
                              "Shows or disables the fact-path acceleration stores: the genuine-\n"

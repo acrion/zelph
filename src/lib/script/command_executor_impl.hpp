@@ -67,10 +67,11 @@ namespace zelph::console
         // --- Implemented in command_executor.cpp ---
 
         Impl(network::Reasoning* n, ScriptEngine* se, std::shared_ptr<ReplState> rs, CommandExecutor::LineProcessor lp);
-        void finish_input() const;
-        void execute(const std::vector<std::string>& cmd, const std::vector<std::string>& sources);
-        void register_commands();
-        void require_full_graph_mode(const char* command_name) const;
+        void                          finish_input() const;
+        void                          execute(const std::vector<std::string>& cmd, const std::vector<std::string>& sources);
+        void                          register_commands();
+        void                          require_full_graph_mode(const char* command_name) const;
+        CommandExecutor::DefaultScope apply_default(const std::vector<std::string>& cmd);
 
         // --- Implemented in commands_session.cpp ---
 
@@ -223,6 +224,10 @@ namespace zelph::console
         // --- Dispatch Map ---
         using Handler = std::function<void(const std::vector<std::string>&)>;
         std::map<std::string, Handler> _command_map;
+
+        // Set while a default of the process is applied (apply_default): a
+        // command that is aware of its own default sets that default then.
+        bool _applying_defaults{false};
 
         // The tokens of the command currently running, in parser form. Empty
         // when the caller did not record them (the Janet command handler passes

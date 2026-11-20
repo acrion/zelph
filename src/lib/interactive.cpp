@@ -37,8 +37,6 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include <chrono>
 #include <cstdio>
 #include <memory>
-#include <optional>
-#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -83,10 +81,6 @@ public:
     {
         _n             = std::make_unique<network::Reasoning>(output);
         _script_engine = std::make_unique<ScriptEngine>(_n.get());
-
-        // The session's own default, if present, for the engine that a .new
-        // has just created, as well as for the first.
-        if (_node_map_default_load_factor) _n->set_node_map_default_load_factor(*_node_map_default_load_factor);
 
         _n->set_lang("zelph");
 
@@ -150,6 +144,12 @@ public:
 
         _n->set_deduction_filter(filters_deductions(_repl_state->deduction_mode));
         _n->set_deduction_notice(announces_withheld(*_repl_state));
+
+        // The defaults of the process, for the engine that a .new has just
+        // made. The first engine is created before any default is known and
+        // acquires each via add_default.
+        for (const auto& cmd : _engine_defaults)
+            _command_executor->apply_default(cmd);
     }
 
     void reset_reasoning()
@@ -187,9 +187,11 @@ public:
     // The prompt as it reads when nothing is currently being accumulated.
     std::string full_prompt() const;
 
-    // The default provided to the session by set_node_map_default_load_factor,
-    // if any was given: init() passes it along to every engine it makes.
-    std::optional<float> _node_map_default_load_factor;
+    // The setting lines that add_default made defaults of the process, as
+    // the tokens of their commands and in the order given: init() runs them
+    // for every engine it makes. The settings of the session are not
+    // included among them, since .new keeps those.
+    std::vector<std::vector<std::string>> _engine_defaults;
 
     std::unique_ptr<network::Reasoning> _n;
     std::unique_ptr<ScriptEngine>       _script_engine;
@@ -772,21 +774,23 @@ std::string console::Interactive::get_lang() const
     return _pImpl->_n->get_lang();
 }
 
-void console::Interactive::set_node_map_default_load_factor(const std::string& factor) const
+void console::Interactive::add_default(const std::string& line) const
 {
-    namespace sizing = network::node_map_sizing;
+    // Read as process() reads a command line: starting at its initial
+    // non-whitespace character, which must be the dot belonging to a command.
+    std::vector<std::string> cmd;
+    const std::size_t        first = zelph::string::first_non_whitespace(line);
+    if (first != std::string::npos && line[first] == '.') cmd = zelph::string::tokenize_quoted(line.substr(first));
 
-    const std::optional<float> given = sizing::large_load_factor_from(factor);
-    if (!given)
+    try
     {
-        std::ostringstream text;
-        text << "the load factor of the node map is a number from " << sizing::min_large_load_factor << " to "
-             << sizing::max_large_load_factor << ", the factor the map may reach once it has 2^31 buckets, not '" << factor << "'";
-        throw std::invalid_argument(text.str());
+        if (_pImpl->_command_executor->apply_default(cmd) == CommandExecutor::DefaultScope::Engine)
+            _pImpl->_engine_defaults.push_back(cmd);
     }
-
-    _pImpl->_node_map_default_load_factor = *given;
-    _pImpl->_n->set_node_map_default_load_factor(*given);
+    catch (const std::exception& e)
+    {
+        throw std::invalid_argument("'" + line + "' cannot be a default: " + e.what());
+    }
 }
 
 void console::Interactive::set_prompt_available(const bool available) const

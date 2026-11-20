@@ -646,17 +646,19 @@ TEST_CASE("node-map-load-factor: a factor out of range or malformed is refused")
     CHECK(interactive.graph()->node_map_default_load_factor() == sizing::default_load_factor);
 }
 
-// A session may possess its own default, which the binary assigns via
-// --node-map-load-factor. From that point onward, the engine adopts that
-// factor, regardless of any prior value, and the command names it as the
-// default, in its status line as for its argument: 0.8 functions as a factor
-// just like any other within such a session.
+// A session may possess its own default, which a default of the process gives
+// it (zelph --default '.node-map-load-factor 0.9'). Run as such a default, the
+// command sets the default of the engine and not merely the factor: from that
+// point onward, the engine adopts that factor, regardless of any prior value,
+// and the command names it as the default, in its status line as for its
+// argument: 0.8 functions as a factor just like any other within such a
+// session.
 TEST_CASE("node-map-load-factor: the default of a session is what the command names the default")
 {
     zelph::io::OutputCollector  collector;
     zelph::console::Interactive interactive(collector.sink());
     interactive.process(".node-map-load-factor 0.95");
-    interactive.set_node_map_default_load_factor("0.9");
+    interactive.add_default(".node-map-load-factor 0.9");
     CHECK(interactive.graph()->node_map_load_factor() == 0.9F);
     CHECK(interactive.graph()->node_map_default_load_factor() == 0.9F);
 
@@ -673,27 +675,55 @@ TEST_CASE("node-map-load-factor: the default of a session is what the command na
     interactive.process(".node-map-load-factor default");
     CHECK(any_output_contains(collector, "Node map load factor from 2^31 buckets: 0.9 (default)"));
     CHECK(interactive.graph()->node_map_load_factor() == 0.9F);
+
+    // The last default line decides, and the term `default` within such a line
+    // names the default the engine possesses at that point.
+    interactive.add_default(".node-map-load-factor 0.85");
+    interactive.add_default(".node-map-load-factor default");
+    CHECK(interactive.graph()->node_map_load_factor() == 0.85F);
+    CHECK(interactive.graph()->node_map_default_load_factor() == 0.85F);
 }
 
-// The default of a session is read as the command reads its argument, and a
-// text that is no factor preserves both the factor and the default unchanged.
-// The binary terminates upon encountering such an option before any execution;
-// a host that continues maintains the session it previously held. The message
-// names the range and the text.
+// Only a default of the process sets the default of the engine. The command
+// entered within the same session, also directly behind a default line and
+// behind one that was refused, sets the factor and leaves the default
+// unchanged.
+TEST_CASE("node-map-load-factor: a typed factor leaves the default of a session where it was")
+{
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+    interactive.add_default(".node-map-load-factor 0.9");
+    interactive.process(".node-map-load-factor 0.95");
+    CHECK(interactive.graph()->node_map_load_factor() == 0.95F);
+    CHECK(interactive.graph()->node_map_default_load_factor() == 0.9F);
+
+    CHECK_THROWS_AS(interactive.add_default(".node-map-load-factor abc"), std::invalid_argument);
+    collector.clear();
+    interactive.process(".node-map-load-factor 0.85");
+    CHECK(any_output_contains(collector, "Node map load factor from 2^31 buckets: 0.85"));
+    CHECK_FALSE(any_output_contains(collector, "(default)"));
+    CHECK(interactive.graph()->node_map_default_load_factor() == 0.9F);
+}
+
+// A default line is read as the command reads its argument, and a text that is
+// not a factor preserves both the factor and the default unchanged. The binary
+// terminates upon encountering such an option before any execution; a host
+// that continues maintains the session it previously held. The message names
+// the line and the range.
 TEST_CASE("node-map-load-factor: a default that is no factor is refused and changes nothing")
 {
     zelph::io::OutputCollector  collector;
     zelph::console::Interactive interactive(collector.sink());
-    interactive.set_node_map_default_load_factor("0.9");
+    interactive.add_default(".node-map-load-factor 0.9");
     interactive.process(".node-map-load-factor 0.85");
-    for (const char* text : {"", "abc", "0.5", "0.96", "1", "0.9x", "default"})
+    for (const char* text : {"abc", "0.5", "0.96", "1", "0.9x", "0.9 0.9"})
     {
         CAPTURE(text);
-        CHECK_THROWS_WITH_AS(interactive.set_node_map_default_load_factor(text),
+        CHECK_THROWS_WITH_AS(interactive.add_default(std::string(".node-map-load-factor ") + text),
                              doctest::Contains("a number from 0.8 to 0.95"),
                              std::invalid_argument);
     }
-    CHECK_THROWS_WITH_AS(interactive.set_node_map_default_load_factor("abc"), doctest::Contains("not 'abc'"), std::invalid_argument);
+    CHECK_THROWS_WITH_AS(interactive.add_default(".node-map-load-factor abc"), doctest::Contains("'.node-map-load-factor abc' cannot be a default"), std::invalid_argument);
     CHECK(interactive.graph()->node_map_load_factor() == 0.85F);
     CHECK(interactive.graph()->node_map_default_load_factor() == 0.9F);
 }
@@ -712,7 +742,7 @@ TEST_CASE("node-map-load-factor: .new restores the default")
     // created by .new holds no awareness of the prior engine, thus the session
     // hands its default to every engine it makes, the third just as the
     // second.
-    interactive.set_node_map_default_load_factor("0.9");
+    interactive.add_default(".node-map-load-factor 0.9");
     for (int round = 0; round < 2; ++round)
     {
         CAPTURE(round);
@@ -742,7 +772,7 @@ TEST_CASE("node-map-load-factor: .stat shows the factor while it is not 0.8")
     interactive.process(".stat");
     CHECK(any_output_contains(collector, "Node map load factor from 2^31 buckets: 0.9"));
 
-    interactive.set_node_map_default_load_factor("0.95");
+    interactive.add_default(".node-map-load-factor 0.95");
     collector.clear();
     interactive.process(".stat");
     CHECK(any_output_contains(collector, "Node map load factor from 2^31 buckets: 0.95"));
@@ -778,7 +808,7 @@ TEST_CASE("node-map-load-factor: zelph/node-map-load-factor reads and sets the f
 
     // :default serves as the default within the session when that session
     // possesses its own.
-    interactive.set_node_map_default_load_factor("0.95");
+    interactive.add_default(".node-map-load-factor 0.95");
     CHECK(janet_value(collector, interactive, "(zelph/node-map-load-factor 0.85)") == "0.85");
     CHECK(janet_value(collector, interactive, "(zelph/node-map-load-factor :default)") == "0.95");
     CHECK(interactive.graph()->node_map_load_factor() == 0.95F);

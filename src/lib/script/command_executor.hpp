@@ -93,6 +93,26 @@ namespace zelph::console
         // where "waiting for more lines" turns into "there are none".
         void finish_input();
 
+        // What a default of the process is a setting of: of the engine, which
+        // .new creates afresh, or of the session, which .new keeps.
+        enum class DefaultScope
+        {
+            Engine,
+            Session
+        };
+
+        // Runs a setting command as a default of the process
+        // (`zelph --default`, Interactive::add_default) and says what it is a
+        // setting of. The command is drawn from a fixed list of setting
+        // commands and carries the value it sets, except in the case of a
+        // toggle, which stands alone; it produces no output, as no one entered
+        // it. While executing, a command with its own default to set sets that
+        // one: .node-map-load-factor then gives the engine the factor to which
+        // its argument `default` returns henceforth. Throws for a command not
+        // in the list, for one missing its value, and whatever the command
+        // itself throws.
+        DefaultScope apply_default(const std::vector<std::string>& cmd);
+
         // Throws when the session holds a partial load, naming `name` as
         // what was refused: the check of each command that removes graph
         // content, for a binding that also removes it or tells what a

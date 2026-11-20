@@ -31,11 +31,14 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #include <array>
 #include <chrono>
+#include <cstddef>
 #include <cstdio>
 #include <exception>
 #include <filesystem>
 #include <functional>
 #include <ostream>
+#include <set>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -674,7 +677,7 @@ TEST_CASE("help: .node-map-load-factor is documented and listed with the engine 
     // provided by the binary, which establishes the default for a session, and
     // the Janet binding.
     CHECK(any_output_contains(collector, "the factor the session started with"));
-    CHECK(any_output_contains(collector, "zelph --node-map-load-factor <factor>"));
+    CHECK(any_output_contains(collector, "zelph --default '.node-map-load-factor <factor>'"));
     CHECK(any_output_contains(collector, "(zelph/node-map-load-factor)"));
 
     collector.clear();
@@ -688,6 +691,77 @@ TEST_CASE("help: .node-map-load-factor is documented and listed with the engine 
     collector.clear();
     interactive.process(".help .stat");
     CHECK(any_output_contains(collector, "see .help .node-map-load-factor"));
+}
+
+// The option of the binary that makes a setting line a default of the process
+// is not a command, so it lacks a help entry of its own. The overview lists
+// it beside the other form the shell starts, and .help .new, which says what
+// a reset does to each setting, explains how the option alters that, for
+// every setting a default may be.
+TEST_CASE("help: the option that makes a setting a default is named in the overview and with .new")
+{
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+    interactive.process(".help");
+    CHECK(any_output_contains(collector, "(from the shell) zelph --default '<line>'"));
+
+    collector.clear();
+    interactive.process(".help .new");
+    CHECK(any_output_contains(collector, "zelph --default '<setting line>'"));
+    CHECK(any_output_contains(collector, "again for every engine that .new creates"));
+    CHECK(any_output_contains(collector, "a setting of the session is set once"));
+
+    // "One of the settings named above": the refusal of a line that is not a
+    // default lists the settings, and the two lists in the help of .new, the
+    // settings of the engine and those of the session, hold exactly these.
+    // The names are derived from the two lists: the examples in the help
+    // name three of the settings as well.
+    std::string help;
+    for (const auto& event : collector.events())
+        help += event.text + "\n";
+
+    std::string refusal;
+    try
+    {
+        interactive.add_default(".stat");
+    }
+    catch (const std::invalid_argument& e)
+    {
+        refusal = e.what();
+    }
+    const std::string lead = "a default is one of the settings ";
+    REQUIRE(refusal.find(lead) != std::string::npos);
+
+    // The commands that a text names: its words beginning with a dot,
+    // excluding any comma or full stop that follows.
+    const auto commands_in = [](const std::string& text)
+    {
+        std::set<std::string> commands;
+        std::istringstream    words(text);
+        for (std::string word; words >> word;)
+        {
+            while (!word.empty() && (word.back() == ',' || word.back() == '.'))
+                word.pop_back();
+            if (word.size() > 1 && word.front() == '.') commands.insert(word);
+        }
+        return commands;
+    };
+    const auto listed_between = [&](const std::string& from, const std::string& to)
+    {
+        const std::size_t start = help.find(from);
+        REQUIRE(start != std::string::npos);
+        const std::size_t end = help.find(to, start);
+        REQUIRE(end != std::string::npos);
+        return commands_in(help.substr(start + from.size(), end - start - from.size()));
+    };
+
+    const std::set<std::string> of_the_list    = commands_in(refusal.substr(refusal.find(lead) + lead.size()));
+    std::set<std::string>       in_the_help    = listed_between("the settings ", ", the records of");
+    const std::set<std::string> of_the_session = listed_between("What belongs to the session stays:", " keep their mode");
+    CHECK(of_the_session == std::set<std::string>{".auto-run", ".deductions", ".timer"});
+    in_the_help.insert(of_the_session.begin(), of_the_session.end());
+    CHECK(of_the_list.size() == 14);
+    CHECK(in_the_help == of_the_list);
 }
 
 // A declaration is not a command, thus ".help opaque" could not locate an

@@ -724,10 +724,11 @@ namespace zelph::network
 
         // The factor that `default` names for the command and for
         // zelph/node-map-load-factor: node_map_sizing::default_load_factor,
-        // unless the host that made this engine gave it a different one, as a
-        // session does for the factor of the binary's --node-map-load-factor.
-        // Setting it sets the factor as well, and refuses what the factor's
-        // own setter refuses.
+        // unless the host that made this engine provided a different one, as
+        // a session does for a default of the process that sets the factor
+        // (the binary's --default '.node-map-load-factor <factor>'). Setting
+        // it sets the factor as well, and refuses what the factor's own
+        // setter refuses.
         float node_map_default_load_factor() const;
         void  set_node_map_default_load_factor(float factor) const;
 

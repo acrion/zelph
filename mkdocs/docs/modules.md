@@ -55,10 +55,30 @@ zelph stdlib/examples/english.zph      # a session: echoes, derives, prints
 zelph < stdlib/examples/english.zph    # the same session, read from a pipe
 ```
 
-`zelph --node-map-load-factor <factor> <script>` starts the session with the
-specified load factor for the node map as its default, as detailed by
-`.help .node-map-load-factor`. The option precedes the script’s name: behind
-the name, the identical two words are passed to the script as its arguments.
+`zelph --default '<setting line>' <script>` makes a setting a default of the process. The line executes prior to session start, without producing output, and also after every `.new`, which otherwise returns each engine setting to the default that is built in. The line must be one of the setting commands `.lang`, `.parallel`, `.anchors`, `.semi-naive`, `.fact-stores`, `.contradiction-records`, `.negation-records`, `.explain-budget`, `.node-map-load-factor`, `.log`, or `.log-janet`, or one of the three session settings, `.auto-run`, `.deductions`, and `.timer`, which `.new` keeps and thus are set only once, at startup. It carries the value it sets, as in `--default '.lang de'`; `.parallel`, `.log-janet`, and `.auto-run` are toggles and stand alone. The option may be specified multiple times, with its lines applying in the sequence provided. A line that is not one of these commands, or that its command rejects, terminates the process with status 1 before any execution occurs. The option comes before the script’s name: after the name, the identical two words are passed to the script as its arguments. The quotation marks are those used by the shell and keep the line as a single argument; in `cmd.exe`, double quotes perform this function.
+
+```bash
+zelph --default '.node-map-load-factor 0.9' --default '.anchors off'
+```
+
+```
+zelph> .node-map-load-factor
+Node map load factor from 2^31 buckets: 0.9 (default)
+zelph> .anchors
+Anchor-based lookups: off
+zelph> .anchors on
+Anchor-based lookups: on
+zelph> .new
+Cleared network and re-initialized core nodes.
+zelph> .anchors
+Anchor-based lookups: off
+zelph> .node-map-load-factor 0.95
+Node map load factor from 2^31 buckets: 0.95
+zelph> .node-map-load-factor default
+Node map load factor from 2^31 buckets: 0.9 (default)
+```
+
+The load factor for such a line is the session’s default in every sense: the status line marks it, and `default` restores it, as `.help .node-map-load-factor` details.
 
 Inside the REPL the same file is a module:
 

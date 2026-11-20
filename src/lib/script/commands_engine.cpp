@@ -278,8 +278,8 @@ namespace zelph::console
         };
         if (cmd.size() != 2) throw usage();
 
-        // `default` is the factor with which the engine was built, set for each
-        // engine it produces by a session using --node-map-load-factor.
+        // `default` is the default of the engine: 0.8, unless a default of the
+        // process gave the engine a different value.
         float factor = _n->node_map_default_load_factor();
         if (cmd[1] != "default")
         {
@@ -288,7 +288,14 @@ namespace zelph::console
             factor = *given;
         }
 
-        _n->set_node_map_load_factor(factor);
+        // As a default of the process, the command sets the engine's default,
+        // which in turn sets the factor: the factor of such a line is then
+        // what `default` names, what the status line marks as the default, and
+        // what :default means to zelph/node-map-load-factor.
+        if (_applying_defaults)
+            _n->set_node_map_default_load_factor(factor);
+        else
+            _n->set_node_map_load_factor(factor);
         _n->out(status(), true);
     }
 }

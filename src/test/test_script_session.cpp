@@ -25,10 +25,12 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #include <doctest/doctest.h>
 
+#include "network/reasoning.hpp"
 #include "string/string_utils.hpp"
 #include "test_helpers.hpp"
 
 #include <algorithm>
+#include <cstddef>
 #include <filesystem>
 #include <fstream>
 #include <string>
@@ -81,6 +83,23 @@ namespace
         const fs::path path = fs::temp_directory_path() / ("zelph_session_" + name);
         std::ofstream(path, std::ios::binary) << body;
         return path;
+    }
+
+    // What a setting command returns upon being typed: the line it prints.
+    std::string shown(zelph::io::OutputCollector& collector, const zelph::console::Interactive& interactive, const std::string& command)
+    {
+        collector.clear();
+        interactive.process(command);
+        return last_out_text(collector);
+    }
+
+    // The text of each event held by the collector, in order.
+    std::vector<std::string> event_texts(const zelph::io::OutputCollector& collector)
+    {
+        std::vector<std::string> texts;
+        for (const auto& event : collector.events())
+            texts.push_back(event.text);
+        return texts;
     }
 }
 
@@ -249,6 +268,292 @@ TEST_CASE("session script: a module cannot clear the session that loads it")
         auto answers = collect_answers(collector);
         std::sort(answers.begin(), answers.end());
         CHECK(answers == std::vector<std::string>{"m p n", "s p t"}); });
+}
+
+// ---------------------------------------------------------------------------
+// Defaults of the process.
+//
+// A setting of the engine lasts until the next .new, which makes the engine
+// anew, with every setting adopting the value a fresh engine possesses. A
+// host desiring a setting for the whole process hands its line to
+// Interactive::add_default, just as the binary does for each
+// `--default '<line>'` on its command line: the line executes immediately
+// and once more for every engine that .new makes. It runs without output,
+// as nobody typed it, and it is one of a fixed list of setting commands,
+// ensuring that no default can load a file or write a fact.
+// ---------------------------------------------------------------------------
+
+// The rationale behind the existence of defaults. The first engine has each
+// setting, and so does the second, which a .new makes, and the third: the
+// session hands its lines to every engine it makes, and not just once to the
+// next one. What the session sets in between vanishes with its engine, just as
+// it does without defaults.
+TEST_CASE("defaults: a setting line holds from the first line on and after every .new")
+{
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+    for (const char* line : {".lang de", ".anchors off", ".semi-naive check", ".fact-stores off", ".contradiction-records off", ".negation-records on", ".explain-budget 5000", ".log 3"})
+        interactive.add_default(line);
+
+    for (int engine = 0; engine < 3; ++engine)
+    {
+        CAPTURE(engine);
+        if (engine > 0)
+        {
+            process_lines(interactive, ".lang en\n.anchors on\n.semi-naive off\n.contradiction-records on\n.negation-records off\n.explain-budget default\n.log 0\n");
+            interactive.process(".new");
+        }
+        const zelph::network::Reasoning* const n = interactive.graph();
+        CHECK(interactive.get_lang() == "de");
+        CHECK_FALSE(n->use_anchors());
+        CHECK(n->seminaive());
+        CHECK(n->seminaive_check());
+        CHECK_FALSE(n->fact_stores_enabled());
+        CHECK_FALSE(n->record_contradictions());
+        CHECK(n->record_negations());
+        CHECK(n->explain_budget() == 5000);
+        CHECK(n->should_log(3));
+        CHECK_FALSE(n->should_log(4));
+    }
+}
+
+// A setting command responds to the person who entered it with the state it
+// left, and nobody typed a default: neither the line itself prints, when it
+// is given, nor its run for the engine of a .new, which prints what a .new
+// without defaults prints. The identical lines typed do print, in the
+// session that has just run them as defaults.
+TEST_CASE("defaults: a default line prints nothing")
+{
+    const std::vector<std::string> lines = {".lang de", ".parallel", ".anchors off", ".semi-naive check", ".fact-stores off", ".contradiction-records off", ".negation-records on", ".explain-budget 5000", ".node-map-load-factor 0.9", ".log-janet", ".auto-run", ".deductions all", ".timer on"};
+
+    // Only one session at a time: a thread holds a single Janet VM, which
+    // the session that is created afterwards assumes control of.
+    std::vector<std::string> plain_reset;
+    {
+        zelph::io::OutputCollector  plain_collector;
+        zelph::console::Interactive plain(plain_collector.sink());
+        plain.process(".new");
+        plain_reset = event_texts(plain_collector);
+    }
+    REQUIRE_FALSE(plain_reset.empty());
+
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+    for (const std::string& line : lines)
+    {
+        CAPTURE(line);
+        interactive.add_default(line);
+        CHECK(collector.events().empty());
+    }
+    interactive.process(".new");
+    CHECK(event_texts(collector) == plain_reset);
+
+    CHECK(shown(collector, interactive, ".anchors off") == "Anchor-based lookups: off");
+    CHECK(shown(collector, interactive, ".semi-naive check") == "Semi-naive evaluation: check");
+    CHECK(shown(collector, interactive, ".timer on") == "Timer: on");
+}
+
+// What a default may be is a closed list of setting commands. Every other line
+// is rejected, regardless of what it might perform when typed: a default that
+// imported a module, ran the engine, saved a file, or wrote a fact would serve
+// as a preamble to the session, which is something distinct. The rejection
+// identifies the line and the settings, and the line did not run.
+TEST_CASE("defaults: only a setting command of the list can be a default")
+{
+    std::string refusal;
+    {
+        zelph::io::OutputCollector  collector;
+        zelph::console::Interactive interactive(collector.sink());
+        interactive.process("a p b");
+        const std::size_t nodes = node_count(collector, interactive);
+
+        // A save that was executed would write this file.
+        const fs::path unwritten = fs::temp_directory_path() / "zelph_defaults_never_written.bin";
+        fs::remove(unwritten);
+
+        std::vector<std::string> lines = {".import math", ".new", ".quit", ".help", ".stat", ".run", ".prof", ".name a en b", "c p d", "(X p Y) => (Y p X)", "%(zelph/fact \"c\" \"p\" \"d\")", "# .anchors off", "", "   ", "anchors off", ".anchor off", ".Anchors off"};
+        lines.push_back(".save \"" + unwritten.string() + "\"");
+
+        collector.clear();
+        for (const std::string& line : lines)
+        {
+            CAPTURE(line);
+            CHECK_THROWS_WITH_AS(interactive.add_default(line), doctest::Contains("a default is one of the settings .lang, .parallel, .anchors,"), std::invalid_argument);
+        }
+        CHECK_FALSE(fs::exists(unwritten));
+        fs::remove(unwritten);
+        CHECK_THROWS_WITH_AS(interactive.add_default(".import math"), doctest::Contains("'.import math' cannot be a default: "), std::invalid_argument);
+        CHECK(collector.events().empty());
+        CHECK_FALSE(interactive.quit_requested());
+        CHECK(node_count(collector, interactive) == nodes);
+        collector.clear();
+        interactive.process("X p Y");
+        CHECK(collect_answers(collector) == std::vector<std::string>{"a p b"});
+
+        try
+        {
+            interactive.add_default(".stat");
+        }
+        catch (const std::invalid_argument& e)
+        {
+            refusal = e.what();
+        }
+    }
+
+    // The list itself: each of its commands is accepted, either with the value
+    // it sets or, when used as a toggle, alone, and the refusal of any other
+    // line names each. Each line gets a session of its own, sequentially.
+    for (const char* line : {".lang de", ".parallel", ".anchors off", ".semi-naive off", ".fact-stores off", ".contradiction-records off", ".negation-records on", ".explain-budget 5", ".node-map-load-factor 0.9", ".log 1", ".log-janet", ".auto-run", ".deductions off", ".timer on"})
+    {
+        CAPTURE(line);
+        zelph::io::OutputCollector  own_collector;
+        zelph::console::Interactive own(own_collector.sink());
+        CHECK_NOTHROW(own.add_default(line));
+        const std::string command = std::string(line).substr(0, std::string(line).find(' '));
+        CHECK((refusal.find(" " + command + ",") != std::string::npos || refusal.ends_with(" " + command)));
+    }
+}
+
+// Without its value, a setting command shows the setting and sets nothing. As
+// a default, which prints nothing, such a line would do nothing at all, and a
+// forgotten value would pass unnoticed. A toggle operates in the opposite
+// manner: it stands alone, and with a value the command rejects it.
+TEST_CASE("defaults: a setting command without its value is refused, and a toggle stands alone")
+{
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+    for (const char* line : {".lang", ".anchors", ".semi-naive", ".fact-stores", ".contradiction-records", ".negation-records", ".explain-budget", ".node-map-load-factor", ".log", ".deductions", ".timer"})
+    {
+        CAPTURE(line);
+        CHECK_THROWS_WITH_AS(interactive.add_default(line), doctest::Contains(std::string("'") + line + "' cannot be a default: " + line + " needs the value it is to set"), std::invalid_argument);
+    }
+    CHECK_THROWS_WITH_AS(interactive.add_default(".parallel off"), doctest::Contains("Command .parallel takes no arguments"), std::invalid_argument);
+    CHECK_THROWS_WITH_AS(interactive.add_default(".log-janet on"), doctest::Contains("Command .log-janet takes no arguments"), std::invalid_argument);
+    CHECK_THROWS_WITH_AS(interactive.add_default(".auto-run off"), doctest::Contains("a toggle; it takes no argument"), std::invalid_argument);
+
+    // None of the lines that were refused altered a setting or were executed by
+    // a .new.
+    interactive.process(".new");
+    CHECK(interactive.graph()->use_parallel());
+    CHECK(interactive.is_auto_run_active());
+    CHECK(collector.events().size() == 1);
+}
+
+// A toggle has no value to name, thus its line switches the setting from the
+// point where a fresh engine holds it, and it does so across every engine: the
+// engine produced by .new starts where the first one started, and the line
+// runs for it once.
+TEST_CASE("defaults: a toggle switches the setting over for every engine")
+{
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+    REQUIRE(interactive.graph()->use_parallel());
+    interactive.add_default(".parallel");
+    interactive.add_default(".log-janet");
+
+    for (int engine = 0; engine < 3; ++engine)
+    {
+        CAPTURE(engine);
+        if (engine > 0) interactive.process(".new");
+        CHECK_FALSE(interactive.graph()->use_parallel());
+
+        // The logging of Janet functions can only be queried via its toggle,
+        // which reports the state it results in. When typed twice, the toggle
+        // leaves the state established by the default line, as the parallel
+        // setting remains unchanged: an engine that kept either state across
+        // the .new, or got the line twice, would show the alternative one.
+        CHECK(shown(collector, interactive, ".log-janet") == "Janet function logging is now disabled.");
+        CHECK(shown(collector, interactive, ".log-janet") == "Janet function logging is now enabled.");
+    }
+}
+
+// .auto-run, .deductions, and .timer are session settings that .new keeps.
+// Their default lines therefore execute just once, upon being provided. Run
+// again for the engine created by .new, the toggle would switch auto-run back
+// on, and the other two would undo what the session has set since.
+TEST_CASE("defaults: a setting of the session is set once, since .new keeps it")
+{
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+    interactive.add_default(".auto-run");
+    interactive.add_default(".deductions off");
+    interactive.add_default(".timer on");
+
+    for (int engine = 0; engine < 3; ++engine)
+    {
+        CAPTURE(engine);
+        if (engine > 0) interactive.process(".new");
+        CHECK_FALSE(interactive.is_auto_run_active());
+        CHECK(shown(collector, interactive, ".deductions") == "Deduction printing mode: off");
+        CHECK(shown(collector, interactive, ".timer") == "Timer: on");
+    }
+
+    process_lines(interactive, ".auto-run\n.deductions all\n.timer off\n.new\n");
+    CHECK(interactive.is_auto_run_active());
+    CHECK(shown(collector, interactive, ".deductions") == "Deduction printing mode: all");
+    CHECK(shown(collector, interactive, ".timer") == "Timer: off");
+}
+
+// Several lines can define a single setting, much like two options on a
+// command line added by a wrapper script and its caller respectively. They run
+// in the order given, at the start and for the engine of a .new as well,
+// meaning the last one determines the outcome, and providing a toggle twice
+// leaves the setting where it was.
+TEST_CASE("defaults: the lines run in the order they were given")
+{
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+    for (const char* line : {".anchors off", ".explain-budget 5000", ".parallel", ".anchors on", ".explain-budget 7000", ".parallel", ".semi-naive off"})
+        interactive.add_default(line);
+
+    for (int engine = 0; engine < 2; ++engine)
+    {
+        CAPTURE(engine);
+        if (engine > 0) interactive.process(".new");
+        CHECK(interactive.graph()->use_anchors());
+        CHECK(interactive.graph()->explain_budget() == 7000);
+        CHECK(interactive.graph()->use_parallel());
+        CHECK_FALSE(interactive.graph()->seminaive());
+    }
+}
+
+// The binary ends when a line fails to serve as a default, prior to any
+// execution. A host that continues retains the session it held: the line
+// that failed as a command set nothing and is not run by a later .new,
+// which would otherwise fail on it, the lines preceding it stay defaults,
+// and the session prints again what is typed.
+TEST_CASE("defaults: a line that fails as a command is no default afterwards")
+{
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+    interactive.add_default(".anchors off");
+    CHECK_THROWS_WITH_AS(interactive.add_default(".anchors maybe"), doctest::Contains("'.anchors maybe' cannot be a default: Usage: .anchors [on|off]"), std::invalid_argument);
+    CHECK_THROWS_WITH_AS(interactive.add_default(".explain-budget 0"), doctest::Contains("Usage: .explain-budget"), std::invalid_argument);
+    CHECK_THROWS_WITH_AS(interactive.add_default(".semi-naive on off"), doctest::Contains("Usage: .semi-naive [on|off|check]"), std::invalid_argument);
+    CHECK(collector.events().empty());
+
+    CHECK_FALSE(interactive.graph()->use_anchors());
+    CHECK_NOTHROW(interactive.process(".new"));
+    CHECK_FALSE(interactive.graph()->use_anchors());
+    CHECK(interactive.graph()->explain_budget() == zelph::network::Reasoning::default_explain_budget);
+    CHECK(interactive.graph()->seminaive());
+    CHECK(shown(collector, interactive, ".anchors") == "Anchor-based lookups: off");
+}
+
+// A session interprets a default line by taking the first non-whitespace
+// character onward, including quoted values, and continuing until a comment is
+// encountered, just as it does when reading a command line.
+TEST_CASE("defaults: a default line is read as a typed command line is")
+{
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+    interactive.add_default("  .anchors off   # as a wrapper script may write it");
+    interactive.add_default(".lang \"de\"");
+    CHECK_FALSE(interactive.graph()->use_anchors());
+    CHECK(interactive.get_lang() == "de");
+    interactive.process(".new");
+    CHECK_FALSE(interactive.graph()->use_anchors());
+    CHECK(interactive.get_lang() == "de");
 }
 
 TEST_CASE("session script: a module's .lang ends with the module")

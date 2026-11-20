@@ -102,25 +102,27 @@ int main(int argc, char** argv)
                 // never receive `-v` or `--version`.
                 show_version = true;
             }
-            else if (arg == "--node-map-load-factor" && script_files.empty())
+            else if (arg == "--default" && script_files.empty())
             {
-                // This option applies solely when positioned before the
-                // script: behind the script's name, its two words function as
-                // arguments to the script. The factor serves as the default
-                // for the process, such that a .new in the session restores
-                // it, and a factor that cannot be read ends the process before
-                // any execution begins.
+                // The option applies solely before the script's name: behind
+                // it, its two words serve as arguments to the script. Its
+                // line is a setting command, which becomes a default of the
+                // process, enabling a .new in the session to reinstate the
+                // setting; the option may be specified multiple times, and
+                // its lines take effect in sequence. A line that cannot
+                // function as a default ends the process prior to any
+                // execution.
                 if (i + 1 == argc)
                 {
-                    throw std::runtime_error("Option --node-map-load-factor needs a factor: zelph --node-map-load-factor <factor> [<script> [<args>...]]");
+                    throw std::runtime_error("Option --default needs a setting line: zelph --default '<setting line>' [<script> [<args>...]]");
                 }
                 try
                 {
-                    interactive.set_node_map_default_load_factor(argv[++i]);
+                    interactive.add_default(argv[++i]);
                 }
                 catch (const std::invalid_argument& e)
                 {
-                    throw std::runtime_error(std::string("Option --node-map-load-factor: ") + e.what());
+                    throw std::runtime_error(std::string("Option --default: ") + e.what());
                 }
             }
             else if (script_files.empty())

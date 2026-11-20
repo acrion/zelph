@@ -57,6 +57,41 @@ static const std::map<std::string, std::string> command_aliases = {
     {".why", ".explain"},
 };
 
+namespace
+{
+    using zelph::console::CommandExecutor;
+
+    // The setting commands that a default of the process may be
+    // (`zelph --default`), each with what it is a setting of. A toggle stands
+    // alone, and its line switches the setting over from where a fresh engine
+    // or session has it; every other command needs the value it sets, as
+    // without one it merely displays the current setting. The three settings
+    // of the session are precisely those that .new keeps.
+    struct DefaultSetting
+    {
+        const char*                   command;
+        bool                          toggle;
+        CommandExecutor::DefaultScope scope;
+    };
+
+    constexpr DefaultSetting default_settings[] = {
+        {".lang", false, CommandExecutor::DefaultScope::Engine},
+        {".parallel", true, CommandExecutor::DefaultScope::Engine},
+        {".anchors", false, CommandExecutor::DefaultScope::Engine},
+        {".semi-naive", false, CommandExecutor::DefaultScope::Engine},
+        {".fact-stores", false, CommandExecutor::DefaultScope::Engine},
+        {".contradiction-records", false, CommandExecutor::DefaultScope::Engine},
+        {".negation-records", false, CommandExecutor::DefaultScope::Engine},
+        {".explain-budget", false, CommandExecutor::DefaultScope::Engine},
+        {".node-map-load-factor", false, CommandExecutor::DefaultScope::Engine},
+        {".log", false, CommandExecutor::DefaultScope::Engine},
+        {".log-janet", true, CommandExecutor::DefaultScope::Engine},
+        {".auto-run", true, CommandExecutor::DefaultScope::Session},
+        {".deductions", false, CommandExecutor::DefaultScope::Session},
+        {".timer", false, CommandExecutor::DefaultScope::Session},
+    };
+}
+
 namespace zelph::console
 {
     CommandExecutor::Impl::Impl(network::Reasoning* n, ScriptEngine* se, std::shared_ptr<ReplState> rs, CommandExecutor::LineProcessor lp) : _n(n), _script_engine(se), _repl_state(std::move(rs)), _process_line_callback(std::move(lp))
@@ -192,6 +227,61 @@ namespace zelph::console
         } scope(_sources, sources);
 
         it->second(cmd);
+    }
+
+    CommandExecutor::DefaultScope CommandExecutor::Impl::apply_default(const std::vector<std::string>& cmd)
+    {
+        const DefaultSetting* setting = nullptr;
+        if (!cmd.empty())
+        {
+            for (const DefaultSetting& candidate : default_settings)
+                if (cmd[0] == candidate.command) setting = &candidate;
+        }
+
+        if (setting == nullptr)
+        {
+            std::string settings;
+            for (const DefaultSetting& candidate : default_settings)
+                settings += std::string(settings.empty() ? "" : ", ") + candidate.command;
+            throw std::runtime_error("a default is one of the settings " + settings);
+        }
+
+        // Without its value, such a command shows the setting, which a
+        // line producing no output would accomplish for nobody.
+        if (!setting->toggle && cmd.size() == 1)
+            throw std::runtime_error(std::string(setting->command) + " needs the value it is to set");
+
+        // A setting command's output responds to the person who entered it, and
+        // since no default was typed, only the error reports issued by the
+        // command itself reach the output. The handler and the flag are
+        // restored regardless of how the command ends.
+        struct DefaultRun
+        {
+            network::Reasoning* n;
+            io::OutputHandler   original;
+            bool&               applying;
+
+            DefaultRun(network::Reasoning* reasoning, bool& flag)
+                : n(reasoning)
+                , original(reasoning->get_output_handler())
+                , applying(flag)
+            {
+                n->set_output_handler(
+                    [handler = original](const io::OutputEvent& event)
+                    {
+                        if (handler && event.channel == io::OutputChannel::Error) handler(event);
+                    });
+                applying = true;
+            }
+            ~DefaultRun()
+            {
+                n->set_output_handler(std::move(original));
+                applying = false;
+            }
+        } run(_n, _applying_defaults);
+
+        execute(cmd, {});
+        return setting->scope;
     }
 
     // --- Registration ---
@@ -369,6 +459,11 @@ void console::CommandExecutor::execute(const std::vector<std::string>& cmd, cons
 void console::CommandExecutor::finish_input()
 {
     _pImpl->finish_input();
+}
+
+console::CommandExecutor::DefaultScope console::CommandExecutor::apply_default(const std::vector<std::string>& cmd)
+{
+    return _pImpl->apply_default(cmd);
 }
 
 void console::CommandExecutor::require_full_graph_mode(const std::string& name) const

@@ -1,15 +1,14 @@
 #!/usr/bin/env python3
 """Hold the zelph binary to the options of its command line.
 
-``zelph --node-map-load-factor <factor>`` gives the session the load factor
-that its node map may reach once it has 2^31 buckets, as the default of the
-process: the session has it from its first line on, ``.node-map-load-factor``
-names it as the default, and ``.new`` restores it. The library owns all of
-that (``Interactive::set_node_map_default_load_factor``) and the doctest suite
-pins it there. What only a real process can show is what ``main()`` does with
-its arguments: that the option is read where it stands ahead of a script, that
-behind the name of a script its two words reach the script as arguments, and
-that an option whose factor cannot be read ends the process with status 1
+``zelph --default '<setting line>'`` makes a setting line a default of the
+process: the session has the setting from its first line on, and ``.new``
+restores it. The option may be given several times. The library owns all of
+that (``Interactive::add_default``) and the doctest suite pins it there. What
+only a real process can show is what ``main()`` does with its arguments: that
+the option is read where it stands ahead of a script, each time it is given,
+that behind the name of a script its two words reach the script as arguments,
+and that a line which cannot be a default ends the process with status 1
 before anything has run.
 
 ``zelph -v`` and ``zelph --version`` print the version and what the binary
@@ -31,9 +30,11 @@ import subprocess
 import sys
 import tempfile
 
-OPTION = "--node-map-load-factor"
+OPTION = "--default"
+FACTOR = ".node-map-load-factor"
 STATUS_LINE = "Node map load factor from 2^31 buckets: "
-SHOW = ".node-map-load-factor\n"
+SHOW = FACTOR + "\n"
+ANCHORS_OFF = "Anchor-based lookups: off"
 
 # What a session outputs upon commencing input from a pipe, and thus the
 # mark of a process that initiated execution.
@@ -60,74 +61,142 @@ CASES = [
         "holds": [STATUS_LINE + "0.8 (default)"],
     },
     {
-        "name": "the option gives the session its default",
-        "before": [OPTION, "0.9"],
+        "name": "a default line gives the session its setting",
+        "before": [OPTION, FACTOR + " 0.9"],
         "lines": SHOW,
         "status": 0,
         "holds": [STATUS_LINE + "0.9 (default)"],
     },
     {
-        "name": "the default of the option is what .new restores and what 'default' names",
-        "before": [OPTION, "0.9"],
-        "lines": ".node-map-load-factor 0.95\n.new\n" + SHOW + ".node-map-load-factor 0.85\n.node-map-load-factor default\n",
+        "name": "the setting of a default line is what .new restores and what 'default' names",
+        "before": [OPTION, FACTOR + " 0.9"],
+        "lines": FACTOR + " 0.95\n.new\n" + SHOW + FACTOR + " 0.85\n" + FACTOR + " default\n",
         "status": 0,
         "holds": [STATUS_LINE + "0.95\n", STATUS_LINE + "0.85\n", STATUS_LINE + "0.9 (default)"],
         "count": (STATUS_LINE + "0.9 (default)", 2),
     },
     {
         "name": "the option ahead of a script",
-        "before": [OPTION, "0.9"],
+        "before": [OPTION, FACTOR + " 0.9"],
         "lines": SHOW,
         "as_script": True,
         "status": 0,
         "holds": [STATUS_LINE + "0.9 (default)"],
     },
     {
-        # Behind the name of a script, the two words of the option serve as
-        # arguments to the script: the session keeps 0.8, and the script reads
-        # both words.
-        "name": "behind the name of a script the option belongs to the script",
-        "before": [],
-        "lines": SHOW + '%(zelph/out (string "arguments: " (string/join (dyn :args) " ")))\n',
+        # A script whose line is a .new is read on by the engine that the
+        # reset made, and that engine adopts the default as the first one did.
+        "name": "a script with a .new has the default back",
+        "before": [OPTION, ".anchors off"],
+        "lines": ".anchors on\n.new\n.anchors\n",
         "as_script": True,
-        "after": [OPTION, "0.9"],
         "status": 0,
-        "holds": [STATUS_LINE + "0.8 (default)", OPTION + " 0.9"],
+        "holds": ["Anchor-based lookups: on", ANCHORS_OFF],
+        "count": (ANCHORS_OFF, 1),
     },
     {
-        "name": "the option without a factor",
+        # Behind the script's name, the two words comprising the option
+        # serve as arguments to the script: the session keeps its setting,
+        # and the script reads both words.
+        "name": "behind the name of a script the option belongs to the script",
+        "before": [],
+        "lines": ".anchors\n" + ARGUMENTS,
+        "as_script": True,
+        "after": [OPTION, ".anchors off"],
+        "status": 0,
+        "holds": ["Anchor-based lookups: on", "arguments: " + OPTION + " .anchors off"],
+        "lacks": [ANCHORS_OFF],
+    },
+    {
+        "name": "the option given several times",
+        "before": [OPTION, ".anchors off", OPTION, ".lang de", OPTION, ".explain-budget 5000"],
+        "lines": ".anchors\n.lang\n.explain-budget\n.new\n.anchors\n.lang\n.explain-budget\n",
+        "status": 0,
+        "holds": ["The current language is 'de'", "Explain budget: 5000 work units"],
+        "count": (ANCHORS_OFF, 2),
+    },
+    {
+        "name": "of two lines for one setting the later one decides",
+        "before": [OPTION, FACTOR + " 0.9", OPTION, FACTOR + " 0.85"],
+        "lines": SHOW + ".new\n" + SHOW,
+        "status": 0,
+        "count": (STATUS_LINE + "0.85 (default)", 2),
+    },
+    {
+        # The lines associated with the option produce no output,
+        # neither at the beginning nor following a .new: the script's
+        # output originates solely from its own lines.
+        "name": "a default line prints nothing",
+        "before": [OPTION, ".anchors off", OPTION, ".deductions all", OPTION, ".timer off"],
+        "lines": RAN + ".new\n" + RAN,
+        "as_script": True,
+        "status": 0,
+        "count": ("the script ran", 2),
+        "lacks": ["Anchor-based lookups", "Deduction printing mode", "Timer:"],
+    },
+    {
+        # .new preserves the session's configuration, so the line
+        # responsible for that setting is not re-executed: the toggle that
+        # disabled auto-run initially would re-enable it, and the line
+        # entered after the .new would then say "disabled".
+        "name": "a setting of the session is set once",
+        "before": [OPTION, ".auto-run"],
+        "lines": ".new\n.auto-run\n",
+        "status": 0,
+        "holds": ["Auto-run is now enabled."],
+        "lacks": ["Auto-run is now disabled."],
+    },
+    {
+        "name": "the option without a line",
         "before": [OPTION],
         "lines": "a b c\n",
         "status": 1,
-        "holds": ["Option " + OPTION + " needs a factor"],
+        "holds": ["Option " + OPTION + " needs a setting line"],
         "lacks": [BANNER, "a b c"],
     },
     {
-        "name": "a factor that is no number",
-        "before": [OPTION, "abc"],
+        "name": "a line that is no setting command",
+        "before": [OPTION, ".import math"],
         "lines": "a b c\n",
         "status": 1,
-        "holds": ["Option " + OPTION + ": ", "a number from 0.8 to 0.95", "not 'abc'"],
+        "holds": ["Option " + OPTION + ": '.import math' cannot be a default", "a default is one of the settings .lang,"],
         "lacks": [BANNER, "a b c"],
     },
     {
-        "name": "a factor below the range",
-        "before": [OPTION, "0.5"],
+        "name": "a setting command without its value",
+        "before": [OPTION, ".anchors"],
         "lines": "a b c\n",
         "status": 1,
-        "holds": ["a number from 0.8 to 0.95", "not '0.5'"],
+        "holds": ["Option " + OPTION + ": '.anchors' cannot be a default", ".anchors needs the value it is to set"],
         "lacks": [BANNER, "a b c"],
     },
     {
-        # A script does not execute once the option preceding it has
-        # failed.
-        "name": "a factor above the range ahead of a script",
-        "before": [OPTION, "0.96"],
+        "name": "a value that the command refuses",
+        "before": [OPTION, FACTOR + " abc"],
+        "lines": "a b c\n",
+        "status": 1,
+        "holds": ["Option " + OPTION + ": '" + FACTOR + " abc' cannot be a default", "a number from 0.8 to 0.95"],
+        "lacks": [BANNER, "a b c"],
+    },
+    {
+        # A script does not carry out execution once a line associated
+        # with the option has failed, even if a preceding line was taken.
+        "name": "a line that fails behind one that was taken, ahead of a script",
+        "before": [OPTION, ".anchors off", OPTION, ".timer never"],
         "lines": "a b c\n",
         "as_script": True,
         "status": 1,
-        "holds": ["a number from 0.8 to 0.95", "not '0.96'"],
+        "holds": ["Usage: .timer [on|off|auto]"],
         "lacks": ["a b c"],
+    },
+    {
+        # Nothing executes, not even the version report.
+        "name": "a line that fails behind -v",
+        "before": ["-v", OPTION, ".anchors maybe"],
+        "lines": "a b c\n",
+        "status": 1,
+        "holds": ["Usage: .anchors [on|off]"],
+        "lacks": [VERSION_REPORT, BANNER, "a b c"],
     },
     {
         "name": "-v prints the version and starts no session",
