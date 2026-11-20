@@ -620,6 +620,16 @@ namespace zelph
         // 8. :unquote -> ,identifier (Reference to a Janet variable)
         // 9. :selffact -> :pred X (self-fact sugar: desugars to (X pred X))
         // Returns tagged tuples like [:atom "val"], [:list-compact "val"] or [:nested sub-stmt...] for C++ processing
+        //
+        // The grammar is expressed through adjacent string literals, which
+        // the compiler joins into the single string that it is. Visual
+        // Studio 2022 (MSVC 19.44) imposes a cap of no more than 16,380 bytes
+        // within a single string literal prior to concatenation and halts
+        // with error C2026 otherwise, while the grammar exceeds that length.
+        // A literal concludes at the point where a part of the grammar ends,
+        // behind the indentation of the subsequent line, thereby ensuring the
+        // parts are read as a unified text. tools/check_string_literals.py
+        // enforces that every literal in the sources adheres to the limit.
         std::string peg_setup = R"zph(
             # A group in parentheses and a whole line are read alike: one or
             # more statements separated by commas. A single statement gets
@@ -714,7 +724,8 @@ namespace zelph
                 (array :root ;(slice rule 1))
                 line))
 
-            (def zelph-grammar
+            )zph"
+                                R"zph((def zelph-grammar
               ~{:ws (set " \t\r\f\n\0\v")
                 :s* (any :ws)
                 :s+ (some :ws)
@@ -811,7 +822,8 @@ namespace zelph
                 #    Characters are stored reversed internally (LSB-first for numbers).
                 :tag-list-compact (group (* (constant :list-compact) (* "<" (capture (some (if-not (set "> \t\r\n") 1))) ">")))
 
-                # Recursive definitions need forward declaration in PEG if simple recursive descent isn't enough,
+                )zph"
+                                R"zph(# Recursive definitions need forward declaration in PEG if simple recursive descent isn't enough,
                 # but Janet PEG handles this via the :val-any choice reference.
 
                 # Focused Value: *Value (e.g. *A or *{...} or *(...))

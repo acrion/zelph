@@ -420,6 +420,18 @@ if (Python3_Interpreter_FOUND)
                 "$<TARGET_FILE:zelph>" 0)
     endif ()
 
+    # --- the length of a string literal ----------------------------------------
+    #
+    # Visual Studio 2022 imposes a cap of 16,380 bytes within a single string
+    # literal (error C2026), yet no compiler used by the CI enforces such a
+    # limit: a literal exceeding this amount would compile everywhere except
+    # in that environment. The second test holds the check to the cases that
+    # decide what it measures.
+    zelph_add_check_test(string_literals_fit_visual_studio_2022 "${CMAKE_SOURCE_DIR}/tools/check_string_literals.py"
+            "${CMAKE_SOURCE_DIR}/src" 0)
+    zelph_add_check_test(string_literal_check_reads_literals "${CMAKE_SOURCE_DIR}/tools/check_string_literals.py"
+            "--self-test" 0)
+
     # --- the version a citation names ------------------------------------------
     #
     # CITATION.cff mirrors the version specified by project(), with no

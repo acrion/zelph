@@ -125,6 +125,19 @@ if(MSVC)
         $<$<CONFIG:Debug>:-D_DEBUG>
     )
 
+    # The conforming preprocessor, for MSVC alone: clang has no other
+    # preprocessor, even when it uses the MSVC ABI. The traditional
+    # preprocessor in Visual Studio 2022 (MSVC 19.44) fails to process a raw
+    # string literal containing a backslash where the literal appears within
+    # the argument of a macro that stringizes it, causing the compiler to
+    # halt with error C2017 ("illegal escape sequence"). The tests write the
+    # anticipated text as such literals within the assertions of doctest
+    # (test_annotations.cpp compares a Janet value holding escapes with
+    # such a literal).
+    if(CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
+        target_compile_options(project_options INTERFACE /Zc:preprocessor)
+    endif()
+
     # MSVC places the jump tables of a switch within the code section on x64
     # architecture, using four-byte offsets that a disassembler sweeping the
     # section reads as instructions. An entry with its least significant byte
