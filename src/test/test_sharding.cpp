@@ -624,17 +624,22 @@ TEST_CASE("sharding: a manifest that does not match the chunk directory of its .
     // farther along, or given no offset at all, and a nodeOfName chunk
     // beyond what the file contains if `one_more`: a copy of the last one,
     // placed under the next number.
+    // And where it names the .bin: via its path, or `by_uri`, as a published
+    // manifest names it, in which case the load reads the copy beside the
+    // manifest.
     struct Changes
     {
         uint64_t longer         = 0;
         uint64_t later          = 0;
         bool     without_offset = false;
         bool     one_more       = false;
+        bool     by_uri         = false;
     };
     const auto write_manifest = [&](const Changes& changes)
     {
+        const std::string  bin = changes.by_uri ? "hf://datasets/acrion/zelph-partial-load-test/net/net.bin" : artifact.bin.generic_string();
         std::ostringstream text;
-        text << "{\n  \"source\": {\"binPath\": \"" << artifact.bin.generic_string() << "\", \"headerLengthBytes\": " << artifact.header_length
+        text << "{\n  \"source\": {\"binPath\": \"" << bin << "\", \"headerLengthBytes\": " << artifact.header_length
              << "},\n  \"sections\": {\n";
         bool first_section = true;
         for (const char* name : {"left", "right", "nameOfNode", "nodeOfName"})
@@ -695,6 +700,28 @@ TEST_CASE("sharding: a manifest that does not match the chunk directory of its .
         write_manifest({.one_more = true});
         refused("the manifest lists nodeOfName chunk 2, which the directory does not");
     }
+    SUBCASE("the directory is named by the file it was read from")
+    {
+        // The directory against which the manifest is verified is the one
+        // belonging to the copy, so the refusal refers to the copy and
+        // not to the object identified by the URI, which was never read.
+        write_manifest({.longer = 1, .by_uri = true});
+        refused("net.bin': the manifest gives left chunk 0 " + std::to_string(left_length + 1) + " bytes");
+        with_fresh_session([&](auto&, auto& interactive)
+                           {
+            try
+            {
+                interactive.process(".load-partial \"" + manifest.string() + "\"");
+                FAIL("expected the load to be refused");
+            }
+            catch (const std::runtime_error& e)
+            {
+                const std::string message(e.what());
+                CAPTURE(message);
+                CHECK(message.find("it does not match the chunk directory of '") != std::string::npos);
+                CHECK(message.find("hf://") == std::string::npos);
+            } });
+    }
 
     fs::remove_all(artifact.root);
 }
@@ -707,26 +734,59 @@ TEST_CASE("sharding: a manifest that does not match the chunk directory of its .
 // without this comparison, the load discards the graph and fails at the chunk
 // that is truncated, and when the shards are located alongside the manifest,
 // it even succeeds.
+//
+// The refusal names the file that was read. The sharded manifest names its
+// .bin via a URI, just as a published one does, and the load reads the
+// copy located beside the manifest: that copy is the file that lost bytes,
+// and the object the URI refers to was never asked.
 TEST_CASE("sharding: a manifest over a local .bin that lost bytes is refused before the session's network is discarded")
 {
     const auto        artifact = build_artifact(artifact_root("cut-bin"));
     const std::string bin      = read_file(artifact.bin);
     const uint64_t    size     = bin.size();
-    std::ofstream(artifact.bin, std::ios::binary | std::ios::trunc).write(bin.data(), static_cast<std::streamsize>(size - 8));
 
-    for (const auto& manifest : {artifact.sharded_manifest, artifact.seek_manifest})
+    // Two methods of losing bytes. Without its last eight, the file
+    // possesses a chunk directory that can be read, and the last chunk
+    // that it records ends past the file's end. Truncated within the
+    // directory, it has one that cannot be read.
+    struct Cut
     {
-        CAPTURE(manifest.string());
-        with_fresh_session([&](auto& collector, auto& interactive)
-                           {
-            interactive.process("a p b");
-            CHECK_THROWS_WITH_AS(interactive.process(".load-partial \"" + manifest.string() + "\""),
-                                 doctest::Contains("nodeOfName chunk 1 ends at byte " + std::to_string(size) + ", but the file ends at byte " + std::to_string(size - 8)),
-                                 std::runtime_error);
+        uint64_t    kept;
+        std::string difference;
+    };
+    const std::vector<Cut> cuts = {
+        {size - 8, "nodeOfName chunk 1 ends at byte " + std::to_string(size) + ", but the file ends at byte " + std::to_string(size - 8)},
+        {artifact.header_length - 8, "bytes behind the header, but only "},
+    };
 
-            collector.clear();
-            interactive.process("A p B");
-            CHECK(answers_contain(collector, "a p b")); });
+    for (const Cut& cut : cuts)
+    {
+        std::ofstream(artifact.bin, std::ios::binary | std::ios::trunc).write(bin.data(), static_cast<std::streamsize>(cut.kept));
+        for (const auto& manifest : {artifact.sharded_manifest, artifact.seek_manifest})
+        {
+            CAPTURE(cut.kept);
+            CAPTURE(manifest.string());
+            with_fresh_session([&](auto& collector, auto& interactive)
+                               {
+                interactive.process("a p b");
+                try
+                {
+                    interactive.process(".load-partial \"" + manifest.string() + "\"");
+                    FAIL("expected the load to be refused");
+                }
+                catch (const std::runtime_error& e)
+                {
+                    const std::string message(e.what());
+                    CAPTURE(message);
+                    CHECK(message.find("net.bin': its chunk directory does not match the file (truncated or damaged): ") != std::string::npos);
+                    CHECK(message.find(cut.difference) != std::string::npos);
+                    CHECK(message.find("hf://") == std::string::npos);
+                }
+
+                collector.clear();
+                interactive.process("A p B");
+                CHECK(answers_contain(collector, "a p b")); });
+        }
     }
 
     fs::remove_all(artifact.root);
@@ -785,6 +845,10 @@ TEST_CASE("sharding: a chunk that cannot be read at the offset its chunk directo
                 CHECK(message.find("net.bin' at byte " + std::to_string(chunk.offset) + ": ") != std::string::npos);
                 CHECK(message.find("hf://") == std::string::npos);
                 CHECK(message.find("The previous network was already discarded -- use .new to start over") != std::string::npos);
+                // The reason is a description provided by kj, which ends its
+                // own sentence: the note follows that full stop and adds none.
+                CHECK(message.find(". The previous network was already discarded") != std::string::npos);
+                CHECK(message.find(".. The previous network") == std::string::npos);
                 // The content that kj adds to its own message stays out of this message.
                 CHECK(message.find("stack:") == std::string::npos);
                 CHECK(message.find(".c++") == std::string::npos);
@@ -1205,8 +1269,23 @@ TEST_CASE("sharding: a load straight from the repository that fails after discar
     const auto artifact = build_artifact(repository / "net");
 
     const auto& chunk = artifact.sections.at("left").front();
-    std::ofstream(artifact.shards_dir / "left" / shard_file_name(chunk), std::ios::binary | std::ios::trunc)
-        << std::string(static_cast<size_t>(chunk.length), '\xff');
+    const auto  shard = artifact.shards_dir / "left" / shard_file_name(chunk);
+
+    // The note is a standalone sentence positioned after whatever has
+    // failed. A shard that is impaired fails with a description provided by
+    // kj, concluding with a full stop; a shard that the repository lacks
+    // fails with a message ending in the shard's name. In either case,
+    // precisely one full stop precedes the note.
+    bool impaired = false;
+    SUBCASE("a shard that is impaired")
+    {
+        impaired = true;
+        std::ofstream(shard, std::ios::binary | std::ios::trunc) << std::string(static_cast<size_t>(chunk.length), '\xff');
+    }
+    SUBCASE("a shard that the repository does not have")
+    {
+        fs::remove(shard);
+    }
 
     const ScopedEnvironment environment(repository_environment(repository, cache));
 
@@ -1223,9 +1302,14 @@ TEST_CASE("sharding: a load straight from the repository that fails after discar
         {
             const std::string message(e.what());
             CAPTURE(message);
-            CHECK(message.find("Failed to read left chunk 0 from its shard '") != std::string::npos);
+            if (impaired)
+                CHECK(message.find("Failed to read left chunk 0 from its shard '") != std::string::npos);
+            else
+                CHECK(message.find("Unable to validate remote cache identity for hf://") != std::string::npos);
             CHECK(message.find("its chunk directory does not match the file") == std::string::npos);
             CHECK(message.find("The previous network was already discarded -- use .new to start over") != std::string::npos);
+            CHECK(message.find(". The previous network was already discarded") != std::string::npos);
+            CHECK(message.find(".. The previous network") == std::string::npos);
         }
         CHECK_FALSE(any_event_contains(collector, "falling back to sequential"));
         CHECK(node_count(collector, interactive) == 0); });

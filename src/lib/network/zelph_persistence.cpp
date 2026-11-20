@@ -930,7 +930,7 @@ void Zelph::Impl::loadFromManifest(const std::string& manifest_path, const Zelph
             // local .bin, whose size is that of the .bin, a size that a pipe
             // does not have.
             const std::optional<std::uint64_t> readable = local_file_size(header_source_path);
-            if (!readable) throw unknown_size_refusal(header_source);
+            if (!readable) throw unknown_size_refusal(bin_name);
             if (!header_is_remote) source_size = *readable;
             directory = read_directory(buffered_input, header, *readable);
         }
@@ -948,7 +948,7 @@ void Zelph::Impl::loadFromManifest(const std::string& manifest_path, const Zelph
                                      + std::to_string(manifest_description.source_header_length_bytes) + ") do not cover the chunk directory of '"
                                      + header_source + "': " + e.what());
         }
-        throw directory_refusal(header_source, {e.what()});
+        throw directory_refusal(bin_name, {e.what()});
     }
     catch (const kj::Exception& e)
     {
@@ -975,11 +975,11 @@ void Zelph::Impl::loadFromManifest(const std::string& manifest_path, const Zelph
         }
         if (const auto deviations = zelph::io::directory_deviations(*directory, zelph::io::declared_chunks(impl), source_size); !deviations.empty())
         {
-            throw directory_refusal(header_source, deviations);
+            throw directory_refusal(bin_name, deviations);
         }
         if (const auto deviations = manifest_deviations(manifest_description, *directory); !deviations.empty())
         {
-            throw std::runtime_error("Refused to load '" + manifest_path + "': it does not match the chunk directory of '" + header_source
+            throw std::runtime_error("Refused to load '" + manifest_path + "': it does not match the chunk directory of '" + bin_name
                                      + "': " + zelph::io::describe_deviations(deviations));
         }
     }
@@ -1316,6 +1316,19 @@ void Zelph::Impl::saveToFile(const std::string& filename, const ankerl::unordere
     #ifdef _WIN32
         #define fileno _fileno
     #endif
+    const auto cannot_seek = [&filename](const int error)
+    {
+        return std::runtime_error("Refused to save to '" + filename + "': it cannot seek back (" + std::strerror(error)
+                                  + "), which a save needs in order to write the chunk directory ahead of the chunks");
+    };
+
+    // A named pipe is refused without being opened. Opening it for writing
+    // causes a wait until a reader has opened it, so saving into a pipe that
+    // no one reads would wait indefinitely, and into one that is read would
+    // wait only to be refused below.
+    std::error_code no_status;
+    if (std::filesystem::is_fifo(filename, no_status)) throw cannot_seek(ESPIPE);
+
     FILE* file = fopen(filename.c_str(), "wb");
     if (!file)
     {
@@ -1333,12 +1346,7 @@ void Zelph::Impl::saveToFile(const std::string& filename, const ankerl::unordere
     #else
     const bool seekable = lseek(fileno(file), 0, SEEK_CUR) >= 0;
     #endif
-    if (!seekable)
-    {
-        const std::string reason = std::strerror(errno);
-        throw std::runtime_error("Refused to save to '" + filename + "': it cannot seek back (" + reason
-                                 + "), which a save needs in order to write the chunk directory ahead of the chunks");
-    }
+    if (!seekable) throw cannot_seek(errno);
     kj::FdOutputStream output(fileno(file));
 
     // Main message (small data)
@@ -1758,8 +1766,13 @@ std::string Zelph::Impl::read_error_text(const std::string& filename, const kj::
 // session's graph: it states this, unless it already does.
 std::string Zelph::Impl::discarded_text(const std::string& message)
 {
-    static const std::string note = ". The previous network was already discarded -- use .new to start over";
-    return message.find(note) == std::string::npos ? message + note : message;
+    static const std::string note = "The previous network was already discarded -- use .new to start over";
+    if (message.find(note) != std::string::npos) return message;
+
+    // A message that ends its own sentence, as one that closes with a
+    // description from kj does, gets no second full stop.
+    const bool ended = !message.empty() && message.back() == '.';
+    return message + (ended ? " " : ". ") + note;
 }
 
 // Rethrows the exception that a load raised and that the caller is handling.

@@ -33,13 +33,18 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #include <algorithm>
 #include <atomic>
+#include <cerrno>
 #include <chrono>
+#include <condition_variable>
 #include <cstdint>
 #include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <map>
+#include <mutex>
 #include <sstream>
+#include <stdexcept>
 #include <string>
 #include <thread>
 #include <vector>
@@ -482,6 +487,71 @@ namespace
         std::size_t       _received = 0;
         std::thread       _reader;
     };
+
+    // A named pipe that remains unread by anything. A writer that opens it
+    // waits within the open for a reader, indefinitely. To ensure a test
+    // of such a writer concludes in either way, a thread opens the pipe on
+    // its behalf once `patience` has expired, and the pipe records that it
+    // had to.
+    class UnreadPipe
+    {
+    public:
+        UnreadPipe(fs::path path, const std::chrono::milliseconds patience)
+            : _path(std::move(path))
+        {
+            fs::remove(_path);
+            REQUIRE(::mkfifo(_path.c_str(), 0600) == 0);
+            _rescuer = std::thread([this, patience]
+                                   {
+                std::unique_lock lock(_mutex);
+                if (_ended.wait_for(lock, patience, [this]
+                                    { return _over; }))
+                    return;
+                _rescued     = true;
+                const int fd = ::open(_path.c_str(), O_RDONLY | O_NONBLOCK);
+                _ended.wait(lock, [this]
+                            { return _over; });
+                if (fd >= 0) ::close(fd); });
+        }
+
+        ~UnreadPipe()
+        {
+            finish();
+            fs::remove(_path);
+        }
+
+        const fs::path& path() const { return _path; }
+
+        // Whether the writer waited until the pipe was opened.
+        // Terminates the watch.
+        bool rescued()
+        {
+            finish();
+            return _rescued;
+        }
+
+        UnreadPipe(const UnreadPipe&)            = delete;
+        UnreadPipe& operator=(const UnreadPipe&) = delete;
+
+    private:
+        void finish()
+        {
+            if (!_rescuer.joinable()) return;
+            {
+                const std::lock_guard lock(_mutex);
+                _over = true;
+            }
+            _ended.notify_all();
+            _rescuer.join();
+        }
+
+        fs::path                _path;
+        std::mutex              _mutex;
+        std::condition_variable _ended;
+        bool                    _over    = false;
+        bool                    _rescued = false;
+        std::thread             _rescuer;
+    };
 }
 
 // A save writes the chunk directory ahead of the chunks by seeking back over
@@ -499,6 +569,30 @@ TEST_CASE("save: a target that cannot seek back is refused before the first byte
     PipeSink pipe(fs::temp_directory_path() / "zelph_save_into_pipe.bin");
     CHECK_THROWS_WITH_AS(interactive.process(".save \"" + pipe.path().string() + "\""), doctest::Contains("it cannot seek back"), std::runtime_error);
     CHECK(pipe.received() == 0);
+}
+
+// A pipe that receives no reads cannot be opened for writing: the open
+// operation remains pending until a reader appears. A save into such a pipe
+// waited there, indefinitely if no reader ever arrived, and was refused only
+// upon the arrival of one. The file system says what the target is without
+// opening it, so the refusal occurs immediately, citing the same reason
+// applicable to a pipe that is read. .save-predicates writes through the
+// identical code path.
+TEST_CASE("save: a pipe that nothing reads is refused at once")
+{
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+    interactive.process("a p b");
+
+    for (const char* command : {".save", ".save-predicates"})
+    {
+        CAPTURE(command);
+        UnreadPipe pipe(fs::temp_directory_path() / "zelph_save_into_unread_pipe.bin", std::chrono::seconds(5));
+        CHECK_THROWS_WITH_AS(interactive.process(std::string(command) + " \"" + pipe.path().string() + "\"" + (std::string(command) == ".save" ? "" : " p")),
+                             doctest::Contains("it cannot seek back (" + std::string(std::strerror(ESPIPE)) + ")"),
+                             std::runtime_error);
+        CHECK_FALSE(pipe.rescued());
+    }
 }
 #endif
 
