@@ -78,7 +78,7 @@ zelph> .node-map-load-factor default
 Node map load factor from 2^31 buckets: 0.9 (default)
 ```
 
-The load factor for such a line is the session’s default in every sense: the status line marks it, and `default` restores it, as `.help .node-map-load-factor` details.
+The value of such a line is the session’s default in every sense. `.node-map-load-factor` and `.explain-budget` are the two settings that mark the default in their status line and take the word `default` as their argument, and for both of them the default is the value of the line: the status line marks it, and `default` restores it.
 
 Inside the REPL the same file is a module:
 

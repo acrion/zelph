@@ -3673,7 +3673,7 @@ namespace zelph::network
         //
         // The search within the limit persists for proofs too large to find in
         // full: the search without it may perform up to
-        // `default_explain_budget` units of work (see charge) before the root
+        // `explain_budget()` units of work (see charge) before the root
         // achieves a clean proof, after which the annotation's own bound takes
         // effect. In a search large enough to matter, each unit consumes
         // between 0.25 us (the transitive closure of a ring) and 2.5 us
@@ -3974,12 +3974,23 @@ namespace zelph::network
 
     std::size_t Reasoning::explain_budget() const
     {
-        return _explain_budget != 0 ? _explain_budget : default_explain_budget;
+        return _explain_budget != 0 ? _explain_budget : _default_explain_budget;
     }
 
     void Reasoning::set_explain_budget(const std::size_t searches) const
     {
         _explain_budget = searches;
+    }
+
+    std::size_t Reasoning::default_explain_budget() const
+    {
+        return _default_explain_budget;
+    }
+
+    void Reasoning::set_default_explain_budget(const std::size_t work) const
+    {
+        if (work != 0) _default_explain_budget = work;
+        _explain_budget = 0;
     }
 
     Reasoning::ExplainCounts Reasoning::last_explain_counts() const

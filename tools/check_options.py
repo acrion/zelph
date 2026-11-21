@@ -112,7 +112,7 @@ CASES = [
         "before": [OPTION, ".anchors off", OPTION, ".lang de", OPTION, ".explain-budget 5000"],
         "lines": ".anchors\n.lang\n.explain-budget\n.new\n.anchors\n.lang\n.explain-budget\n",
         "status": 0,
-        "holds": ["The current language is 'de'", "Explain budget: 5000 work units"],
+        "holds": ["The current language is 'de'", "Explain budget: 5000 work units (default)"],
         "count": (ANCHORS_OFF, 2),
     },
     {

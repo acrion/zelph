@@ -2176,7 +2176,7 @@ TEST_CASE("explain-budget: without an argument it shows the budget, and whether 
     zelph::console::Interactive interactive(collector.sink());
     interactive.process(".explain-budget");
     CHECK(any_output_contains(collector, "Explain budget: 80000 work units (default)"));
-    CHECK(interactive.graph()->explain_budget() == zelph::network::Reasoning::default_explain_budget);
+    CHECK(interactive.graph()->explain_budget() == zelph::network::Reasoning::built_in_explain_budget);
 
     interactive.process(".explain-budget 1");
     collector.clear();
@@ -2231,6 +2231,12 @@ TEST_CASE("explain-budget: zelph/dependents ends with :truncated when the budget
     interactive.process(".explain-budget default");
     CHECK(value(R"((length (zelph/dependents "bob" "~" "man")))") == "4");
     CHECK(value(R"((find keyword? (zelph/dependents "bob" "~" "man")))") == "nil");
+
+    // The search reads the default of the session when the session has set
+    // no budget of its own: under a default of one unit, its answer is cut
+    // short as well.
+    interactive.add_default(".explain-budget 1");
+    CHECK(value(R"((last (zelph/dependents "bob" "~" "man")))") == ":truncated");
 }
 
 TEST_CASE("explain-budget: default restores the default budget")
@@ -2244,12 +2250,112 @@ TEST_CASE("explain-budget: default restores the default budget")
     collector.clear();
     interactive.process(".explain-budget default");
     CHECK(any_output_contains(collector, "Explain budget: 80000 work units (default)"));
-    CHECK(interactive.graph()->explain_budget() == zelph::network::Reasoning::default_explain_budget);
+    CHECK(interactive.graph()->explain_budget() == zelph::network::Reasoning::built_in_explain_budget);
 
     collector.clear();
     interactive.process(".explain (:r c) 3");
     CHECK_FALSE(any_output_contains(collector, "Note:"));
     CHECK_FALSE(interactive.graph()->last_explain_counts().limited);
+}
+
+// A session may possess its own default, which a default of the process gives
+// it (zelph --default '.explain-budget 5000'). Run as such a default, the
+// command sets the default of the engine and not merely the budget: the engine
+// has that budget from that moment onward, irrespective of any prior value,
+// and the command names it the default, in its status line as for its
+// argument. The built-in 80000 is a budget just like any other within such a
+// session. While the engine lacked a default of its own, the word `default`
+// referred to the built-in budget in such a session as well, where the same
+// word named the factor of the default line for .node-map-load-factor: one
+// word with two meanings.
+TEST_CASE("explain-budget: the default of a session is what the command names the default")
+{
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+    process_lines(interactive, too_large_program);
+    interactive.run(true, false, false);
+    interactive.process(".explain-budget 7");
+    interactive.add_default(".explain-budget 5000");
+    CHECK(interactive.graph()->explain_budget() == 5000);
+    CHECK(interactive.graph()->default_explain_budget() == 5000);
+
+    collector.clear();
+    interactive.process(".explain-budget");
+    CHECK(any_output_contains(collector, "Explain budget: 5000 work units (default)"));
+
+    collector.clear();
+    interactive.process(".explain-budget 80000");
+    CHECK(any_output_contains(collector, "Explain budget: 80000 work units"));
+    CHECK_FALSE(any_output_contains(collector, "(default)"));
+
+    collector.clear();
+    interactive.process(".explain-budget default");
+    CHECK(any_output_contains(collector, "Explain budget: 5000 work units (default)"));
+    CHECK(interactive.graph()->explain_budget() == 5000);
+
+    // The last default line determines the outcome, and the word `default`
+    // within such a line names the default the engine holds at that point.
+    // Such a line also takes a budget that was typed before it and
+    // restores it to that default.
+    interactive.add_default(".explain-budget 6000");
+    interactive.process(".explain-budget 9");
+    interactive.add_default(".explain-budget default");
+    CHECK(interactive.graph()->explain_budget() == 6000);
+    CHECK(interactive.graph()->default_explain_budget() == 6000);
+
+    // The default is the budget a search operates under, not merely the one
+    // the command shows: with a default of two units, the proof that the
+    // built-in budget searches whole is searched within the limit once the
+    // session returns to its default.
+    interactive.add_default(".explain-budget 2");
+    interactive.process(".explain-budget unlimited");
+    interactive.process(".explain-budget default");
+    collector.clear();
+    interactive.process(".explain (:r c) 3");
+    CHECK(any_output_contains(collector, "Note: the search for a proof whose leaves are all axioms ran out of its budget"));
+    CHECK(interactive.graph()->last_explain_counts().limited);
+
+    // `unlimited` serves as a default too, and the status line marks it as
+    // such.
+    interactive.add_default(".explain-budget unlimited");
+    collector.clear();
+    interactive.process(".explain-budget");
+    CHECK(any_output_contains(collector, "Explain budget: unlimited (default)"));
+    interactive.process(".explain-budget 3");
+    collector.clear();
+    interactive.process(".explain-budget default");
+    CHECK(any_output_contains(collector, "Explain budget: unlimited (default)"));
+    CHECK(interactive.graph()->explain_budget() == std::numeric_limits<std::size_t>::max());
+}
+
+// Only a default of the process sets the default of the engine. The command
+// typed in the same session, also directly behind a default line and behind
+// one that was refused, sets the budget and leaves the default in place.
+TEST_CASE("explain-budget: a typed budget leaves the default of a session where it was")
+{
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+    interactive.add_default(".explain-budget 5000");
+    interactive.process(".explain-budget 7");
+    CHECK(interactive.graph()->explain_budget() == 7);
+    CHECK(interactive.graph()->default_explain_budget() == 5000);
+
+    // A default line that the command rejects alters neither of the two.
+    CHECK_THROWS_AS(interactive.add_default(".explain-budget 0"), std::invalid_argument);
+    CHECK(interactive.graph()->explain_budget() == 7);
+    CHECK(interactive.graph()->default_explain_budget() == 5000);
+
+    collector.clear();
+    interactive.process(".explain-budget 9");
+    CHECK(any_output_contains(collector, "Explain budget: 9 work units"));
+    CHECK_FALSE(any_output_contains(collector, "(default)"));
+    CHECK(interactive.graph()->default_explain_budget() == 5000);
+
+    collector.clear();
+    interactive.process(".explain-budget unlimited");
+    CHECK(any_output_contains(collector, "Explain budget: unlimited"));
+    CHECK_FALSE(any_output_contains(collector, "(default)"));
+    CHECK(interactive.graph()->default_explain_budget() == 5000);
 }
 
 // The program above operates within the default budget, thus it is unable to
@@ -2280,7 +2386,7 @@ TEST_CASE("explain-budget: unlimited never falls back to the search within the l
     interactive.process(".explain (n0 ok yes) 0");
     const std::size_t whole = graph->last_explain_counts().work;
     CAPTURE(whole);
-    REQUIRE(whole > zelph::network::Reasoning::default_explain_budget);
+    REQUIRE(whole > zelph::network::Reasoning::built_in_explain_budget);
     interactive.process(".explain (n0 ok yes) 4");
     REQUIRE(graph->last_explain_counts().limited);
 
@@ -2327,7 +2433,24 @@ TEST_CASE("explain-budget: .new restores the default")
     collector.clear();
     interactive.process(".explain-budget");
     CHECK(any_output_contains(collector, "Explain budget: 80000 work units (default)"));
-    CHECK(interactive.graph()->explain_budget() == zelph::network::Reasoning::default_explain_budget);
+    CHECK(interactive.graph()->explain_budget() == zelph::network::Reasoning::built_in_explain_budget);
+
+    // A session possessing its own default reclaims that one. The engine
+    // produced by .new holds no knowledge of the prior engine, thus the session
+    // hands its default to every engine it makes, to the third just as to the
+    // second.
+    interactive.add_default(".explain-budget 5000");
+    for (int round = 0; round < 2; ++round)
+    {
+        CAPTURE(round);
+        interactive.process(".explain-budget 7");
+        interactive.process(".new");
+        CHECK(interactive.graph()->explain_budget() == 5000);
+        CHECK(interactive.graph()->default_explain_budget() == 5000);
+        collector.clear();
+        interactive.process(".explain-budget");
+        CHECK(any_output_contains(collector, "Explain budget: 5000 work units (default)"));
+    }
 }
 
 // The proof, as Janet data, for a program that provides answers to the
@@ -6398,6 +6521,11 @@ TEST_CASE("help: .explain-budget is documented and listed with the engine settin
     interactive.process(".help .explain-budget");
     CHECK(any_output_contains(collector, ".explain-budget [<units>|default|unlimited]"));
     CHECK_FALSE(any_event_contains(collector, "Unknown command"));
+
+    // What `default` names, and the option provided by the binary
+    // that gives a session its own default.
+    CHECK(any_output_contains(collector, "the budget the session started with"));
+    CHECK(any_output_contains(collector, "zelph --default '.explain-budget <units>'"));
 
     collector.clear();
     interactive.process(".help");

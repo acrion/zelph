@@ -197,7 +197,7 @@ engine, which carries none, is interpreted as marking every predicate, and
 `.stat` indicates how many predicates might have such a fact. This approach
 entails a cost: `.explain` of the documentation’s polynomial identity performs
 approximately tenfold more work when every predicate counts, surpassing the
-default budget. Whether a statement holds a marked predicate at any depth is
+built-in budget. Whether a statement holds a marked predicate at any depth is
 decided by a walk across the statements inside it, which conditions use based
 on the values they are bound to once any predicate is marked: one fact with
 two objects whose predicate is not held by any term causes the Jacobian

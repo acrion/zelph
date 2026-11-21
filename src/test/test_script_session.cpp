@@ -300,7 +300,7 @@ TEST_CASE("defaults: a setting line holds from the first line on and after every
         CAPTURE(engine);
         if (engine > 0)
         {
-            process_lines(interactive, ".lang en\n.anchors on\n.semi-naive off\n.contradiction-records on\n.negation-records off\n.explain-budget default\n.log 0\n");
+            process_lines(interactive, ".lang en\n.anchors on\n.semi-naive off\n.contradiction-records on\n.negation-records off\n.explain-budget 7\n.log 0\n");
             interactive.process(".new");
         }
         const zelph::network::Reasoning* const n = interactive.graph();
@@ -535,7 +535,7 @@ TEST_CASE("defaults: a line that fails as a command is no default afterwards")
     CHECK_FALSE(interactive.graph()->use_anchors());
     CHECK_NOTHROW(interactive.process(".new"));
     CHECK_FALSE(interactive.graph()->use_anchors());
-    CHECK(interactive.graph()->explain_budget() == zelph::network::Reasoning::default_explain_budget);
+    CHECK(interactive.graph()->explain_budget() == zelph::network::Reasoning::built_in_explain_budget);
     CHECK(interactive.graph()->seminaive());
     CHECK(shown(collector, interactive, ".anchors") == "Anchor-based lookups: off");
 }

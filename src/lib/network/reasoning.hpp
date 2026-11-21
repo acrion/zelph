@@ -735,13 +735,20 @@ namespace zelph::network
         // How much work the search to find the complete proof may
         // expend before a depth-limited explain opts to restrict itself
         // to the search within its limit (reasoning_explain.cpp,
-        // `charge`); 0 reverts to the default (`default_explain_budget`).
+        // `charge`); 0 reverts to the default (`default_explain_budget()`).
         // No search does as much work as the largest value, thus with it a
         // depth-limited explain always outputs the top of the complete proof
         // (`.explain-budget unlimited`).
-        static constexpr std::size_t default_explain_budget = 80000;
+        //
+        // The default is `built_in_explain_budget` in a fresh engine. A
+        // default of the process gives the engine a different one
+        // (`set_default_explain_budget`, which also reverts the budget to
+        // it; with 0 it keeps the default the engine has).
+        static constexpr std::size_t built_in_explain_budget = 80000;
         void                         set_explain_budget(std::size_t work) const;
         std::size_t                  explain_budget() const;
+        void                         set_default_explain_budget(std::size_t work) const;
+        std::size_t                  default_explain_budget() const;
 
         // What the last explain() did: the frequency with which the search
         // entered a fact, and the number of unique facts it entered. The
@@ -1543,6 +1550,7 @@ namespace zelph::network
         // (reasoning_explain.cpp).
         mutable std::shared_ptr<const ExplainRules> _explain_rules;
         mutable std::size_t                         _explain_budget{0}; // 0: the default
+        mutable std::size_t                         _default_explain_budget{built_in_explain_budget};
         std::shared_ptr<const ExplainRules>         explain_rules_in_force() const;
     };
 }

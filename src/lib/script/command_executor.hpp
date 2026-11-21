@@ -107,10 +107,10 @@ namespace zelph::console
         // commands and carries the value it sets, except in the case of a
         // toggle, which stands alone; it produces no output, as no one entered
         // it. While executing, a command with its own default to set sets that
-        // one: .node-map-load-factor then gives the engine the factor to which
-        // its argument `default` returns henceforth. Throws for a command not
-        // in the list, for one missing its value, and whatever the command
-        // itself throws.
+        // one: .node-map-load-factor and .explain-budget then give the engine
+        // the value to which their argument `default` returns henceforth.
+        // Throws for a command not in the list, for one missing its value, and
+        // whatever the command itself throws.
         DefaultScope apply_default(const std::vector<std::string>& cmd);
 
         // Throws when the session holds a partial load, naming `name` as

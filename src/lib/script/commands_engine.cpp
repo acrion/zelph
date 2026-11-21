@@ -206,9 +206,8 @@ namespace zelph::console
         const auto status = [this]
         {
             const std::size_t budget = _n->explain_budget();
-            if (budget == unlimited) return std::string("Explain budget: unlimited");
-            return "Explain budget: " + std::to_string(budget) + (budget == 1 ? " work unit" : " work units")
-                 + (budget == network::Reasoning::default_explain_budget ? " (default)" : "");
+            const std::string amount = budget == unlimited ? "unlimited" : std::to_string(budget) + (budget == 1 ? " work unit" : " work units");
+            return "Explain budget: " + amount + (budget == _n->default_explain_budget() ? " (default)" : "");
         };
 
         if (cmd.size() == 1)
@@ -229,6 +228,9 @@ namespace zelph::console
         };
         if (cmd.size() != 2) throw usage();
 
+        // `default` is the default of the engine, which both setters name
+        // by 0: the built-in budget, unless a default of the process gave
+        // the engine a different one.
         std::size_t budget = 0;
         if (cmd[1] == "unlimited")
         {
@@ -246,7 +248,14 @@ namespace zelph::console
             }
         }
 
-        _n->set_explain_budget(budget);
+        // As a default of the process, the command sets the engine's
+        // default, just as .node-map-load-factor does: the budget
+        // associated with such a line is then what `default` names and what
+        // the status line marks as the default.
+        if (_applying_defaults)
+            _n->set_default_explain_budget(budget);
+        else
+            _n->set_explain_budget(budget);
         _n->out(status(), true);
     }
 

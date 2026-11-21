@@ -130,7 +130,7 @@ namespace zelph::console
             "  .fact-stores [on|off]                     – Show or disable the fact-path acceleration stores (memory vs. speed)",
             "  .contradiction-records [on|off]           – Show or disable writing each contradiction into the graph (memory vs. repeated reports)",
             "  .negation-records [on|off]                – Show or set recording what negations derived, to warn when a later fact defeats one (default: off)",
-            "  .explain-budget [<units>|default|unlimited] – Show or set the work .explain may spend on the complete proof under a depth limit (default: 80000)",
+            "  .explain-budget [<units>|default|unlimited] – Show or set the work .explain may spend on the complete proof under a depth limit (default: 80000 or the budget of a --default line)",
             "  .node-map-load-factor [<factor>|default]  – Show or set the load factor of the node map from 2^31 buckets on (memory vs. speed, default: 0.8 or the factor of a --default line)",
             "",
             "Logging & Profiling",
@@ -560,7 +560,7 @@ namespace zelph::console
                          "derivation and the label it has without the limit. The complete\n"
                          "proof is searched once per fact. When finding a proof of the\n"
                          "queried fact whose leaves are all axioms takes more than the work\n"
-                         "budget -- by default about 0.2 s, what a proof of 5 000 facts on\n"
+                         "budget -- as built in about 0.2 s, what a proof of 5 000 facts on\n"
                          "the arithmetic modules takes; .explain-budget shows and sets it --\n"
                          "the search runs again within the limit instead, and a note above\n"
                          "the tree says so. That search does not\n"
@@ -1328,14 +1328,17 @@ namespace zelph::console
                                 "              seconds makes the tree the same on every machine. The\n"
                                 "              smallest budget, 1, leaves practically every proof to\n"
                                 "              the search within the limit.\n"
-                                "  default   – 80000 units, about 0.2 s on the machine where the\n"
-                                "              default was measured\n"
+                                "  default   – the budget the session started with: 80000 units, about\n"
+                                "              0.2 s on the machine where that budget was measured,\n"
+                                "              unless its command line gave another\n"
                                 "  unlimited – always search the complete proof and print its top,\n"
                                 "              however much work that takes\n"
                                 "'.explain <fact> 0' has no depth limit and therefore no budget: it\n"
                                 "always searches the complete proof. The budget is a setting of the\n"
-                                "engine, so .new restores the default, or the budget that a --default\n"
-                                "line of the command line set (see .help .new).\n"
+                                "engine, so .new restores the default.\n"
+                                "A session started as zelph --default '.explain-budget <units>' has that\n"
+                                "budget as its default, from its first line on and after every .new; the\n"
+                                "option stands ahead of the name of a script.\n"
                                 "The same budget bounds the search of (zelph/dependents <fact>) from\n"
                                 "Janet, which ends its answer with :truncated where the budget ran out."},
             {".node-map-load-factor", ".node-map-load-factor [<factor>|default]\n"
