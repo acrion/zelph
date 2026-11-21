@@ -25,6 +25,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #include <doctest/doctest.h>
 
+#include "directory_rewrite.hpp"
 #include "network/reasoning.hpp"
 #include "network/rule_identity.hpp"
 #include "network/zelph.hpp"
@@ -3676,9 +3677,10 @@ TEST_CASE("rule patterns: a rule that binds a rule's own collection leaves that 
     // ground rule's own collection, the ground rule's text would thereafter
     // contain X, and a rule over rules would no longer see it, or would
     // perceive it only until the text-variable store becomes aware of the
-    // write. The walk that stands in for the store following a removal, a
-    // load, or `.fact-stores off` reads the identical text, so the answer
-    // remains unchanged even after an unrelated `.remove`.
+    // write. The walk that stands in for the store following a removal, the
+    // load of a file lacking the store's record, or `.fact-stores off` reads
+    // the identical text, so the answer remains unchanged even after an
+    // unrelated `.remove`.
     run_both_modes([](auto& collector, auto& interactive)
                    {
         enum class Mode
@@ -4499,17 +4501,20 @@ c q d
 }
 
 // A membership whose member is a set of conditions that holds a variable is
-// classified as rule text and yields no response, exactly as the membership of a
-// statement that holds a variable does. The inner list of a nested rule serves as
-// such a member, and `(M in K) => (M seen K)` wrote it into the data as
-// `((A good yes), (X u K)) seen {...}`, where the conditions of the flat twin answer
-// nothing. A set of ground conditions holds no variable, and its membership provides
-// an answer, just as the membership of a ground condition in a flat list does.
-// Following a load, whether a set holds a variable is determined by reading the set
-// directly, as the stores that record it are disarmed.
+// classified as rule text and yields no response, exactly as the membership of
+// a statement that holds a variable does. The inner list of a nested rule
+// serves as such a member, and `(M in K) => (M seen K)` wrote it into the data
+// as `((A good yes), (X u K)) seen {...}`, where the conditions of the flat
+// twin answer nothing. A set of ground conditions holds no variable, and its
+// membership provides an answer, just as the membership of a ground condition
+// in a flat list does. Following the load of a file lacking the record of the
+// stores, whether a set holds a variable is determined by reading the set
+// directly, as no store has recorded it; from a file containing the record, the
+// store provides answers as it does during the session.
 TEST_CASE("nested condition sets: the membership of a set of conditions holding a variable answers nothing")
 {
-    const auto file = fs::temp_directory_path() / "zelph_nested_set_membership.bin";
+    const auto file  = fs::temp_directory_path() / "zelph_nested_set_membership.bin";
+    const auto older = fs::temp_directory_path() / "zelph_nested_set_membership_older.bin";
     run_both_modes([&](auto& collector, auto& interactive)
                    {
         const auto answers = [&](const std::string& query)
@@ -4526,6 +4531,13 @@ TEST_CASE("nested condition sets: the membership of a set of conditions holding 
             {
                 interactive.process(".save \"" + file.string() + "\"");
                 interactive.process(".load \"" + file.string() + "\"");
+                interactive.process(".auto-run"); // a load disables it
+            }
+            SUBCASE("after .save and the .load of the file without the record of the stores")
+            {
+                interactive.process(".save \"" + file.string() + "\"");
+                write_without_directory(file, older, true);
+                interactive.process(".load \"" + older.string() + "\"");
                 interactive.process(".auto-run"); // a load disables it
             }
             interactive.process("(M in K) => (M seen K)");
@@ -4552,6 +4564,7 @@ TEST_CASE("nested condition sets: the membership of a set of conditions holding 
             CHECK(seen == std::vector<std::string>{"(n2 good yes) seen {(n2 good yes) (n3 good yes)}", "(n3 good yes) seen {(n2 good yes) (n3 good yes)}", "({(n2 good yes) (n3 good yes)}, (n1 good yes)) seen {({(n2 good yes) (n3 good yes)}, (n1 good yes)) (X v A)}"});
         } });
     std::filesystem::remove(file);
+    std::filesystem::remove(older);
 }
 
 // Only the sets associated with a rule are regarded as rule text. A data collection
@@ -5681,11 +5694,13 @@ x u y
 
 TEST_CASE("rule patterns: rule text in its conditions is not data after .save and .load")
 {
-    // A binary load disarms the variable store, and var_in_closure walks
-    // the structure it reads back instead. The walk reads a rule's
-    // conditions just as the store does, or the network would answer,
-    // following a round trip, what the session that wrote it did not.
-    const auto file = fs::temp_directory_path() / "zelph_rule_text_vars_test.bin";
+    // Loading a file lacking the record of the variable store leaves the
+    // loaded rules to the walk, which reads a rule's conditions just as the
+    // store does, or the network would answer, following a round trip, what
+    // the session that wrote it did not. From a file containing the record,
+    // the store provides the answer.
+    const auto file  = fs::temp_directory_path() / "zelph_rule_text_vars_test.bin";
+    const auto older = fs::temp_directory_path() / "zelph_rule_text_vars_test_older.bin";
 
     {
         zelph::io::OutputCollector  collector;
@@ -5695,12 +5710,22 @@ TEST_CASE("rule patterns: rule text in its conditions is not data after .save an
         interactive.process("x has {((A r B, A s B) => (c q d))}");
         interactive.process(".save \"" + file.string() + "\"");
     }
+    write_without_directory(file, older, true);
 
     {
         zelph::io::OutputCollector  collector;
         zelph::console::Interactive interactive(collector.sink());
         interactive.process(".semi-naive check");
-        interactive.process(".load \"" + file.string() + "\"");
+        SUBCASE("a file with the record of the variable store")
+        {
+            interactive.process(".load \"" + file.string() + "\"");
+            REQUIRE_FALSE(interactive.graph()->may_hold_untracked_nodes());
+        }
+        SUBCASE("a file without it")
+        {
+            interactive.process(".load \"" + older.string() + "\"");
+            REQUIRE(interactive.graph()->may_hold_untracked_nodes());
+        }
 
         collector.clear();
         interactive.process("S is O");
@@ -5720,6 +5745,7 @@ TEST_CASE("rule patterns: rule text in its conditions is not data after .save an
     }
 
     fs::remove(file);
+    fs::remove(older);
 }
 
 TEST_CASE("rule patterns: a mention whose consequence carries a variable stays a pattern")

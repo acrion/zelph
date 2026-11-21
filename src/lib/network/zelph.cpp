@@ -25,6 +25,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #include "zelph.hpp"
 #include "fact_structure.hpp"
+#include "reasoning.hpp"
 #include "string/node_to_string.hpp"
 #include "string/string_utils.hpp"
 #include "zelph_impl.hpp"
@@ -341,10 +342,11 @@ adjacency_set Zelph::get_fact_objects(const Node subject, const Node predicate) 
         return objects;
 
     // A rule's pattern is not an answer: nobody claimed it. Taken from the
-    // snapshot rather than from is_asserted_fact, which would cost a store
-    // probe -- or, after a binary load, a reconstruction walk -- per
-    // CANDIDATE; the snapshot is one lookup per call and nullptr whenever the
-    // graph holds no patterns at all. The is_var tests below cover the rest.
+    // snapshot instead of from is_asserted_fact, which would cost a store
+    // probe -- or, for a node loaded from a file without the variable store's
+    // record, a reconstruction walk -- per CANDIDATE; the snapshot is a
+    // single lookup per call and nullptr whenever the graph holds no patterns
+    // at all. The is_var tests below cover the rest.
     const auto skip = unasserted_snapshot();
 
     for (const Node rel : get_right(subject))
@@ -848,10 +850,10 @@ Node Zelph::predicate_of(const Node nd) const
     if (try_get_genuine_structure(nd, genuine) && genuine && !genuine->empty())
         return genuine->front().predicate;
 
-    // No store entry: the stores were disarmed via a bulk path (or the
-    // node was never created through fact()). parse_relation resolves it;
-    // when subject equals predicate, it returns the subject, which IS the
-    // predicate.
+    // No store entry: the stores are disarmed, or the node was never
+    // generated via fact() (loaded, imported, or rebuilt through a merge).
+    // parse_relation resolves it; when subject equals predicate, it
+    // returns the subject, which IS the predicate.
     return parse_relation(nd);
 }
 
@@ -1197,16 +1199,17 @@ Node Zelph::fact(const Node subject, const Node predicate, const adjacency_set& 
 
         // Whatever stands in predicate position IS a relation type, and saying
         // so is what makes the fact readable again later. The declaration used
-        // to be skipped for hash nodes, i.e. for a predicate that is itself a
-        // fact or a cons cell ("x (a p b) y", "a <=> b"): the fact was created,
-        // the genuine store held its triple, and everything worked -- until a
-        // .save/.load disarmed the store, after which the reconstruction had no
-        // way to recognise the predicate and the fact silently stopped
-        // answering queries. Declaring it costs one extra fact per DISTINCT
-        // composite predicate, and only for those; ordinary data, every import
-        // and the whole stdlib name their predicates and are unaffected.
-        // (Note that the initial constructor call fact(core.IsA, core.IsA,
-        // core.RelationTypeCategory) is executed as intended.)
+        // to be skipped for hash nodes, that is, for a predicate that is itself
+        // a fact or a cons cell ("x (a p b) y", "a <=> b"): the fact was
+        // created, the genuine store held its triple, and all operated
+        // correctly -- until a .save/.load left the node without its entry,
+        // after which the reconstruction had no way to identify the predicate
+        // and the fact ceased answering queries without warning. Declaring it
+        // costs one extra fact per DISTINCT composite predicate, and only for
+        // those; ordinary data, every import and the whole stdlib name their
+        // predicates and are unaffected. (Note that the initial constructor
+        // call fact(core.IsA, core.IsA, core.RelationTypeCategory) is executed
+        // as intended.)
         if (predicate != core.IsA)
         {
             fact(predicate, core.IsA, {core.RelationTypeCategory}, 1, Writer::implicit_declaration);
@@ -1285,98 +1288,8 @@ Node Zelph::fact(const Node subject, const Node predicate, const adjacency_set& 
         // Maintain the template-variable store from the ACTUAL triple
         // (see Impl's _template_vars). Data facts -- the overwhelming
         // majority -- cost three store misses and allocate nothing.
-        if (_pImpl->_template_vars_authoritative.load(std::memory_order_acquire))
-        {
-            std::shared_ptr<std::unordered_set<Node>> vars; // lazily allocated
-
-            // A set pattern that a query or a program typed represents a
-            // value, with its members not part of any structure; a statement
-            // involving it holds its variables all the same (see
-            // set_pattern_variables). Absent these, the statement a query
-            // leaves in the graph answered as data: following
-            // `{(X enters C) (C ~ card)} can nil`, `S can nil` also answered
-            // `@{(C ~ card) (X enters C)} can nil`. The object of a membership
-            // is entered as the walk enters it, not at all, and likewise the
-            // set named by the conjunction tag being written.
-            const bool set_patterns = _pImpl->_has_set_patterns.load(std::memory_order_acquire)
-                                   && !(predicate == core.IsA && objects.size() == 1 && objects.count(core.Conjunction) == 1);
-
-            const auto add_component = [&](const Node c, const bool enter)
-            {
-                if (Impl::is_var(c))
-                {
-                    if (!vars) vars = std::make_shared<std::unordered_set<Node>>();
-                    vars->insert(c);
-                }
-                else if (Impl::is_hash(c))
-                {
-                    std::shared_ptr<const std::unordered_set<Node>> sub;
-                    if (try_get_template_vars(c, sub) && sub)
-                    {
-                        if (!vars) vars = std::make_shared<std::unordered_set<Node>>();
-                        vars->insert(sub->begin(), sub->end());
-                    }
-                }
-                else if (set_patterns && enter)
-                {
-                    if (const auto sub = set_pattern_variables(c))
-                    {
-                        if (!vars) vars = std::make_shared<std::unordered_set<Node>>();
-                        vars->insert(sub->begin(), sub->end());
-                    }
-                }
-            };
-
-            add_component(subject, true);
-            add_component(predicate, true);
-            for (const Node t : objects)
-                add_component(t, predicate != core.PartOf);
-
-            if (vars)
-            {
-                std::unique_lock lock(_pImpl->_template_vars_mtx);
-                _pImpl->_template_vars.emplace(answer.relation(),
-                                               std::shared_ptr<const std::unordered_set<Node>>(std::move(vars)));
-            }
-            else
-            {
-                // No variable within the structural closure, though
-                // potentially one in the rule text: a component already
-                // entered, a rule's own collection whose members hold one, or
-                // the conditions of this `=>` fact (see Impl's
-                // _rule_text_vars). Data facts incur a single atomic load and
-                // a bit test per component, plus a probe per hash component
-                // only once some rule text has been entered.
-                //
-                // A membership in a rule's own collection is that
-                // collection's content, and holds a variable exactly when its
-                // member does: read through the collection, `c in @{c Y}`
-                // would depend on whether `Y in @{c Y}` was written before
-                // it, and a membership flagged by the engine as a pattern
-                // would read as one via another member's variable. A rule
-                // asserting such a membership holds the collection's
-                // variables, read here once, through a walk of the rule's
-                // text. Outside the writing of a rule, no member is written
-                // into a collection of a rule's text (refer to the refusal
-                // above), thus nothing that reads one has to be entered
-                // later. A member written into another rule's collection
-                // while the template scope remains open is the exception, and
-                // is not entered: the reconstruction walk sees it (see Impl's
-                // _rule_text_vars).
-                bool text_var = component_holds_text_variable(subject) || component_holds_text_variable(predicate);
-                for (const Node t : objects)
-                    text_var = text_var || ((predicate != core.PartOf || Impl::is_hash(t)) && component_holds_text_variable(t));
-                if (!text_var && predicate == core.Causes)
-                    text_var = conditions_hold_variable(subject) || rule_memberships_hold_variable(subject, objects);
-
-                if (text_var)
-                {
-                    std::unique_lock lock(_pImpl->_template_vars_mtx);
-                    _pImpl->_rule_text_vars.insert(answer.relation());
-                    _pImpl->_rule_text_vars_any.store(true, std::memory_order_release);
-                }
-            }
-        }
+        if (_pImpl->_template_vars_mode.load(std::memory_order_acquire) != Impl::stores_disarmed)
+            enter_template_vars(answer.relation(), subject, predicate, objects);
 
         // Record the genuine structure (reconstruction bypass): the exact
         // triple, known right here and immutable forever -- the node ID is
@@ -1418,9 +1331,145 @@ Node Zelph::fact(const Node subject, const Node predicate, const adjacency_set& 
     return answer.relation();
 }
 
+void Zelph::enter_template_vars(const Node relation, const Node subject, const Node predicate, const adjacency_set& objects) const
+{
+    // A statement consisting solely of counter ids, under a predicate other
+    // than `=>`, holds neither a variable nor rule text: a counter id is not
+    // a variable, not a hash node, not a set pattern built outside a rule,
+    // and not a rule's own collection, and these four are the only
+    // elements that the two halves below read. Every data triple in a bulk
+    // import constitutes such a statement, and the bit tests here represent
+    // its whole cost: without them, the trusted import of 200,000 triples ran
+    // 1.2 % more instructions than when it disarmed the stores instead. A
+    // `=>` fact takes the whole path, since its conditions might hold a
+    // variable within a collection bearing a counter id.
+    if (predicate != core.Causes && Impl::is_counter_id(subject) && Impl::is_counter_id(predicate)
+        && std::all_of(objects.begin(), objects.end(), [](const Node t)
+                       { return Impl::is_counter_id(t); }))
+        return;
+
+    std::shared_ptr<std::unordered_set<Node>> vars; // lazily allocated
+
+    // A set pattern that a query or a program typed represents a
+    // value, with its members not part of any structure; a statement
+    // involving it holds its variables all the same (see
+    // set_pattern_variables). Absent these, the statement a query
+    // leaves in the graph answered as data: following
+    // `{(X enters C) (C ~ card)} can nil`, `S can nil` also answered
+    // `@{(C ~ card) (X enters C)} can nil`. The object of a membership
+    // is entered as the walk enters it, not at all, and likewise the
+    // set named by the conjunction tag being written. A pattern a load
+    // read is not an entry in the record until its variables are
+    // requested, so the flag of the load also matters here (Impl's
+    // _loaded_set_patterns).
+    const bool set_patterns = (_pImpl->_has_set_patterns.load(std::memory_order_acquire) || _pImpl->_loaded_set_patterns.load(std::memory_order_acquire))
+                           && !(predicate == core.IsA && objects.size() == 1 && objects.count(core.Conjunction) == 1);
+
+    const auto add_component = [&](const Node c, const bool enter)
+    {
+        if (Impl::is_var(c))
+        {
+            if (!vars) vars = std::make_shared<std::unordered_set<Node>>();
+            vars->insert(c);
+        }
+        else if (Impl::is_hash(c))
+        {
+            std::shared_ptr<const std::unordered_set<Node>> sub;
+            if (try_get_template_vars(c, sub))
+            {
+                if (sub)
+                {
+                    if (!vars) vars = std::make_shared<std::unordered_set<Node>>();
+                    vars->insert(sub->begin(), sub->end());
+                }
+            }
+            else
+            {
+                // A component that the stores did not record, read from a
+                // file lacking the store's record (Impl's
+                // _template_vars_mode): its variables as the walk reads
+                // them.
+                std::unordered_set<Node> walked;
+                std::vector<Node>        history;
+                collect_variables(const_cast<Zelph*>(this), c, walked, 1, history);
+                if (!walked.empty())
+                {
+                    if (!vars) vars = std::make_shared<std::unordered_set<Node>>();
+                    vars->insert(walked.begin(), walked.end());
+                }
+            }
+        }
+        else if (set_patterns && enter)
+        {
+            if (const auto sub = set_pattern_variables(c))
+            {
+                if (!vars) vars = std::make_shared<std::unordered_set<Node>>();
+                vars->insert(sub->begin(), sub->end());
+            }
+        }
+    };
+
+    add_component(subject, true);
+    add_component(predicate, true);
+    for (const Node t : objects)
+        add_component(t, predicate != core.PartOf);
+
+    if (vars)
+    {
+        std::unique_lock lock(_pImpl->_template_vars_mtx);
+        _pImpl->_template_vars.emplace(relation, std::shared_ptr<const std::unordered_set<Node>>(std::move(vars)));
+        return;
+    }
+
+    // No variable within the structural closure, though
+    // potentially one in the rule text: a component already
+    // entered, a rule's own collection whose members hold one, or
+    // the conditions of this `=>` fact (see Impl's
+    // _rule_text_vars). Data facts incur a single atomic load and
+    // a bit test per component, plus a probe per hash component
+    // only once some rule text has been entered.
+    //
+    // A membership in a rule's own collection is that
+    // collection's content, and holds a variable exactly when its
+    // member does: read through the collection, `c in @{c Y}`
+    // would depend on whether `Y in @{c Y}` was written before
+    // it, and a membership flagged by the engine as a pattern
+    // would read as one via another member's variable. A rule
+    // asserting such a membership holds the collection's
+    // variables, read here once, through a walk of the rule's
+    // text. Outside the act of writing a rule, no member is
+    // written into a collection contained within a rule's text
+    // (refer to the refusal in fact()), thus nothing that reads
+    // such a collection has to be entered at a later time. A
+    // member written into another rule's collection while the
+    // template scope remains open is the exception, and is not
+    // entered: the reconstruction walk sees it (see Impl's
+    // _rule_text_vars).
+    bool text_var = component_holds_text_variable(subject) || component_holds_text_variable(predicate);
+    for (const Node t : objects)
+        text_var = text_var || ((predicate != core.PartOf || Impl::is_hash(t)) && component_holds_text_variable(t));
+    if (!text_var && predicate == core.Causes)
+        text_var = conditions_hold_variable(subject) || rule_memberships_hold_variable(subject, objects);
+
+    if (text_var)
+    {
+        std::unique_lock lock(_pImpl->_template_vars_mtx);
+        _pImpl->_rule_text_vars.insert(relation);
+        _pImpl->_rule_text_vars_any.store(true, std::memory_order_release);
+    }
+}
+
 Node Zelph::fact_import_trusted_single_object(Node subject, Node predicate, Node object) const
 {
-    invalidate_fact_structures_cache();
+    // The triple is written around fact(). The structure cache and the
+    // predicate index are cleared, as occurs with every such write; the
+    // stores stay armed, and the variable store records the triple
+    // beneath, just as fact() would, ensuring it stays complete (Impl's
+    // _template_vars_mode). The genuine-structure store does not: a
+    // missing entry sends a reader to the walk, and an entry for each
+    // imported triple would cost the bulk path the memory that store
+    // spends on every fact() call.
+    invalidate_structure_caches();
 
     // A declaration typing a predicate must also drop the memoized
     // relation-type set, or every fact created with that predicate stays
@@ -1449,6 +1498,12 @@ Node Zelph::fact_import_trusted_single_object(Node subject, Node predicate, Node
                   + " Further cases are counted, not reported one by one.",
               true);
     }
+
+    // While the graph holds nodes not recorded in any store, the triple
+    // is one of those: absent from the genuine-structure store, it is
+    // read by the walks (Impl::recorded_by_stores).
+    if (!foreign && _pImpl->_template_vars_mode.load(std::memory_order_acquire) == Impl::stores_complete)
+        enter_template_vars(relation, subject, predicate, adjacency_set{object});
 
     return relation;
 }
@@ -1782,7 +1837,7 @@ Node Zelph::set(const std::unordered_set<Node>& elements)
     // A member that is a rule's own collection holding a variable makes the
     // set constant rule text (see var_in_closure): `{@{Y}}`. A set constant
     // is not a fact, so fact() never enters it.
-    if (created && _pImpl->_template_vars_authoritative.load(std::memory_order_acquire)
+    if (created && _pImpl->_template_vars_mode.load(std::memory_order_acquire) != Impl::stores_disarmed
         && std::any_of(elements.begin(), elements.end(), [this](const Node e)
                        { return component_holds_text_variable(e); }))
     {
@@ -2040,7 +2095,8 @@ bool Zelph::may_hold_set_patterns() const
 {
     return _pImpl->_has_set_patterns.load(std::memory_order_acquire)
         || _pImpl->_has_template_collections.load(std::memory_order_acquire)
-        || !_pImpl->_template_vars_authoritative.load(std::memory_order_acquire);
+        || _pImpl->_loaded_set_patterns.load(std::memory_order_acquire)
+        || _pImpl->_template_vars_mode.load(std::memory_order_acquire) == Impl::stores_disarmed;
 }
 
 Node Zelph::parse_fact(Node rule, adjacency_set& deductions, Node parent) const

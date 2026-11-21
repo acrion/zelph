@@ -41,6 +41,16 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include <utility>
 #include <vector>
 
+// Keeps a function out of line: the half of a reader that the hot path invokes
+// solely in the rare state, and which would otherwise grow the reader that
+// every call pays for. Written per compiler, as MSVC is unaware of the GNU
+// attribute.
+#if defined(_MSC_VER) && !defined(__clang__)
+    #define ZELPH_NOINLINE __declspec(noinline)
+#else
+    #define ZELPH_NOINLINE [[gnu::noinline]]
+#endif
+
 using namespace zelph::network;
 
 namespace
@@ -110,9 +120,10 @@ namespace
     // (kind_unknowable). The membership of a variable, or of a term holding
     // one, is what a condition like `X in {b c}` writes: a pattern over the
     // set, not an element within it. Read as the set's text, it made the set
-    // a rule template whenever the flag store was disarmed -- following a
-    // load, a removal, or a name merge -- and each membership within the set
-    // was then rejected as a candidate: `A in {b c}` answered nothing, and
+    // a rule template whenever this walk answered for the set -- once a
+    // removal had disarmed the flag store, or for a set loaded from a file
+    // lacking the store's record -- and each membership within the set was
+    // then rejected as a candidate: `A in {b c}` answered nothing, and
     // `(X in {b c}) => (X q r)` fired on nothing.
     bool set_constant_text_walk(const Zelph* n, const Node c, std::unordered_set<Node>& visited, const Zelph::VariableReading reading)
     {
@@ -168,15 +179,16 @@ namespace
             || std::any_of(objects.begin(), objects.end(), in_text);
     }
 
-    // Reference walk based on reconstruction -- the pre-flag implementation
-    // of unification.cpp's contains_variable_deep, preserved exactly as-is
-    // to ensure the fallback behaviour following binary loads / trusted
-    // imports / removals matches historical semantics precisely, except for
-    // the conditions of a `=>` fact and the members of a rule's own
-    // collection and of a set constant, which it reads as
-    // Zelph::var_in_closure says, by `reading`, and for the variables of a
-    // set pattern that a value holds (Zelph::set_pattern_variables). Depth
-    // remains fixed at 1 (for logging purposes only).
+    // Reference walk rooted in reconstruction -- the pre-flag
+    // implementation of unification.cpp's contains_variable_deep,
+    // maintained precisely as-is to ensure the fallback behaviour (a node
+    // loaded from a file without the store's record, a store a removal
+    // disarmed) matches historical semantics precisely, except for the
+    // conditions of a `=>` fact and the members of a rule's own collection
+    // and of a set constant, which it reads as Zelph::var_in_closure says,
+    // by `reading`, and for the variables of a set pattern that a value
+    // holds (Zelph::set_pattern_variables). Depth remains fixed at 1 (for
+    // logging purposes only).
     bool var_in_closure_walk(const Zelph* n, const Node nd, std::unordered_set<Node>& visited, const Zelph::VariableReading reading)
     {
         if (nd == 0) return false;
@@ -280,14 +292,22 @@ void Zelph::store_fact_structures_cached(Node fact, FactStructurePtr value) cons
 
 void Zelph::invalidate_fact_structures_cache() const noexcept
 {
-    if (logging_active()) _fs_cache_full_clears.fetch_add(1, std::memory_order_relaxed);
-
-    // Disarm and clear the fact-path stores. Single implementation shared
-    // with the .fact-stores command: every path through this funnel either
-    // bypasses triple-level construction (trusted imports, binary loads)
-    // or destroys topology (removals, merges, name-merge) -- stale store
-    // entries must never resurface afterwards.
+    // Disarm and clear the fact-path stores. Single implementation used in
+    // common with the .fact-stores command: every path through this funnel
+    // either destroys topology or changes which variables a statement
+    // holds (removals; merging two variables, or merging with a set
+    // pattern built outside a rule) -- stale store entries must never
+    // resurface afterwards. The paths that solely add nodes around fact()
+    // keep the stores armed and right themselves
+    // (invalidate_structure_caches).
     disable_fact_stores();
+
+    invalidate_structure_caches();
+}
+
+void Zelph::invalidate_structure_caches() const noexcept
+{
+    if (logging_active()) _fs_cache_full_clears.fetch_add(1, std::memory_order_relaxed);
 
     _pImpl->invalidate_predicate_index();
 
@@ -297,6 +317,53 @@ void Zelph::invalidate_fact_structures_cache() const noexcept
 
     std::unique_lock lock(_pImpl->_fs_cache_mtx);
     _pImpl->_fs_cache.clear();
+}
+
+bool Zelph::Impl::recorded_by_stores(const Node nd) const
+{
+    if (!is_hash(nd) || is_var(nd)) return true;
+    std::shared_lock lock(_genuine_mtx);
+    return _genuine.contains(nd);
+}
+
+bool Zelph::may_hold_untracked_nodes() const
+{
+    return _pImpl->_template_vars_mode.load(std::memory_order_acquire) == Impl::stores_partial;
+}
+
+void Zelph::forget_store_entries(const std::vector<Node>& nodes) const
+{
+    if (nodes.empty()) return;
+    {
+        std::unique_lock lock(_pImpl->_template_vars_mtx);
+        for (const Node n : nodes)
+        {
+            _pImpl->_template_vars.erase(n);
+            _pImpl->_rule_text_vars.erase(n);
+        }
+        _pImpl->_rule_text_vars_any.store(!_pImpl->_rule_text_vars.empty(), std::memory_order_release);
+    }
+    std::unique_lock lock(_pImpl->_genuine_mtx);
+    for (const Node n : nodes)
+        _pImpl->_genuine.erase(n);
+}
+
+void Zelph::move_store_entries(const Node from, const Node to, const bool carry) const
+{
+    if (_pImpl->_template_vars_mode.load(std::memory_order_acquire) == Impl::stores_disarmed) return;
+    {
+        std::unique_lock lock(_pImpl->_template_vars_mtx);
+        if (const auto it = _pImpl->_template_vars.find(from); it != _pImpl->_template_vars.end())
+        {
+            auto vars = it->second;
+            _pImpl->_template_vars.erase(it);
+            if (carry) _pImpl->_template_vars.insert_or_assign(to, std::move(vars));
+        }
+        if (_pImpl->_rule_text_vars.erase(from) != 0 && carry) _pImpl->_rule_text_vars.insert(to);
+        _pImpl->_rule_text_vars_any.store(!_pImpl->_rule_text_vars.empty(), std::memory_order_release);
+    }
+    std::unique_lock lock(_pImpl->_genuine_mtx);
+    _pImpl->_genuine.erase(from);
 }
 
 // Per-fact cache invalidation, called by fact() AFTER the new relation's
@@ -514,12 +581,40 @@ bool Zelph::var_in_closure(const Node nd, const VariableReading reading) const
     if (Impl::is_var(nd)) return true;
     if (!Impl::is_hash(nd)) return false;
 
-    if (_pImpl->_template_vars_authoritative.load(std::memory_order_acquire))
+    if (_pImpl->_template_vars_mode.load(std::memory_order_acquire) == Impl::stores_complete)
     {
         if (logging_active()) _var_flag_queries.fetch_add(1, std::memory_order_relaxed);
         std::shared_lock lock(_pImpl->_template_vars_mtx);
         return _pImpl->_template_vars.find(nd) != _pImpl->_template_vars.end()
             || (reading == VariableReading::Text && !_pImpl->_rule_text_vars.empty() && _pImpl->_rule_text_vars.contains(nd));
+    }
+
+    return var_in_closure_beyond_store(nd, reading);
+}
+
+ZELPH_NOINLINE bool Zelph::var_in_closure_beyond_store(const Node nd, const VariableReading reading) const
+{
+    if (_pImpl->_template_vars_mode.load(std::memory_order_acquire) == Impl::stores_partial)
+    {
+        {
+            std::shared_lock lock(_pImpl->_template_vars_mtx);
+            if (_pImpl->_template_vars.find(nd) != _pImpl->_template_vars.end()
+                || (reading == VariableReading::Text && !_pImpl->_rule_text_vars.empty() && _pImpl->_rule_text_vars.contains(nd)))
+            {
+                if (logging_active()) _var_flag_queries.fetch_add(1, std::memory_order_relaxed);
+                return true;
+            }
+        }
+        // Absence answers "no variable" solely for a node the stores
+        // recorded; a node read from a file without the store's record is
+        // read by the walk. Without this differentiation, a loaded rule
+        // with a nested condition answered its own pattern as data and
+        // stopped deriving.
+        if (_pImpl->recorded_by_stores(nd))
+        {
+            if (logging_active()) _var_flag_queries.fetch_add(1, std::memory_order_relaxed);
+            return false;
+        }
     }
 
     if (logging_active()) _var_flag_fallbacks.fetch_add(1, std::memory_order_relaxed);
@@ -548,6 +643,12 @@ bool Zelph::component_holds_text_variable(const Node component) const
 {
     if (Impl::is_hash(component))
     {
+        // A node that the stores did not record, read from a file lacking
+        // the store's record: what _rule_text_vars would hold for it,
+        // read during the walks -- a variable within the text that the
+        // structural closure does not reach.
+        if (_pImpl->_template_vars_mode.load(std::memory_order_acquire) == Impl::stores_partial && !_pImpl->recorded_by_stores(component))
+            return var_in_closure(component, VariableReading::Text) && !var_in_closure(component, VariableReading::Instance);
         if (!_pImpl->_rule_text_vars_any.load(std::memory_order_acquire)) return false;
         std::shared_lock lock(_pImpl->_template_vars_mtx);
         return _pImpl->_rule_text_vars.contains(component);
@@ -584,7 +685,7 @@ std::shared_ptr<const adjacency_set> Zelph::unasserted_snapshot() const
             out->insert(n);
     }
 
-    if (_pImpl->_template_vars_authoritative.load(std::memory_order_acquire))
+    if (_pImpl->_template_vars_mode.load(std::memory_order_acquire) != Impl::stores_disarmed)
     {
         std::shared_lock lock(_pImpl->_template_vars_mtx);
         for (const auto& entry : _pImpl->_template_vars)
@@ -611,12 +712,36 @@ void Zelph::reset_var_closure_stats() const
 
 bool Zelph::try_get_template_vars(const Node nd, std::shared_ptr<const std::unordered_set<Node>>& out) const
 {
-    if (!_pImpl->_template_vars_authoritative.load(std::memory_order_acquire)) return false;
+    if (_pImpl->_template_vars_mode.load(std::memory_order_acquire) != Impl::stores_complete) return try_get_template_vars_beyond_store(nd, out);
 
     if (logging_active()) _tvars_hits.fetch_add(1, std::memory_order_relaxed);
     std::shared_lock lock(_pImpl->_template_vars_mtx);
     const auto       it = _pImpl->_template_vars.find(nd);
     out                 = it == _pImpl->_template_vars.end() ? nullptr : it->second;
+    return true;
+}
+
+ZELPH_NOINLINE bool Zelph::try_get_template_vars_beyond_store(const Node nd, std::shared_ptr<const std::unordered_set<Node>>& out) const
+{
+    if (_pImpl->_template_vars_mode.load(std::memory_order_acquire) != Impl::stores_partial) return false;
+
+    {
+        std::shared_lock lock(_pImpl->_template_vars_mtx);
+        const auto       it = _pImpl->_template_vars.find(nd);
+        if (it != _pImpl->_template_vars.end())
+        {
+            if (logging_active()) _tvars_hits.fetch_add(1, std::memory_order_relaxed);
+            out = it->second;
+            return true;
+        }
+    }
+
+    // Absence is "provably none" solely for a node that the stores
+    // recorded; for any other, the caller runs the walk.
+    if (!_pImpl->recorded_by_stores(nd)) return false;
+
+    if (logging_active()) _tvars_hits.fetch_add(1, std::memory_order_relaxed);
+    out = nullptr;
     return true;
 }
 
@@ -647,6 +772,26 @@ bool Zelph::try_get_genuine_structure(const Node fact, FactStructurePtr& out) co
 
     out = it->second; // shared_ptr copy: one atomic increment, no allocation
     return true;
+}
+
+// A node that fact() did not write -- loaded, imported, rebuilt via a
+// merge -- is read by the walk, and each subsequent read walks it again
+// once the structure cache has let it go. A walk whose sole reading hashes
+// back to the node has read the node's own triple, the one fact() would
+// have recorded, so the genuine-structure store keeps it. Only when the
+// variable store is complete: in stores_partial, an entry in the genuine
+// store tells a node whose variables were recorded by the stores
+// (Impl::recorded_by_stores), which an adopted node's are not. Not while
+// the structure cache is paused for a bulk pass, which reads each node
+// just once.
+ZELPH_NOINLINE void Zelph::adopt_walked_structure(const Node fact, const FactStructurePtr& structure) const
+{
+    if (structure->size() != 1 || _fs_cache_suspended.load(std::memory_order_relaxed)) return;
+    if (_pImpl->_template_vars_mode.load(std::memory_order_acquire) != Impl::stores_complete || !_pImpl->_genuine_authoritative.load(std::memory_order_acquire)) return;
+    const FactStructure& fs = structure->front();
+    if (Impl::create_hash(fs.predicate, fs.subject, fs.objects) != fact) return;
+    std::unique_lock lock(_pImpl->_genuine_mtx);
+    _pImpl->_genuine.emplace(fact, structure);
 }
 
 void Zelph::count_genuine_hit() const
@@ -712,13 +857,13 @@ Network::NodeMapState Zelph::node_map_state() const
 
 bool Zelph::fact_stores_enabled() const
 {
-    return _pImpl->_template_vars_authoritative.load(std::memory_order_acquire)
+    return _pImpl->_template_vars_mode.load(std::memory_order_acquire) != Impl::stores_disarmed
         && _pImpl->_genuine_authoritative.load(std::memory_order_acquire);
 }
 
 void Zelph::disable_fact_stores() const
 {
-    _pImpl->_template_vars_authoritative.store(false, std::memory_order_release);
+    _pImpl->_template_vars_mode.store(Impl::stores_disarmed, std::memory_order_release);
     {
         // Clear, not just disarm: entries may later reference removed
         // nodes, and freeing the memory is the point of the switch.

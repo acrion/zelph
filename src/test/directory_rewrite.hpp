@@ -26,8 +26,8 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #pragma once
 
 // Rewriting the chunk directory of a saved network, for testing scenarios
-// where the directory does not match the file, and writing a network lacking
-// one.
+// involving a directory that does not match its file, and writing a network
+// without one, or without the records that every published network lacks.
 
 #include "io/zelph.capnp.h"
 
@@ -158,8 +158,11 @@ namespace zelph::test
     // Writes the network from `from` to `to` in the format of an engine
     // prior to the chunk directory, which every network published before
     // it uses: the header lacking the flag that announces a directory, and
-    // the chunks immediately following it.
-    inline void write_without_directory(const std::filesystem::path& from, const std::filesystem::path& to)
+    // the chunks immediately following it. With `without_records`, the
+    // header also lacks what those engines did not record either: the
+    // template-variable store and the kinds of pattern the network might
+    // hold.
+    inline void write_without_directory(const std::filesystem::path& from, const std::filesystem::path& to, const bool without_records = false)
     {
         std::vector<kj::byte> bytes;
         {
@@ -173,6 +176,11 @@ namespace zelph::test
             header.setRoot(read.getRoot<zelph::network::ZelphImpl>());
         }
         header.getRoot<zelph::network::ZelphImpl>().setChunkDirectory(false);
+        if (without_records)
+        {
+            header.getRoot<zelph::network::ZelphImpl>().disownVariableRecord();
+            header.getRoot<zelph::network::ZelphImpl>().disownPatternKinds();
+        }
         const auto behind_header = input.tryGetReadBuffer();
 
         // The size of the directory stems from the segment table that begins
@@ -188,5 +196,37 @@ namespace zelph::test
         std::ofstream out(to, std::ios::binary | std::ios::trunc);
         out.write(reinterpret_cast<const char*>(written.getArray().begin()), static_cast<std::streamsize>(written.getArray().size()));
         out.write(reinterpret_cast<const char*>(behind_header.begin() + directory), static_cast<std::streamsize>(behind_header.size() - directory));
+    }
+
+    // The number of bytes the packed header of the network in `file` occupies:
+    // the position where its chunk directory or its first chunk begins.
+    inline std::size_t header_bytes(const std::filesystem::path& file)
+    {
+        std::vector<kj::byte> bytes;
+        {
+            std::ifstream in(file, std::ios::binary);
+            bytes.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+        }
+        kj::ArrayInputStream input(kj::arrayPtr(bytes.data(), bytes.size()));
+        {
+            ::capnp::PackedMessageReader header(input);
+        }
+        return bytes.size() - input.tryGetReadBuffer().size();
+    }
+
+    // Whether the header of the network in `file` carries the record of the
+    // template-variable store, and how many entries it holds (-1: none).
+    inline long variable_record_entries(const std::filesystem::path& file)
+    {
+        std::vector<kj::byte> bytes;
+        {
+            std::ifstream in(file, std::ios::binary);
+            bytes.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+        }
+        kj::ArrayInputStream         input(kj::arrayPtr(bytes.data(), bytes.size()));
+        ::capnp::PackedMessageReader read(input);
+        const auto                   header = read.getRoot<zelph::network::ZelphImpl>();
+        if (!header.hasVariableRecord()) return -1;
+        return static_cast<long>(header.getVariableRecord().getNodes().size() + header.getVariableRecord().getRuleText().size());
     }
 }

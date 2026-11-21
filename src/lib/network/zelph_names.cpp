@@ -310,7 +310,24 @@ Zelph::MergePlan Zelph::plan_name_merge(const Node from, const Node into, const 
 
 void Zelph::carry_out_name_merge_locked(const MergePlan& plan) const
 {
-    invalidate_fact_structures_cache();
+    // The fact-path stores remain armed during a merge of two nodes that
+    // hold no variable: merge_shape refuses a statement or a set constant
+    // that holds one, resolve_name_conflict_locked rejects a variable paired
+    // with anything else, and a rule's own collection either way. Every node
+    // that the merge rebuilds then holds exactly the variables of the node
+    // it replaces, and rehash_dependents enters it with those variables;
+    // `from` leaves the graph at this point. A set pattern built outside a
+    // rule is an atom that holds the variables of its members, and a merge
+    // of two variables renames a variable within nodes that keep their
+    // identifier -- a rule over a collection whose member is rebuilt -- so
+    // both continue to disarm the stores.
+    if (Impl::is_var(plan.from) || Impl::is_value_set_pattern(plan.from) || Impl::is_value_set_pattern(plan.into))
+        invalidate_fact_structures_cache();
+    else
+    {
+        forget_store_entries({plan.from});
+        invalidate_structure_caches();
+    }
 
     // The survivor of two statements holds the objects from both: after
     // `a p b` and `a p c` are merged, a single node states `a p b c`, which

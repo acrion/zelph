@@ -84,11 +84,14 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 // from 2876857 to 2876859, the candidates scanned spread by 1, and all else
 // remained bit-identical.
 
+#include "directory_rewrite.hpp"
 #include "test_helpers.hpp"
+#include "wikidata_dump.hpp"
 
 #include "io/output.hpp"
 #include "network/reasoning.hpp"
 
+#include <filesystem>
 #include <stdexcept>
 #include <string>
 
@@ -292,4 +295,93 @@ TEST_CASE("performance guard: one fact with two objects leaves the Jacobian work
     CHECK(prof_counter(prof, "anchors:", "climbed") <= ceiling(1674922));
     CHECK(prof_counter(prof, "fs_cache:", "hits") <= ceiling(4727086));
     CHECK(prof_counter(prof, "fs_cache:", "misses") <= ceiling(489217));
+}
+
+// The scenarios above begin with an empty session, and thus cannot see what
+// a session does BEFORE the workload. Every .load, every trusted import, and
+// every name merge disarmed the fact-path stores for the rest of the
+// session: the Jacobian workload following a .load of a two-fact network ran
+// 27.2 G instead of 7.4 G user instructions sequentially (genuine walks 0 to
+// 571887, template-variable walks 0 to 1796411), and after a merge of two
+// unrelated atoms, 31.7 G instead of 9.0 G. The stores remain armed
+// throughout these paths, and what the workload writes is answered by them;
+// only the nodes those paths wrote are read by the walks, and the workload
+// touches none. A file lacking the record of the variable store leaves the
+// loaded nodes to a per-node test, which is where the walk would show if
+// that test failed for the nodes the workload writes. That file holds a
+// rule, as a network lacking a variable loads with the store complete
+// regardless of the file's records; the walk reads the loaded rule's own
+// nodes then, a handful of times, however long the workload is (7 genuine
+// walks and 3 for variables at the time this case was written, on
+// 2026-11-21).
+TEST_CASE("performance guard: a load, an import or a name merge before the Jacobian workload leaves its stores answering" * doctest::test_suite("slow"))
+{
+    namespace fs     = std::filesystem;
+    const auto path  = fs::temp_directory_path() / "zelph_guard_preloaded.bin";
+    const auto ruled = fs::temp_directory_path() / "zelph_guard_preloaded_ruled.bin";
+    const auto older = fs::temp_directory_path() / "zelph_guard_preloaded_older.bin";
+    {
+        zelph::io::OutputCollector  collector;
+        zelph::console::Interactive interactive(collector.sink());
+        interactive.process("zzx1 zzp zzy1");
+        interactive.process("zzx2 zzq zzy2");
+        interactive.process(".save \"" + path.string() + "\"");
+    }
+    {
+        zelph::io::OutputCollector  collector;
+        zelph::console::Interactive interactive(collector.sink());
+        interactive.process("zzx1 zzp zzy1");
+        interactive.process("zzx2 zzq zzy2");
+        interactive.process("(A zzp B) => (A zzr B)");
+        interactive.process(".save \"" + ruled.string() + "\"");
+    }
+    write_without_directory(ruled, older, true);
+    const auto dump = zelph::test::wikidata_dump::write_lines(
+        "zelph_guard_preloaded",
+        {zelph::test::wikidata_dump::entity("Q1", zelph::test::wikidata_dump::text("en", "one"), zelph::test::wikidata_dump::claim("P279", "Q2")),
+         zelph::test::wikidata_dump::entity("Q2", zelph::test::wikidata_dump::text("en", "two"))});
+
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+    interactive.process(".semi-naive on");
+    interactive.process(".log -1");
+    interactive.process(".deductions off");
+    bool untracked = false;
+    SUBCASE("a .load of a file with the record of the variable store")
+    {
+        interactive.process(".load \"" + path.string() + "\"");
+    }
+    SUBCASE("a .load of a file without it")
+    {
+        interactive.process(".load \"" + older.string() + "\"");
+        untracked = true;
+    }
+    SUBCASE("a .load of a dump, through the trusted import")
+    {
+        interactive.process(".load \"" + dump.string() + "\"");
+    }
+    SUBCASE("a name merge")
+    {
+        interactive.process("zzx1 zzp zzy1");
+        interactive.process("zzx2 zzq zzy2");
+        interactive.process(".name zzx2 zelph zzx1");
+    }
+    fs::remove(path);
+    fs::remove(ruled);
+    fs::remove(older);
+    zelph::test::wikidata_dump::remove_dump(dump);
+    REQUIRE(interactive.graph()->fact_stores_enabled());
+    REQUIRE(interactive.graph()->may_hold_untracked_nodes() == untracked);
+
+    interactive.process(".import examples/math/jacobian");
+
+    collector.clear();
+    interactive.process(".prof");
+    const std::string prof = all_event_text(collector);
+
+    const uint64_t of_the_loaded_rule = untracked ? 16 : 0;
+    CHECK(prof_counter(prof, "rules_applied", "deduce_calls") > 15000); // non-vacuity
+    CHECK(prof_counter(prof, "genuine:", "walks") <= of_the_loaded_rule);
+    CHECK(prof_counter(prof, "template_vars:", "walks") <= of_the_loaded_rule);
+    CHECK(prof_counter(prof, "var_closure:", "walk_fallbacks") <= of_the_loaded_rule);
 }

@@ -715,6 +715,13 @@ namespace zelph::network
             return (a & 0xE000000000000000ull) == recipe_floor;
         }
 
+        // Class 0000: a counter identifier, which is neither a variable
+        // nor a hash nor any of the recipe classes.
+        static bool is_counter_id(Node a)
+        {
+            return (a & 0xF000000000000000ull) == 0;
+        }
+
         static bool is_value_set_pattern(Node a)
         {
             return (a & 0xF000000000000000ull) == value_set_pattern_class;
@@ -733,6 +740,32 @@ namespace zelph::network
         static bool is_written_template(Node a)
         {
             return (a & 0xF800000000000000ull) == (recipe_floor | template_class);
+        }
+
+        // Whether the graph holds a node that belongs to the template class
+        // (a rule's own collection, a construction's recipe), whether it
+        // holds a set pattern constructed by set() outside the template
+        // scope, and whether it holds a variable: a single traversal of the
+        // node ids, for a load whose file does not record the first two
+        // (Zelph::note_loaded_kinds). The traversal examines each node: a
+        // network of data, which is the large case, holds none of the three.
+        struct IdKinds
+        {
+            bool templates{false};
+            bool set_patterns{false};
+            bool variables{false};
+        };
+        IdKinds id_kinds() const
+        {
+            IdKinds                             kinds;
+            std::shared_lock<std::shared_mutex> lock_left(_smtx_left);
+            for (const auto& entry : _nodes)
+            {
+                kinds.templates    = kinds.templates || is_template_id(entry.first);
+                kinds.set_patterns = kinds.set_patterns || is_value_set_pattern(entry.first);
+                kinds.variables    = kinds.variables || is_var(entry.first);
+            }
+            return kinds;
         }
 
         // The key of a recipe: the binding of the variables the instantiated

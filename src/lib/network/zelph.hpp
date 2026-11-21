@@ -271,11 +271,12 @@ namespace zelph::network
 
         // The predicate associated with a pre-existing fact node. Favours
         // the genuine-structure store (exact, O(1), no heuristics); falls
-        // back to parse_relation() when a node lacks an entry -- every node
-        // once a bulk path has disarmed the store, and a node fact() did not
-        // create. The fallback handles subject == predicate facts too.
-        // Returns 0 if nd is not a fact node or its predicate cannot be
-        // ascertained without ambiguity.
+        // back to parse_relation() when a node is missing an entry -- every
+        // node once a removal has disarmed the store, and a node fact() did
+        // not create (a loaded, imported, or rebuilt one). The fallback
+        // handles subject == predicate facts too. Returns 0 if nd is not a
+        // fact node or its predicate cannot be ascertained without
+        // ambiguity.
         Node predicate_of(Node nd) const;
 
         Node fact(Node subject, Node predicate, const adjacency_set& objects, long double probability = 1);
@@ -379,12 +380,11 @@ namespace zelph::network
         // pattern whose variables all reside within rules,
         // `{((A r B) => (c q d))}`: such a literal stays a container.
         std::shared_ptr<const std::unordered_set<Node>> set_pattern_variables(Node node) const;
-        // False exclusively when this session can hold no set pattern: none
-        // was recorded as a value, no collection of a rule's text was
-        // written, and the variable store is active -- with it off, the rules
-        // from a loaded file are read by the walk, and theirs were never
-        // seen. Three atomic loads, for the condition planner
-        // (Reasoning::optimize_order).
+        // False exclusively when this session cannot hold any set pattern:
+        // none was recorded as a value, no collection of a rule's text was
+        // written, the graph a load read holds neither (its file says so, or
+        // the ids it read do), and the variable store is active. Four atomic
+        // loads, for the condition planner (Reasoning::optimize_order).
         bool may_hold_set_patterns() const;
         // Whether a fact involving multiple objects may be in the graph. A
         // statement contained within a condition is likewise stated by such
@@ -600,10 +600,13 @@ namespace zelph::network
         // again when another rule writes a variable-containing member into it
         // (see Impl's _rule_text_vars).
         // Unlike the former reconstruction-based walk, this cannot be misled
-        // by ambiguous adjacency readings. Paths that bypass triple
-        // construction or destroy topology clear the authoritative bit (see
-        // Impl); the query then falls back to the historical walk -- never
-        // unsound, never inferior to the pre-flag behaviour.
+        // by ambiguous adjacency readings. The paths that write hash nodes
+        // without fact() keep the store complete (see Impl's _template_vars);
+        // a load that cannot complete the store leaves the loaded nodes to the
+        // historical walk, and a removal, a merge that changes variables or
+        // `.fact-stores off` disarms the store, causing every query to be
+        // directed to the walk (Impl's _template_vars_mode) -- never unsound,
+        // never worse than the pre-flag behaviour.
         //
         // VariableReading::Instance leaves the conditions and those members
         // out, mirroring collect_variables: it returns whether a firing
@@ -642,11 +645,13 @@ namespace zelph::network
         // deadlock. Snapshot the nodes to skip first, then lock.
         //
         // Returns nullptr when there is nothing to skip -- the ordinary case,
-        // and no allocation for it. The variable half is only as complete as
-        // the template-var store: after a binary load or `.fact-stores off`
-        // the store is disarmed, and a traversal then rejects a variable
-        // through the is_var tests on the triple it reads, which covers every
-        // pattern except one whose SUBJECT is itself composite.
+        // and no allocation for it. The variable half is complete only to the
+        // extent of the template-var store: following a load of a file that
+        // carries no record of the store, the loaded patterns are missing
+        // from it, and after `.fact-stores off` or a removal the store
+        // becomes disarmed; a traversal then rejects a variable via the
+        // is_var tests on the triple it reads, which covers every pattern
+        // except one whose SUBJECT is itself composite.
         std::shared_ptr<const adjacency_set> unasserted_snapshot() const;
 
         struct VarClosureStats
@@ -657,11 +662,12 @@ namespace zelph::network
         VarClosureStats var_closure_stats() const;
         void            reset_var_closure_stats() const;
 
-        // O(1) variable-set lookup for fact()-created nodes (see Impl's
-        // _template_vars). Returns true while the store is authoritative;
-        // out is then the node's variable set (nullptr = provably none).
-        // Returns false after bulk paths disarmed the store -- callers
-        // run the historical reconstruction walk then.
+        // O(1) variable-set lookup (see Impl's _template_vars). Returns true
+        // when the store speaks for `nd`; in that case, out holds the node's
+        // variable set (nullptr = provably none). Returns false for any node
+        // not recorded by the store -- read by a load that could not complete
+        // the store -- and for every node once the store is disarmed: callers
+        // then execute the historical reconstruction walk.
         bool try_get_template_vars(Node nd, std::shared_ptr<const std::unordered_set<Node>>& out) const;
         void count_template_vars_walk() const;
 
@@ -674,14 +680,19 @@ namespace zelph::network
         void              reset_template_vars_stats() const;
 
         // --- Genuine-structure store (reconstruction bypass) ---
-        // get_fact_structures checks this upon every fs_cache miss and
-        // walks the adjacency solely for nodes lacking an entry: a hash
-        // node that fact() did not create (a set constant), and each node
+        // get_fact_structures verifies this upon every fs_cache miss and
+        // walks the adjacency solely for nodes that lack an entry: a hash
+        // node that was not generated by fact() (a set constant, a node a
+        // load, a trusted import, or a name merge wrote), and each node
         // once the store has been disarmed. fact() stores every triple it
         // creates, including those where subject equals predicate. Atoms
-        // and variables never get this far: the lock-free gate answers
-        // them first. Ends the O(deg^2) re-reconstruction of hub nodes.
+        // and variables never get this far: the lock-free gate answers them
+        // first. Ends the O(deg^2) re-reconstruction of hub nodes.
         bool try_get_genuine_structure(Node fact, FactStructurePtr& out) const;
+        // Following a walk: keeps `structure` in the genuine-structure store
+        // when it is the one reading of `fact` and hashes back to it (see the
+        // definition).
+        void adopt_walked_structure(Node fact, const FactStructurePtr& structure) const;
 
         // Profiler hooks for get_fact_structures: an fs_cache miss is resolved
         // by either the store or the walk, with each resolution counted there,
@@ -701,16 +712,23 @@ namespace zelph::network
         // --- Fact-path store control (.fact-stores) ---
         // The genuine-structure and template-variable stores grow with
         // every fact() call (~130-180 bytes per fact for the genuine
-        // store). Bulk paths (trusted imports, binary loads, removals,
-        // merges) disarm them automatically via
-        // invalidate_fact_structures_cache; this switch offers the same
-        // for API-driven bulk building, e.g. a Janet mass importer.
+        // store). They remain armed across loads, trusted imports, and name
+        // merges (see Impl's _template_vars_mode); removals, and merges of
+        // two variables or with a set pattern built outside a rule, disarm
+        // them through invalidate_fact_structures_cache, and this switch
+        // also disarms them for API-driven bulk construction, such as a
+        // Janet mass importer, or before bulk derivation on a large graph.
         // One-way per engine instance: re-arming cannot be made sound
-        // retroactively, because ABSENCE of an entry is meaningful while
-        // a store is authoritative (.new creates a fresh engine with
-        // stores enabled).
+        // retroactively, because ABSENCE of an entry is meaningful while a
+        // store is authoritative (.new creates a fresh engine with stores
+        // enabled).
         bool fact_stores_enabled() const;
         void disable_fact_stores() const;
+        // Whether the graph may hold hash nodes that no store has recorded
+        // -- read by a load that could not complete the variable store --
+        // which the reconstruction walks then read (Impl's
+        // _template_vars_mode, stores_partial).
+        bool may_hold_untracked_nodes() const;
 
         // --- Node map sizing (.node-map-load-factor, .stat) ---
         // The load factor the node map uses from 2^31 buckets onward, and the
@@ -1795,9 +1813,11 @@ namespace zelph::network
         };
         Node fact(Node subject, Node predicate, const adjacency_set& objects, long double probability, Writer writer);
 
-        // After a load: once it has progressed the epoch past
-        // `epoch_before`, rebuilds the indexes read from the graph, forgets
-        // the display registrations, and calls _on_graph_replaced.
+        // Following a load: once it has advanced the epoch beyond
+        // `epoch_before`, finishes the work left incomplete by the file's
+        // header (note_loaded_kinds), rebuilds the indexes read from the
+        // graph, forgets the display registrations, and calls
+        // _on_graph_replaced.
         void adopt_loaded_graph(std::uint64_t epoch_before) const;
 
         // The general path of drop_cluster, when a cluster is referenced by
@@ -1863,6 +1883,44 @@ namespace zelph::network
         // into Impl's _rule_text_vars, or a rule's own collection whose text
         // holds one.
         bool component_holds_text_variable(Node component) const;
+
+        // Enters `relation`, just written as the statement (`subject`,
+        // `predicate`, `objects`), into the template-variable store: its
+        // variables, or alternatively whether its rule text holds one
+        // (Impl's _template_vars, _rule_text_vars). What fact() records
+        // for every node it creates, and the trusted import for every
+        // triple it writes while the store is complete.
+        void enter_template_vars(Node relation, Node subject, Node predicate, const adjacency_set& objects) const;
+
+        // The halves of var_in_closure and try_get_template_vars for a
+        // store that is not complete (Impl's _template_vars_mode), out of
+        // line, so that the readers on the hot path keep the single load
+        // and test they need while the store is complete.
+        bool var_in_closure_beyond_store(Node nd, VariableReading reading) const;
+        bool try_get_template_vars_beyond_store(Node nd, std::shared_ptr<const std::unordered_set<Node>>& out) const;
+
+        // The structure cache and the predicate index are reset as the
+        // wholesale funnel clears them, while the stores stay armed: for a
+        // path that writes nodes around fact() and keeps the stores in the
+        // correct state (a load, a trusted import).
+        void invalidate_structure_caches() const noexcept;
+
+        // Takes the entries of `nodes` from both stores: nodes a name
+        // merge removes or rebuilds under a different identifier. No
+        // entry persists beyond its node.
+        void forget_store_entries(const std::vector<Node>& nodes) const;
+        // For a node a name merge rebuilds: takes the entries of `from`
+        // from both stores, and, when `carry`, enters the variable entries
+        // under `to` (rehash_dependents).
+        void move_store_entries(Node from, Node to, bool carry) const;
+
+        // After a load whose file does not say whether the graph holds a
+        // rule's own collection or a set pattern built outside a rule
+        // (Impl's _loaded_kinds_unknown): reads it from the ids of the
+        // nodes the load read. A load that has read its whole file and
+        // found no variable among them leaves the variable store
+        // complete.
+        void note_loaded_kinds() const;
 
         // The memberships of the collections that an engine before
         // template ids wrote as part of a rule's text; see the

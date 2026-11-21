@@ -1355,10 +1355,11 @@ void zelph::string::node_to_string(const network::Zelph* const z, std::string& r
     // ("x (a p b) y", "deep_nesting ~ (Level1 (Level2 ...) Level1Object)")
     // resolved to 0 and rendered as "??" -- a line that cannot be entered
     // again, although the very same statement parses and matches as input.
-    // Where parse_relation succeeds it returns exactly fs.predicate, so
-    // nothing else changes; where no triple was recorded (a subject ==
-    // predicate fact, or a network whose stores a .load has disarmed) the
-    // reconstruction is still the only source.
+    // When parse_relation succeeds, it yields precisely fs.predicate,
+    // leaving all else unaltered; when no triple has been recorded (a
+    // subject == predicate fact, a node a .load read, or a network whose
+    // stores a removal has disarmed), the reconstruction remains the sole
+    // source.
     const auto fact_predicate = [&]() -> network::Node
     {
         return recorded_predicate != 0 ? recorded_predicate : z->parse_relation(resolved);

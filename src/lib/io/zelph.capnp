@@ -71,6 +71,41 @@ struct ZelphImpl {
   # message immediately after its header. An older engine wrote the first
   # chunk there and left this value set to false.
   chunkDirectory @17 :Bool;
+  # Whether the network may hold a rule's own collection, and whether it may
+  # hold a set pattern constructed outside a rule
+  # (Zelph::may_hold_set_patterns). An engine that is aware of this field
+  # writes it into every file; a load of a file lacking this reads the two
+  # from the ids of the nodes it reads.
+  patternKinds @18 :PatternKinds;
+  # The template-variable store (Zelph::var_in_closure): every node whose
+  # statement holds a variable, along with those variables, and every node
+  # whose rule text holds one that its statement lacks. Present in a file
+  # only if the saving session's store was complete, or if no node of the
+  # file is a variable, in which case the record has no entry; a load that
+  # finds it enters it and draws answers from it for each node within the
+  # file. A load of a file lacking it reads each loaded node relevant to
+  # the question via the reconstruction walk, unless the file also lacks
+  # patternKinds and the load has read the whole of it without finding a
+  # variable among its nodes.
+  variableRecord @19 :VariableRecord;
+}
+
+struct PatternKinds {
+  ruleCollections @0 :Bool;
+  setPatterns @1 :Bool;
+}
+
+struct VariableRecord {
+  # In sequence according to node, ordered from lowest to highest.
+  nodes @0 :List(VariableEntry);
+  # In the order of increasing value.
+  ruleText @1 :List(UInt64);
+}
+
+struct VariableEntry {
+  node @0 :UInt64;
+  # In the order of increasing value.
+  variables @1 :List(UInt64);
 }
 
 # The location of each chunk within a file, and the quantity of entries it

@@ -348,6 +348,31 @@ void Zelph::Impl::clear_loaded_state()
     note_load();
     Zelph::advance_content_epoch();
 
+    // The fact-path stores describe the graph that is discarded here, and
+    // they stay armed for the one the load reads: its nodes do not undergo
+    // a fact() call, so until the file's record of the variable store is
+    // entered (loadSmallData), the stores do not speak for them. Taken
+    // before the adjacency locks below, as every writer of the stores takes
+    // them.
+    {
+        std::unique_lock lock(_template_vars_mtx);
+        _template_vars.clear();
+        _rule_text_vars.clear();
+        _rule_text_vars_any.store(false, std::memory_order_release);
+    }
+    {
+        std::unique_lock lock(_genuine_mtx);
+        _genuine.clear();
+    }
+    std::uint8_t complete = stores_complete;
+    _template_vars_mode.compare_exchange_strong(complete, stores_partial, std::memory_order_acq_rel);
+    _loaded_set_patterns.store(false, std::memory_order_release);
+    _has_template_collections.store(false, std::memory_order_release);
+    _loaded_kinds_unknown = true;
+    // What the load leaves is a view until the file has been read in its
+    // entirety.
+    _loaded_view = true;
+
     std::unique_lock<std::shared_mutex> lock_left(_smtx_left);
     std::unique_lock<std::shared_mutex> lock_right(_smtx_right);
     std::unique_lock<std::shared_mutex> lock_weights(_mtx_weights);
@@ -415,6 +440,43 @@ void Zelph::Impl::loadSmallData(const ZelphImpl::Reader& impl)
         for (const Node predicate : impl.getWiderStatementPredicates())
             marked.insert(predicate);
         reset_wider_predicates(false, marked);
+    }
+
+    if (impl.hasPatternKinds())
+    {
+        const auto kinds = impl.getPatternKinds();
+        _has_template_collections.store(kinds.getRuleCollections(), std::memory_order_release);
+        _loaded_set_patterns.store(kinds.getSetPatterns(), std::memory_order_release);
+        _loaded_kinds_unknown = false;
+    }
+
+    // The template-variable store the saving session maintained, complete
+    // for every node in the file: once entered, it answers for the loaded
+    // nodes just as it does for those that fact() writes henceforth, and
+    // the store becomes complete once more. It describes the node ids of
+    // the file, regardless of which of its chunks the load reads. Without
+    // it, the variable store held none of the loaded rules, and the readers
+    // that enumerate it (Zelph::unasserted_snapshot:
+    // `.list-predicate-usage` and the closures among them) counted their
+    // patterns as data.
+    if (impl.hasVariableRecord() && _template_vars_mode.load(std::memory_order_acquire) == stores_partial)
+    {
+        const auto record = impl.getVariableRecord();
+        {
+            std::unique_lock lock(_template_vars_mtx);
+            _template_vars.reserve(record.getNodes().size());
+            for (const auto entry : record.getNodes())
+            {
+                auto vars = std::make_shared<std::unordered_set<Node>>();
+                for (const Node v : entry.getVariables())
+                    vars->insert(v);
+                _template_vars.insert_or_assign(entry.getNode(), std::shared_ptr<const std::unordered_set<Node>>(std::move(vars)));
+            }
+            for (const Node nd : record.getRuleText())
+                _rule_text_vars.insert(nd);
+            _rule_text_vars_any.store(!_rule_text_vars.empty(), std::memory_order_release);
+        }
+        _template_vars_mode.store(stores_complete, std::memory_order_release);
     }
 }
 #endif
@@ -1392,6 +1454,75 @@ void Zelph::Impl::saveToFile(const std::string& filename, const ankerl::unordere
         }
     }
 
+    // Whether the network may hold a rule's own collection or a set pattern
+    // constructed outside a rule, which the load would otherwise read from
+    // the ids of each node it reads (Zelph::note_loaded_kinds).
+    {
+        auto kinds = impl.initPatternKinds();
+        kinds.setRuleCollections(_has_template_collections.load(std::memory_order_acquire));
+        kinds.setSetPatterns(_has_set_patterns.load(std::memory_order_acquire) || _loaded_set_patterns.load(std::memory_order_acquire));
+    }
+
+    // The template-variable store, which a load enters so that it answers
+    // for the loaded nodes as it does for those fact() wrote. Entries are
+    // written solely while the store speaks for each node: in a session
+    // that holds nodes not recorded by any store, or whose store is
+    // disarmed, the record would claim a completeness the session lacks,
+    // and the load then reads those nodes via the walk instead. An entry is
+    // written for a node that the file holds, under the filter as well: an
+    // entry describes its node alone, and no other.
+    //
+    // A file in which no node is a variable gets the record regardless of
+    // the store's state, devoid of entries: no node within such a file
+    // holds a variable, thus an empty store is complete for it. A network
+    // of data that the session loaded from a file lacking the record, or
+    // that it saves after a removal has disarmed the stores, is thereby
+    // loaded with the store complete. A view gets no such record, since
+    // its nodes may name nodes that it does not hold (_loaded_view).
+    const bool complete        = _template_vars_mode.load(std::memory_order_acquire) == stores_complete;
+    const auto writes_variable = [&]
+    {
+        for (const auto& entry : _nodes)
+            if (is_var(entry.first) && kept(entry.first)) return true;
+        return false;
+    };
+    if (complete || (!_loaded_view && !writes_variable()))
+    {
+        const auto written = [&](const Node nd)
+        { return kept(nd) && _nodes.find(nd) != _nodes.end(); };
+
+        std::vector<std::pair<Node, std::vector<Node>>> entries;
+        std::vector<Node>                               rule_text;
+        if (complete)
+        {
+            std::shared_lock lock(_template_vars_mtx);
+            for (const auto& [nd, vars] : _template_vars)
+            {
+                if (!written(nd)) continue;
+                std::vector<Node> sorted(vars->begin(), vars->end());
+                std::sort(sorted.begin(), sorted.end());
+                entries.emplace_back(nd, std::move(sorted));
+            }
+            for (const Node nd : _rule_text_vars)
+                if (written(nd)) rule_text.push_back(nd);
+        }
+        std::sort(entries.begin(), entries.end());
+        std::sort(rule_text.begin(), rule_text.end());
+
+        auto record = impl.initVariableRecord();
+        auto nodes  = record.initNodes(static_cast<::capnp::uint>(entries.size()));
+        for (size_t i = 0; i < entries.size(); ++i)
+        {
+            nodes[static_cast<::capnp::uint>(i)].setNode(entries[i].first);
+            auto vars = nodes[static_cast<::capnp::uint>(i)].initVariables(static_cast<::capnp::uint>(entries[i].second.size()));
+            for (size_t j = 0; j < entries[i].second.size(); ++j)
+                vars.set(static_cast<::capnp::uint>(j), entries[i].second[j]);
+        }
+        auto text = record.initRuleText(static_cast<::capnp::uint>(rule_text.size()));
+        for (size_t i = 0; i < rule_text.size(); ++i)
+            text.set(static_cast<::capnp::uint>(i), rule_text[i]);
+    }
+
     // A label whose name → node entry names a node the filter drops, while
     // the filter keeps other nodes carrying it, is written with the kept
     // carrier that label_precedes ranks first -- the one a prune of the
@@ -1864,6 +1995,7 @@ bool Zelph::Impl::loadFromFile(const std::string& filename, bool& negation_condi
         loadNameOfNodeChunks(bufferedInput, options, nameOfNodeChunkCount);
         loadNodeOfNameChunks(bufferedInput, options, nodeOfNameChunkCount);
         loadAnnotationChunks(bufferedInput, options, annotationChunkCount);
+        _loaded_view = false;
 
         io::OutputStream(_output, io::OutputChannel::Diagnostic, true) << "String pool size after load: " << _string_pool.size();
 

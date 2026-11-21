@@ -81,14 +81,15 @@ namespace
     // unchanged by the firing, either at an atom or a value. It reads the
     // structure from the genuine-structure store and the adjacency, which the
     // profiler does not include in its count, and reconstructs a fact that has
-    // no entry in the store, which the profiler does include. A fact is
-    // missing the entry when the stores are off, following a load, or after a
-    // removal that disarms the store, so on a loaded network the
-    // reconstruction is the normal path: a walk that skipped such a fact would
-    // let every firing there claim the parts of the rule it mentions. deduce()
-    // asks once per consequence and run (Reasoning::_consequence_text), so a
-    // consequence lacking a nested rule, which applies to every consequence in
-    // the standard library, costs one lookup per firing.
+    // no entry in the store, which the profiler does include. A fact lacks an
+    // entry when the stores are off, when a load, a trusted import, or a name
+    // merge wrote it, or following a removal that disarms the store, so on a
+    // loaded network the reconstruction is the normal path for loaded facts: a
+    // walk that skipped such a fact would let every firing there claim the
+    // parts of the rule it mentions. deduce() asks once per consequence and
+    // run (Reasoning::_consequence_text), so a consequence lacking a nested
+    // rule, which applies to every consequence in the standard library, costs
+    // one lookup per firing.
     bool holds_nested_rule(const Zelph* const z, const Node source, const Node relation, const adjacency_set& targets)
     {
         std::vector<Node> pending(targets.begin(), targets.end());

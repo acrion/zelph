@@ -153,6 +153,90 @@ c p d
         CHECK(collect_answers(collector).size() == 2); });
 }
 
+// A merge rebuilds what is built upon the vanished node via the graph
+// primitives, not through fact(), and previously disarmed the fact-path
+// stores for the rest of the session. They stay armed now, and the variable
+// store answers "no variable" through the ABSENCE of an entry: kept armed
+// with the rebuilt nodes excluded from it, the rule below, whose atom `foo`
+// merges away, answered its own rebuilt condition `(foo zp X) zr c` to
+// `A zr B` as data and derived nothing from `(foo zp e) zr c`, typed after
+// the merge. Each rebuilt node assumes the entry of the node it replaces,
+// since neither merged node holds a variable.
+TEST_CASE("name merge: a rule whose atom is merged away keeps firing while the stores stay armed")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, "((foo zp X) zr c) => (X zq foo)\nbar zt b\n");
+        interactive.process(".name bar zelph foo"); // the rule's `foo` merges into `bar`
+        REQUIRE(interactive.graph()->fact_stores_enabled());
+        REQUIRE_FALSE(interactive.graph()->may_hold_untracked_nodes());
+
+        collector.clear();
+        interactive.process("A zr B");
+        CHECK(collect_answers(collector).empty());
+
+        process_lines(interactive, "(foo zp e) zr c\n.run");
+        collector.clear();
+        interactive.process("A zq B");
+        CHECK(collect_answers(collector) == std::vector<std::string>{"e zq foo"});
+        collector.clear();
+        interactive.process("A zr B");
+        CHECK(collect_answers(collector) == std::vector<std::string>{"(foo zp e) zr c"}); });
+}
+
+// A set pattern built outside a rule is an atom that holds the variables of
+// its members (Zelph::set_pattern_variables), so a fact rebuilt over it holds
+// variables that the fact it replaces did not: `foo p q` transforms into
+// `{V b} p q` when `foo` merges into the pattern. A rebuilt node assumes the
+// entries of the node it replaces, which is right only when neither merged
+// node holds a variable, thus such a merge disarms the stores, just as a merge
+// of two variables does. Kept armed, the rebuilt fact answered "no variable"
+// and was treated as data.
+TEST_CASE("name merge: a merge into a set pattern built outside a rule disarms the fact-path stores")
+{
+    zelph::network::Zelph z([](const zelph::io::OutputEvent&) {});
+    const Node            V       = z.var();
+    const Node            pattern = z.set({V, z.node("b")});
+    const Node            foo     = z.node("foo");
+    const Node            p       = z.node("p");
+    const Node            q       = z.node("q");
+    z.fact(foo, p, {q});
+    REQUIRE(z.set_pattern_variables(pattern) != nullptr);
+
+    z.set_name(pattern, "foo", z.get_lang(), true); // `foo` merges into the pattern
+    REQUIRE_FALSE(z.exists(foo));
+
+    const Node rebuilt = zelph::network::Zelph::create_hash(p, pattern, adjacency_set{q});
+    REQUIRE(z.exists(rebuilt));
+    CHECK_FALSE(z.fact_stores_enabled());
+    CHECK(z.var_in_closure(rebuilt));
+}
+
+// The opposite direction also disarms: when the pattern is the node that
+// merges away, into the atom `foo`, the statement over it is rebuilt as
+// `foo p q`, which holds no variable, while the entry it would assume
+// names the pattern's. Kept armed, the rebuilt fact was treated as a
+// pattern.
+TEST_CASE("name merge: a set pattern built outside a rule that merges into an atom disarms the fact-path stores")
+{
+    zelph::network::Zelph z([](const zelph::io::OutputEvent&) {});
+    const Node            V       = z.var();
+    const Node            pattern = z.set({V, z.node("b")});
+    const Node            foo     = z.node("foo");
+    const Node            p       = z.node("p");
+    const Node            q       = z.node("q");
+    z.fact(pattern, p, {q});
+    z.set_name(pattern, "pat", z.get_lang(), true);
+
+    z.set_name(foo, "pat", z.get_lang(), true); // the pattern merges into `foo`
+    REQUIRE_FALSE(z.exists(pattern));
+
+    const Node rebuilt = zelph::network::Zelph::create_hash(p, foo, adjacency_set{q});
+    REQUIRE(z.exists(rebuilt));
+    CHECK_FALSE(z.fact_stores_enabled());
+    CHECK_FALSE(z.var_in_closure(rebuilt));
+}
+
 // The library's merge of a name pair, Zelph::set_name(name, name in another
 // language, that language), behaves identically to how `.name` operates. It
 // performed the merge without any plan and without any repair: `c p d`
@@ -1798,6 +1882,29 @@ TEST_CASE("name merge: two variables merged across languages are announced as on
             CHECK(any_event_contains(collector, "Warning: (C) Merging variable node"));
             CHECK(any_event_contains(collector, "the statements that used these two now share one variable"));
         } });
+}
+
+// A merge involving two variables renames a variable within the nodes it
+// rebuilds, causing the variable sets that the fact-path stores held for them
+// to reference a variable that no longer exists, and such a merge disarms the
+// stores. Kept armed, the rule below, in which `A` is bound by no condition
+// and gets a new node with each firing, derived nothing from `d r c` after its
+// `A` had merged into the other rule's `X`: the variable sets kept for its
+// rebuilt statements still named the vanished `A`.
+TEST_CASE("name merge: a rule whose fresh variable merges into another rule's keeps creating its fresh node")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, "(X p Y) => (X q Y)\n.lang en\n(B r c) => (A s B)\n.lang zelph");
+        interactive.process(".name X en A");
+        CHECK_FALSE(interactive.graph()->fact_stores_enabled());
+
+        process_lines(interactive, ".lang en\nd r c\n.run");
+        collector.clear();
+        interactive.process("S s O");
+        const auto derived = collect_answers(collector);
+        REQUIRE(derived.size() == 1);
+        CHECK(derived.front().ends_with(" s d")); });
 }
 
 // The new name is a NAME. Previously, it was processed just like the node

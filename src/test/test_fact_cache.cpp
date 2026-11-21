@@ -276,14 +276,13 @@ TEST_CASE("fact cache: structureless classes bypass the cache; walk-empty hash n
 
     // A reconstruction RESULT is cached and handed back as the same
     // instance, so a second probe is a hit rather than a second walk. The
-    // walk is forced by disarming the genuine store the way a bulk path
-    // does; subject == predicate used to serve as the walk-only shape here
-    // and no longer does, since those facts are stored and read like any
-    // other.
+    // walk is forced by disarming the genuine store using the switch a
+    // mass importer uses; subject == predicate formerly served as the
+    // walk-only shape here but no longer does, as those facts are now
+    // stored and read just like any other.
     const Node b   = z.node("b");
-    const Node c   = z.node("c");
     const Node op3 = z.node("op3");
-    z.fact_import_trusted_single_object(b, op3, c); // funnel: disarm + clear
+    z.disable_fact_stores();
 
     const Node f3 = z.fact(op3, op3, {b});
     const auto w1 = get_fact_structures(&z, f3, 1); // miss: walk + store

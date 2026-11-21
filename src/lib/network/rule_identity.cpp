@@ -92,13 +92,14 @@ namespace zelph::network
         // rule referring to it. Answering from the engine's own
         // template-variable store costs O(1).
         //
-        // "Unknown" is the honest third answer -- the store is disarmed
-        // after a bulk load -- and it must NOT be read as "none": that
-        // would make every rule in a loaded graph fingerprint as a bundle
-        // of opaque IDs, and .load followed by .import (the case this
+        // "Unknown" is the honest third answer -- the store does not speak
+        // for a node loaded from a file lacking its record, nor for any node
+        // once it is disarmed -- and it must NOT be read as "none": doing so
+        // would make every rule in such a loaded graph fingerprint as a
+        // bundle of opaque IDs, and .load followed by .import (the case this
         // whole mechanism exists for) would deduplicate nothing. Unknown
-        // therefore falls through to the structural walk, which is more
-        // work and the same answer.
+        // therefore falls through to the structural walk, which is more work
+        // and the same answer.
         enum class Vars
         {
             None,

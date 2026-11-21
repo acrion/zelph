@@ -2367,6 +2367,14 @@ void Zelph::rehash_dependents(const MergePlan& plan) const
         _pImpl->merge(step.old_id, step.new_id);
         _pImpl->transfer_names_locked(step.old_id, step.new_id);
 
+        // The rebuilt node holds the variables of the node it replaces
+        // (carry_out_name_merge_locked), thus taking over that node's
+        // entries, and the store stays complete. A fold arrives at a
+        // node that already possesses its own entries. Step by step, in
+        // the sequence dictated by the plan: an id that one step leaves
+        // may be one that a later step recreates.
+        move_store_entries(step.old_id, step.new_id, created_here);
+
         // It is not permissible to pull a pre-existing node into
         // a cluster (fold_cluster_member) when folding into an
         // existing one.
@@ -2398,9 +2406,15 @@ void Zelph::rehash_dependents(const MergePlan& plan) const
             const Node marking = Impl::create_hash(core.IsA, survivor, marks);
             if (!exists(survivor) || !_pImpl->fact_edges_hold(marking, survivor, {marks})) continue;
 
+            // The stores remain armed during the merge, so the entries
+            // associated with what goes are released from them: no entry
+            // survives beyond its node. Whatever a removed node was a part of
+            // is taken along with it (collect_doomed), so no node that stays
+            // holds a removed one.
             if (_pImpl->get_right(marking).size() <= 2 && _pImpl->get_left(marking).size() <= 2)
             {
                 announce_removal({marking});
+                forget_store_entries({marking});
                 _pImpl->remove(marking);
                 _pImpl->remove_node_names(marking);
             }
@@ -2408,6 +2422,7 @@ void Zelph::rehash_dependents(const MergePlan& plan) const
             {
                 adjacency_set doomed;
                 collect_doomed(marking, doomed);
+                forget_store_entries(std::vector<Node>(doomed.begin(), doomed.end()));
                 remove_doomed(doomed);
             }
         }
@@ -2418,8 +2433,11 @@ void Zelph::rehash_dependents(const MergePlan& plan) const
     // nothing on that path announces that `a ~ ->` now exists under a new id.
     // Without the last one parse_relation kept answering from the stale set,
     // and every rebuilt fact rendered as "??" although its id and its edges
-    // were already correct.
-    invalidate_fact_structures_cache();
+    // were already correct. The fact-path stores stay armed: every rebuilt
+    // node assumed the entries of the node it replaces, above, and a merge of
+    // two variables, or with a set pattern built outside a rule, disarmed
+    // them before its initiation.
+    invalidate_structure_caches();
     invalidate_relation_type_set();
     rebuild_rule_pattern_index();
     rebuild_refuted_index();
@@ -3412,6 +3430,41 @@ size_t Zelph::save_predicate_slice(const std::string& filename, const std::vecto
     return facts;
 }
 
+// A file that fails to record whether its network holds a rule's own
+// collection or a set pattern built outside a rule: the node ids the load
+// read provide the answer, at a few dozen instructions per node. A statement
+// involving such a node constitutes a pattern, and the stores remain armed
+// throughout the load, requiring both flags to indicate this
+// (Zelph::may_hold_set_patterns, and the components fact() reads,
+// Zelph::enter_template_vars).
+//
+// The same pass says whether any node is a variable. Such a file carries no
+// record of the variable store either, and its nodes would be queried
+// individually about whether they hold a variable (Impl's
+// _template_vars_mode). Where the load has read the whole file and no node
+// within it is a variable, it follows that no node holds one: a save writes
+// either a whole network or a closed slice (save_predicate_slice), ensuring
+// every node named by any node in the file is present within the file, and
+// any variable beneath any of them would have been among the nodes read. The
+// store, which is empty, is then complete, just as it is for a network of
+// data loaded from a file that carries the record. A view is omitted, since
+// its nodes may name nodes it has not read (Impl's _loaded_view).
+void Zelph::note_loaded_kinds() const
+{
+    if (!_pImpl->_loaded_kinds_unknown) return;
+    _pImpl->_loaded_kinds_unknown = false;
+
+    const Network::IdKinds kinds = _pImpl->id_kinds();
+    if (kinds.templates) _pImpl->_has_template_collections.store(true, std::memory_order_release);
+    if (kinds.set_patterns) _pImpl->_loaded_set_patterns.store(true, std::memory_order_release);
+
+    if (!_pImpl->_loaded_view && !kinds.variables)
+    {
+        std::uint8_t partial = Impl::stores_partial;
+        _pImpl->_template_vars_mode.compare_exchange_strong(partial, Impl::stores_complete, std::memory_order_acq_rel);
+    }
+}
+
 // A load that advanced the epoch has discarded the graph, even if it
 // encountered failure following the file's header: the indexes read from the
 // graph are reconstructed using the data the load left, the display
@@ -3423,6 +3476,7 @@ void Zelph::adopt_loaded_graph(const std::uint64_t epoch_before) const
 {
     if (graph_epoch() == epoch_before) return;
 
+    note_loaded_kinds();
     _pImpl->rebuild_label_index();
     rebuild_rule_pattern_index();
     rebuild_refuted_index();
@@ -3434,7 +3488,7 @@ void Zelph::adopt_loaded_graph(const std::uint64_t epoch_before) const
 
 void Zelph::load_from_file(const std::string& filename) const
 {
-    invalidate_fact_structures_cache();
+    invalidate_structure_caches();
 
     const std::uint64_t epoch               = graph_epoch();
     bool                negation_conditions = true;
@@ -3594,7 +3648,7 @@ std::unordered_set<Node> Zelph::literals_written_before_template_ids() const
 
 void Zelph::load_from_file(const std::string& filename, const BinChunkSelection& selection, const bool skip_payload) const
 {
-    invalidate_fact_structures_cache();
+    invalidate_structure_caches();
 
     const std::uint64_t epoch = graph_epoch();
     try
@@ -3616,7 +3670,7 @@ void Zelph::load_from_manifest(const std::string&       manifest_path,
                                const std::string&       bin_path_override,
                                const bool               skip_payload) const
 {
-    invalidate_fact_structures_cache();
+    invalidate_structure_caches();
 
     const std::uint64_t epoch = graph_epoch();
     try

@@ -43,6 +43,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 // the mutable table. The marker costs no reserved character: `@` stays an
 // ordinary name character and only `@{` is special.
 
+#include "directory_rewrite.hpp"
 #include "test_helpers.hpp"
 
 #include "network/reasoning.hpp"
@@ -138,16 +139,20 @@ TEST_CASE("sets: a rule quantifies over the members of a set constant")
         CHECK(collect_answers(collector).size() == 2); });
 }
 
-// A name merge, a load, and `.fact-stores off` disarm the store that says
-// which nodes hold a variable, and the walk that answers in its stead read
-// the membership `A in {b c}`, which the question itself writes, as a
+// The store that says which nodes hold a variable does not speak for a set
+// constant read from a file lacking its record, nor for any node once
+// `.fact-stores off` has disarmed it, and the walk that answers in its stead
+// read the membership `A in {b c}`, which the question itself writes, as a
 // variable within the set's text. The set then counted as a rule template,
 // and each membership within it was dismissed: `A in {b c}` yielded no result
 // while `A in O` listed both memberships, and a rule over the set typed
-// afterwards derived nothing.
+// afterwards derived nothing. A name merge and a load of a file with the
+// record leave the store answering for the set, and the answers remain
+// unchanged there.
 TEST_CASE("sets: a set constant answers for its members after a name merge, a load, or with the fact stores off")
 {
-    const std::string path = (std::filesystem::temp_directory_path() / "zelph_test_set_members_disarmed.bin").string();
+    const auto path  = std::filesystem::temp_directory_path() / "zelph_test_set_members_disarmed.bin";
+    const auto older = std::filesystem::temp_directory_path() / "zelph_test_set_members_disarmed_older.bin";
     run_both_modes([&](auto& collector, auto& interactive)
                    {
         interactive.process("x has {b c}");
@@ -156,23 +161,38 @@ TEST_CASE("sets: a set constant answers for its members after a name merge, a lo
             interactive.process("foo q r");
             interactive.process("bar z w");
             interactive.process(".name foo bar");
+            REQUIRE(interactive.graph()->fact_stores_enabled());
         }
         SUBCASE(".save and .load")
         {
-            interactive.process(".save " + path);
-            interactive.process(".load " + path);
+            interactive.process(".save " + path.string());
+            interactive.process(".load " + path.string());
             interactive.process(".auto-run");
+            REQUIRE(interactive.graph()->fact_stores_enabled());
+        }
+        SUBCASE(".load of a file without the record of the variable store")
+        {
+            // Including a rule within it: a network lacking any variable
+            // would load with the store complete, regardless of what its
+            // file records.
+            interactive.process("(P w Q) => (P v Q)");
+            interactive.process(".save " + path.string());
+            zelph::test::write_without_directory(path, older, true);
+            interactive.process(".load " + older.string());
+            interactive.process(".auto-run");
+            REQUIRE(interactive.graph()->may_hold_untracked_nodes());
         }
         SUBCASE(".fact-stores off")
         {
             interactive.process(".fact-stores off");
+            REQUIRE_FALSE(interactive.graph()->fact_stores_enabled());
         }
-        REQUIRE_FALSE(interactive.graph()->fact_stores_enabled());
 
         CHECK(sorted_answers(collector, interactive, "A in {b c}") == std::vector<std::string>{"b in {b c}", "c in {b c}"});
         interactive.process("(X in {b c}) => (X flagged yes)");
         CHECK(sorted_answers(collector, interactive, "S flagged yes") == std::vector<std::string>{"b flagged yes", "c flagged yes"}); });
     std::filesystem::remove(path);
+    std::filesystem::remove(older);
 }
 
 // A statement that holds a variable quantifies over the members of a set

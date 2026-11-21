@@ -86,8 +86,8 @@ namespace zelph::network
         // ID is a counter. These probes were the atom share of ~17M
         // fs_cache hits per Jacobian phase, each paying a rwlock pair plus
         // a map find; the classification is two bit tests. Holds
-        // independently of the authoritative bits, i.e. also after binary
-        // loads and trusted imports.
+        // independently of the stores, meaning it also applies to the nodes
+        // binary loads and trusted imports wrote.
         if (!Zelph::is_hash(fact) || Zelph::is_var(fact))
         {
             out = empty_structures();
@@ -508,6 +508,7 @@ namespace zelph::network
 
         auto result = std::make_shared<FactStructureList>(std::move(structures));
         n->store_fact_structures_cached(fact, result);
+        n->adopt_walked_structure(fact, result);
 
         if (n->should_log(depth))
         {

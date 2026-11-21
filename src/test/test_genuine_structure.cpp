@@ -25,10 +25,13 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #include <doctest/doctest.h>
 
+#include <algorithm>
 #include <filesystem>
 
+#include "directory_rewrite.hpp"
 #include "io/output.hpp"
 #include "network/fact_structure.hpp"
+#include "network/reasoning.hpp"
 #include "network/zelph.hpp"
 #include "test_helpers.hpp"
 
@@ -41,8 +44,9 @@ using namespace zelph::network;
 //  (1) the stored reading IS the genuine triple across shapes;
 //  (2) subject == predicate facts decompose like any other -- both roles
 //      share one outgoing edge, which used to leave them without a reading;
-//  (3) the disarm funnel (trusted import): later queries AND later-created
-//      facts are answered by the walk, with identical readings;
+//  (3) a path around fact() (trusted import, load, merge) keeps the store
+//      armed: what fact() recorded answers from it, before and after, and
+//      only the nodes it never saw are walked, with identical readings;
 //  (4) growth-only full clears (relation-type declarations) do NOT disarm.
 // Reading equivalence end-to-end is co-pinned by the whole suite (every
 // gfs consumer now runs through the store) plus `.semi-naive check`.
@@ -166,8 +170,7 @@ TEST_CASE("genuine store: revoking a rule-pattern mark does not disarm it")
     CHECK(z.fact_stores_enabled());
 
     // Probed on a fact created AFTERWARDS, which a disarmed store would not
-    // have recorded -- the mirror image of the trusted-import case below,
-    // which asserts hits == 0 and walks > 0.
+    // have recorded.
     z.set_logging(-1); // counter-only mode
     z.reset_genuine_stats();
     const Node e     = z.node("e");
@@ -177,29 +180,39 @@ TEST_CASE("genuine store: revoking a rule-pattern mark does not disarm it")
     CHECK(z.genuine_stats().walks == 0);
 }
 
-TEST_CASE("genuine store: trusted import disarms; walk keeps readings identical")
+TEST_CASE("genuine store: a trusted import keeps it armed, and only the imported node is walked")
 {
+    // The bulk path writes its triple without fact(), so this store does not
+    // record it. It previously disarmed both stores for the rest of the
+    // session, which put every subsequent reconstruction on the walk: the
+    // Jacobian workload after a .load of a two-entity dump ran 27.1 G instead
+    // of 7.4 G instructions. A recorded triple remains valid regardless of
+    // how the graph grows -- a fact node's id IS the hash of its triple -- so
+    // the store continues to answer for what fact() wrote before the import
+    // and after it, and the walk reads the node the import wrote.
     Zelph      z(null_handler());
     const Node a  = z.node("a");
     const Node b  = z.node("b");
     const Node c  = z.node("c");
     const Node op = z.node("op");
 
-    const Node f = z.fact(a, op, {b});
-    CHECK(has_reading(*get_fact_structures(&z, f, 1), a, b)); // via store
-
-    z.fact_import_trusted_single_object(a, op, c); // funnel: disarm + clear
+    const Node f        = z.fact(a, op, {b});
+    const Node imported = z.fact_import_trusted_single_object(a, op, c);
+    REQUIRE(imported != 0);
+    CHECK(z.fact_stores_enabled());
 
     z.set_logging(-1);
-    CHECK(has_reading(*get_fact_structures(&z, f, 1), a, b)); // via walk now
+    CHECK(has_reading(*get_fact_structures(&z, f, 1), a, b)); // the store
+    CHECK(z.genuine_stats().hits == 1);
+    CHECK(z.genuine_stats().walks == 0);
 
-    // Created AFTER the disarm: no store maintenance happens, only the
-    // walk can answer -- red if the query still trusted the (empty) store.
-    const Node g = z.fact(b, op, {a});
+    CHECK(has_reading(*get_fact_structures(&z, imported, 1), a, c)); // the walk
+    CHECK(z.genuine_stats().walks == 1);
+
+    const Node g = z.fact(b, op, {a}); // created afterwards: recorded
     CHECK(has_reading(*get_fact_structures(&z, g, 1), b, a));
-
-    CHECK(z.genuine_stats().hits == 0);
-    CHECK(z.genuine_stats().walks > 0);
+    CHECK(z.genuine_stats().hits == 2);
+    CHECK(z.genuine_stats().walks == 1);
 }
 
 TEST_CASE("genuine store: growth-only full clears do not disarm")
@@ -298,11 +311,12 @@ TEST_CASE("save/load: a fact in predicate position answers the same on both side
     using namespace zelph::test;
     namespace fs = std::filesystem;
 
-    // The end-to-end shape of the two mechanisms above. A .load disarms the
-    // stores, so the reloaded network answers purely from the walk; before
-    // the predicate was declared and the users were filtered out, this
-    // query answered on the typed network and stayed silent on the
-    // reloaded one -- the same file, read back as something else.
+    // The end-to-end shape of the two mechanisms above. No store records the
+    // triple of a loaded node before the walk has read it, so the reloaded
+    // network answers through the walk; before the predicate was declared and
+    // the users were filtered out, this query answered on the typed network and
+    // stayed silent on the reloaded one -- the same file, read back as
+    // something else.
     zelph::io::OutputCollector  collector;
     zelph::console::Interactive interactive(collector.sink());
 
@@ -330,6 +344,165 @@ x (a p b) y
     CHECK(answers_contain(collector, "a p b"));
 
     fs::remove(path);
+}
+
+// The stores stay armed through a .load, and an armed variable store answers
+// "no variable" via ABSENCE. No fact() call wrote a loaded node, so that
+// absence applies only where the file's record of the store says so: kept
+// armed without the record, and without telling the loaded nodes apart, the
+// loaded rule below answered its own condition `(X zp Y) zr c` to `A zr B`
+// as data, and after the load it derived nothing from new data --
+// `(e zp f) zr c` left `e zq f` underived, since the condition was read as
+// ground and matched only itself. A file containing the record draws its
+// answers from it; a file lacking it, where its network holds a variable as
+// this one does, has its loaded nodes read by the walk, and whatever the
+// session writes afterwards by the store.
+TEST_CASE("save/load: a loaded rule is no data and keeps deriving while the stores stay armed")
+{
+    using namespace zelph::test;
+    namespace fs = std::filesystem;
+
+    const auto path  = fs::temp_directory_path() / "zelph_loaded_rule_armed_stores.bin";
+    const auto older = fs::temp_directory_path() / "zelph_loaded_rule_armed_stores_older.bin";
+    {
+        zelph::io::OutputCollector  collector;
+        zelph::console::Interactive interactive(collector.sink());
+        process_lines(interactive, "((X zp Y) zr c) => (X zq Y)\n(a zp b) zr c");
+        interactive.process(".save \"" + path.string() + "\"");
+    }
+    write_without_directory(path, older, true);
+
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+    SUBCASE("a file with the record of the variable store")
+    {
+        interactive.process(".load \"" + path.string() + "\"");
+        REQUIRE_FALSE(interactive.graph()->may_hold_untracked_nodes());
+    }
+    SUBCASE("a file without it")
+    {
+        interactive.process(".load \"" + older.string() + "\"");
+        REQUIRE(interactive.graph()->may_hold_untracked_nodes());
+    }
+    fs::remove(path);
+    fs::remove(older);
+    REQUIRE(interactive.graph()->fact_stores_enabled());
+
+    collector.clear();
+    interactive.process("A zr B");
+    CHECK(collect_answers(collector) == std::vector<std::string>{"(a zp b) zr c"});
+
+    process_lines(interactive, "(e zp f) zr c\n.run");
+    collector.clear();
+    interactive.process("A zq B");
+    auto derived = collect_answers(collector);
+    std::ranges::sort(derived);
+    CHECK(derived == std::vector<std::string>{"a zq b", "e zq f"});
+}
+
+// The discard of a load also empties the genuine-structure store, even though
+// an entry within it remains valid for its node: following the load of a file
+// lacking the record, an entry says that the stores recorded the node's
+// variables (Impl::recorded_by_stores), and a loaded node retains the id that
+// the same statement held in the session before the load. A session that
+// holds a rule and loads a network holding the same rule would find the
+// loaded patterns "recorded", with no trace of them in the variable store,
+// which the discard has erased: had the entries been preserved, the pattern
+// `(X zp Y) zr c` would have answered `A zr B` as data, and the rule would
+// have derived nothing from a fact written after the load.
+TEST_CASE("save/load: a rule that the session held before it loads the same rule from a file without the record is no data")
+{
+    using namespace zelph::test;
+    namespace fs = std::filesystem;
+
+    const auto path  = fs::temp_directory_path() / "zelph_reloaded_rule.bin";
+    const auto older = fs::temp_directory_path() / "zelph_reloaded_rule_older.bin";
+    {
+        zelph::io::OutputCollector  collector;
+        zelph::console::Interactive interactive(collector.sink());
+        process_lines(interactive, "((X zp Y) zr c) => (X zq Y)\n(a zp b) zr c");
+        interactive.process(".save \"" + path.string() + "\"");
+    }
+    write_without_directory(path, older, true);
+
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+    process_lines(interactive, "((X zp Y) zr c) => (X zq Y)\n(a zp b) zr c");
+    interactive.process(".load \"" + older.string() + "\"");
+    fs::remove(path);
+    fs::remove(older);
+    REQUIRE(interactive.graph()->may_hold_untracked_nodes());
+
+    collector.clear();
+    interactive.process("A zr B");
+    CHECK(collect_answers(collector) == std::vector<std::string>{"(a zp b) zr c"});
+
+    process_lines(interactive, "(e zp f) zr c\n.run");
+    collector.clear();
+    interactive.process("A zq B");
+    auto derived = collect_answers(collector);
+    std::ranges::sort(derived);
+    CHECK(derived == std::vector<std::string>{"a zq b", "e zq f"});
+}
+
+// A node that fact() did not write -- specifically, one a .load read -- is
+// read by the walk, and the structure cache keeps that reading solely until
+// its next wholesale clear, triggered by a relation-type declaration. Re-read,
+// the node was walked once more: over a math stdlib loaded from a file
+// containing the variable store's record, the Jacobian workload walked 178,010
+// structures and ran 11.0 G user instructions instead of 7.4 G when run
+// sequentially; with the walked structures kept, it now walks 2,800 and runs
+// 7.5 G. A walk whose one reading hashes back to the node has read the node's
+// own triple, the one fact() records, and the store keeps it: the second read
+// constitutes a hit. A session with stores disabled maintains no such entry,
+// representing the memory switch, nor does one that loaded a file lacking the
+// record, where an entry in this store says that the stores had recorded the
+// node's variables as well (Impl::recorded_by_stores): if kept, the loaded
+// rule from the earlier test would answer its own condition as data once a
+// query had walked it.
+TEST_CASE("genuine store: a loaded node the walk has read is answered by the store")
+{
+    namespace fs     = std::filesystem;
+    const auto path  = fs::temp_directory_path() / "zelph_genuine_adopted.bin";
+    const auto older = fs::temp_directory_path() / "zelph_genuine_adopted_older.bin";
+    {
+        Zelph z(null_handler());
+        z.fact(z.node("a"), z.node("p"), {z.node("b")});
+        // A pattern in addition to the fact: a network lacking a variable
+        // would load with the variable store complete regardless of what
+        // its file records.
+        z.fact(z.var(), z.node("p"), {z.node("b")});
+        z.save_to_file(path.string());
+    }
+    zelph::test::write_without_directory(path, older, true);
+
+    Zelph    z(null_handler());
+    uint64_t walks_expected = 1;
+    SUBCASE("a file with the record of the variable store")
+    {
+        z.load_from_file(path.string());
+    }
+    SUBCASE("a file without it")
+    {
+        z.load_from_file(older.string());
+        walks_expected = 2;
+    }
+    SUBCASE("a session whose stores are off")
+    {
+        z.load_from_file(path.string());
+        z.disable_fact_stores();
+        walks_expected = 2;
+    }
+    fs::remove(path);
+    fs::remove(older);
+
+    const Node f = Zelph::create_hash(z.get_node("p"), z.get_node("a"), adjacency_set{z.get_node("b")});
+    REQUIRE(z.exists(f));
+    z.set_logging(-1);
+    CHECK(has_reading(*get_fact_structures(&z, f, 1), z.get_node("a"), z.get_node("b")));
+    z.fact(z.node("p2"), z.core.IsA, {z.core.RelationTypeCategory}); // clears the structure cache
+    CHECK(has_reading(*get_fact_structures(&z, f, 1), z.get_node("a"), z.get_node("b")));
+    CHECK(z.genuine_stats().walks == walks_expected);
 }
 
 TEST_CASE("genuine store: a scratch cluster the engine discards does not disarm it")

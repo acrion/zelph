@@ -25,6 +25,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #include <doctest/doctest.h>
 
+#include "directory_rewrite.hpp"
 #include "test_helpers.hpp"
 
 #include "network/reasoning.hpp"
@@ -397,6 +398,62 @@ TEST_CASE("slice: a question asked before the save does not travel with it")
 
     fs::remove(before_file);
     fs::remove(after_file);
+}
+
+// Rule patterns accompany the rule, and the slice's header carries the part
+// of the template-variable store that describes the nodes it keeps. A load
+// enters it, causing readers that enumerate the store to treat the patterns
+// as no facts: `.list-predicate-usage` over the loaded slice listed the
+// patterns of both rules among the facts, `=> 2`, `zp 2`, `zq 2`, `zr 2`,
+// where the source lists `=> 0`, `zp 1`, `zq 1` and the slice holds no `zr`
+// fact at all. The second rule's conditions hold its variables while its
+// consequence holds none, which the store records independently of the
+// variable sets.
+TEST_CASE("slice: the patterns of the rules a slice carries are no facts after its load")
+{
+    const auto file = slice_path("record");
+    {
+        zelph::io::OutputCollector  collector;
+        zelph::console::Interactive interactive(collector.sink());
+        process_lines(interactive, "(X zp Y) => (X zq Y)\n(X zr Y, Y zr Z) => (c zs d)\na zp b\ne zr f\nf zr g");
+        interactive.process(".save-predicates \"" + file.string() + "\" zp zq");
+    }
+
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive slice(collector.sink());
+    slice.process(".load \"" + file.string() + "\"");
+    fs::remove(file);
+    collector.clear();
+    slice.process(".list-predicate-usage");
+    CHECK(any_output_contains(collector, "=>\t0"));
+    CHECK(any_output_contains(collector, "zp\t1"));
+    CHECK(any_output_contains(collector, "zq\t1"));
+    CHECK(any_output_contains(collector, "zr\t0"));
+}
+
+// Whether a file holds a variable is determined by the nodes the save writes,
+// not by the session: a slice that keeps none gets the empty record, leaving
+// the store complete at its load (Impl::saveToFile). The session below has
+// removed its rules, turning off the stores and leaving the rules' variables
+// behind as nodes, so a save of the whole network writes no record, while the
+// slice of a predicate of data holds none of them.
+TEST_CASE("slice: a slice without a variable carries the empty record of the variable store, whatever else the session holds")
+{
+    const auto file  = slice_path("datarecord");
+    const auto whole = slice_path("datarecord_whole");
+    {
+        zelph::io::OutputCollector  collector;
+        zelph::console::Interactive interactive(collector.sink());
+        process_lines(interactive, "(X zp Y) => (X zq Y)\na zp b\nc zt d");
+        interactive.process(".remove-rules");
+        REQUIRE_FALSE(interactive.graph()->fact_stores_enabled());
+        interactive.process(".save-predicates \"" + file.string() + "\" zt");
+        interactive.process(".save \"" + whole.string() + "\"");
+    }
+    CHECK(variable_record_entries(file) == 0);
+    CHECK(variable_record_entries(whole) == -1);
+    fs::remove(file);
+    fs::remove(whole);
 }
 
 TEST_CASE("slice: every rule travels, including the ones that report contradictions")

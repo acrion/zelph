@@ -130,7 +130,10 @@ c p d
         }
 
         copy_prefix(f.good, f.truncated, 200);
-        copy_prefix(f.good, f.tiny, 40);
+        // Truncated at the point where the header concludes, a detail
+        // contingent on what the header records (40 bytes held it while it
+        // recorded less).
+        copy_prefix(f.good, f.tiny, static_cast<std::streamsize>(header_bytes(f.good)));
         std::ofstream(f.garbage, std::ios::binary) << "hello, this is not a serialized network";
         std::ofstream nothing(f.nothing, std::ios::binary); // created empty on purpose
         nothing.close();
@@ -234,8 +237,9 @@ TEST_CASE("bin inspection: a header claiming more than the file holds is refused
     zelph::io::OutputCollector  collector;
     zelph::console::Interactive interactive(collector.sink());
 
-    // 40 bytes hold the header, whose four chunk counts cannot possibly be
-    // backed by what is left. That is decidable without reading a chunk.
+    // The file holds the header and nothing behind it, so the header's
+    // chunk counts cannot possibly be backed by what remains. That is
+    // decidable without reading a chunk.
     try
     {
         interactive.process(".stat-file \"" + f.tiny.string() + "\"");

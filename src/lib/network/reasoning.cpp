@@ -3000,7 +3000,8 @@ void zelph::network::collect_variables(Zelph* z, Node pattern, std::unordered_se
 
     z->count_template_vars_walk();
 
-    // Historical reconstruction walk (fallback after bulk paths):
+    // Historical reconstruction walk (fallback when the store does not
+    // speak for the node):
     // Cycle check
     for (Node visited : history)
     {

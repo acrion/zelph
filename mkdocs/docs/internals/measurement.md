@@ -64,9 +64,10 @@ Two classes of counter relations are checked on every protocol.
 
 **Exact identities** must hold to the last digit. `fs_cache misses` equals
 `genuine hits + genuine walks` — every cache miss is answered by exactly one
-of the two layers below it. On store-armed workloads, all three walk
+of the two layers below it. On a store-armed workload that reads no node
+written by a load, a trusted import, or a name merge, all three walk
 counters (`genuine walks`, `var_closure walk_fallbacks`, `template_vars
-walks`) are **zero**; any nonzero value means the disarm funnel fired
+walks`) are **zero**; any nonzero value there means the disarm funnel fired
 mid-run, and the measurement stops until the trigger is understood.
 
 **Hard semantic invariants** must stay bit-identical across any change that does not affect semantics: `facts_created`, `seminaive_seeds`, `extract ok`, and `template_rejects`, the entire `evaluate`, `negation`, `check_fact`, and `termination_guard` blocks, and `seminaive_safety_extra=0`. These counters describe _what_ was derived and _which_ decisions the engine made; an optimization that moves them changes semantics, regardless of the test suite’s verdict. The full set remains bit-identical only during a sequential run (`.parallel` off). In the parallel default, `evaluate calls` and `leaf_conditions`, `extract ok` and `check_fact known` form a drift family (explained further below). The rest of the set also preserves bit-identity in that configuration: `facts_created`, `seminaive_seeds`, `template_rejects`, `evaluate conjunction_sets` and `optimize_order`, the `negation` and `termination_guard` blocks, `check_fact new` and `wrong`, and `seminaive_safety_extra=0`. Check the four drifting ones in a standalone run with `.parallel` disabled, not by executing the whole protocol sequentially: its timing measurements apply to the parallel default.

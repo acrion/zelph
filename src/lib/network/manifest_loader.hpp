@@ -104,7 +104,7 @@ namespace zelph::network
         // file skip the expensive extraction phase entirely. A sidecar is only
         // read or written while the in-memory graph is an unmodified image of
         // the loaded file: any edge mutation (everything that triggers
-        // invalidate_fact_structures_cache, including pattern facts created by
+        // invalidate_structure_caches, including pattern facts created by
         // queries through the unification path) disables sidecar I/O for the
         // rest of the session, and closures fall back to building from the
         // graph. The validation snapshot is taken at load time, so node

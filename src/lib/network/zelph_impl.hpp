@@ -299,12 +299,48 @@ namespace zelph::network
         // are established before parents; a node ID is its triple hash,
         // making sets definitive upon creation). Covers every node fact()
         // creates, subject == predicate facts included, and aligns with the
-        // reconstruction walk, which also consults these facts. Disarmed AND
-        // cleared solely by the wholesale funnel
-        // (invalidate_fact_structures_cache).
+        // reconstruction walk, which also consults these facts. The paths
+        // that write hash nodes without invoking fact() keep it complete too:
+        // a trusted import enters its triple as fact() would, a name merge
+        // enters each rebuilt node with the entry of the node it replaces,
+        // and a load enters the record that a save writes to the file
+        // (Impl::saveToFile, loadSmallData). Disarmed AND cleared by the
+        // wholesale funnel (invalidate_fact_structures_cache) and by
+        // `.fact-stores off`.
         mutable std::shared_mutex                                                           _template_vars_mtx;
         ankerl::unordered_dense::map<Node, std::shared_ptr<const std::unordered_set<Node>>> _template_vars;
-        std::atomic<bool>                                                                   _template_vars_authoritative{true};
+
+        // What the absence of an entry in the store above and in
+        // _rule_text_vars means, in one word for readers on the hot path, who
+        // incur a single load for it:
+        //  - stores_complete: every hash node in the graph that holds a
+        //    variable has its entry, so absence means "no variable";
+        //  - stores_partial: the graph holds hash nodes not recorded by any
+        //    store, as occurs after loading a file that carries no record;
+        //    absence means "no variable" only for a node the
+        //    genuine-structure store holds (recorded_by_stores), while every
+        //    other hash node is read via the reconstruction walk;
+        //  - stores_disarmed: absence carries no meaning, and every question
+        //    is answered by the walk, until `.new` creates a fresh engine.
+        // A load that finds the record returns the session to
+        // stores_complete, and so does a load that has read the whole of a
+        // file that records neither the store nor the kinds of pattern and
+        // where no node is a variable, because no node in such a network
+        // holds one (Zelph::note_loaded_kinds); any other load leaves it in
+        // stores_partial. A session whose stores are disarmed remains so
+        // across every load.
+        static constexpr std::uint8_t stores_disarmed = 0;
+        static constexpr std::uint8_t stores_complete = 1;
+        static constexpr std::uint8_t stores_partial  = 2;
+        std::atomic<std::uint8_t>     _template_vars_mode{stores_complete};
+
+        // In stores_partial: whether the stores recorded `nd`, such that
+        // the absence of a variable entry says "no variable" for it. True
+        // for every node that is not a hash node; for a hash node, whether
+        // the genuine-structure store holds it, which it does for every
+        // fact that fact() wrote since the load. Out of line, in
+        // zelph_caches.cpp: only the readers' gated halves call it.
+        bool recorded_by_stores(Node nd) const;
 
         // Facts whose rule text holds a variable invisible to the store above:
         // a `=>` fact where the conditions hold one while the consequence
@@ -374,10 +410,34 @@ namespace zelph::network
         mutable std::shared_mutex                                                 _set_patterns_mtx;
         std::unordered_map<Node, std::shared_ptr<const std::unordered_set<Node>>> _set_patterns;
         std::atomic<bool>                                                         _has_set_patterns{false};
-        // Established upon the creation of a rule's text collection, which
-        // might constitute a set pattern (Zelph::may_hold_set_patterns);
-        // never reset.
+        // Whether the graph a load read may hold such a set pattern, which no
+        // entry above records until its variables are requested. Zelph::fact
+        // then reads the variables of each component of that class, ensuring a
+        // statement written over a loaded pattern holds them in the variable
+        // store as well. Set from the file's header, or, for a file that
+        // carries no such field, from the ids the load read
+        // (Zelph::note_loaded_kinds); reset by the next load.
+        std::atomic<bool> _loaded_set_patterns{false};
+        // Established at the moment a rule's text collection is created,
+        // which might constitute a set pattern
+        // (Zelph::may_hold_set_patterns), and by a load whose graph could
+        // hold one, in the same way as the flag above; reset during a load,
+        // which replaces the graph.
         std::atomic<bool> _has_template_collections{false};
+        // Set during a load whose file contains no information about the
+        // two kinds mentioned above: the load then reads them from the ids
+        // of the nodes it read.
+        bool _loaded_kinds_unknown{false};
+        // Whether the graph is what a load left without reading the file in
+        // its entirety: a chunk selection, a manifest, or a load that
+        // failed after having discarded the previous graph. A node within
+        // such a graph may name a node that the graph does not hold, thus
+        // the ids of the nodes it holds do not say that none of them holds
+        // a variable, which a load and a save inquire about
+        // (Zelph::note_loaded_kinds, saveToFile). Set when a load discards
+        // the graph (clear_loaded_state), and cleared exclusively when a
+        // whole-file load concludes.
+        bool _loaded_view{false};
         // The predicates for which a ground fact containing multiple objects
         // may exist (Zelph::may_hold_wider_statements). fact() marks the
         // predicate of such a fact, a name merge of two statements marks the
@@ -573,9 +633,15 @@ namespace zelph::network
         // entry can never go stale through graph GROWTH -- unlike walked
         // reconstructions, whose candidate readings evolve with the
         // neighborhood (the reason the fs_cache needs invalidation at
-        // all). Disarmed and cleared ONLY by the wholesale funnel
-        // (invalidate_fact_structures_cache): trusted imports, binary
-        // loads, removals, merges. Growth-only clears never touch it.
+        // all). Every reader takes a missing entry as "walk", so a node
+        // written around fact() -- loaded, imported, or rebuilt by a name
+        // merge -- is simply read by the walk. A load clears it along with
+        // the graph it replaces, and a merge eliminates the entries of the
+        // nodes it removes or rebuilds. Disarmed and cleared by the
+        // wholesale funnel (invalidate_fact_structures_cache): removals,
+        // and merges of two variables or with a set pattern built outside a
+        // rule; and by `.fact-stores off`. Growth-only clears never touch
+        // it.
         mutable std::shared_mutex                                    _genuine_mtx;
         mutable ankerl::unordered_dense::map<Node, FactStructurePtr> _genuine;
         std::atomic<bool>                                            _genuine_authoritative{true};
