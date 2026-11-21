@@ -722,6 +722,18 @@ namespace zelph::network
             return (a & 0xF000000000000000ull) == 0;
         }
 
+        // Whether the subject of a statement and each of its objects is a
+        // counter id. Under a predicate of that class other than `=>`, such
+        // a statement holds neither a variable nor rule text, so the
+        // variable store contains no entry for it
+        // (Zelph::enter_template_vars), and a traversal does not need to
+        // ask the store's snapshot regarding it (Zelph::closure_skips).
+        static bool counter_ids_alone(const Node subject, const adjacency_set& objects)
+        {
+            return is_counter_id(subject) && std::all_of(objects.begin(), objects.end(), [](const Node t)
+                                                         { return is_counter_id(t); });
+        }
+
         static bool is_value_set_pattern(Node a)
         {
             return (a & 0xF000000000000000ull) == value_set_pattern_class;

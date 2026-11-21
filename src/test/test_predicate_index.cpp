@@ -486,6 +486,34 @@ TEST_CASE("predicate index: claiming a rule's ground pattern of the predicate pu
     fs::remove_all(f.root);
 }
 
+// The index is built from the same two parts of the statements nobody claimed
+// as the direct walk reads (Zelph::closure_skips): the patterns of the
+// variable store are asked about only for a relation with an end that is not
+// a counter id. `(X zr k) p hub` exemplifies such a pattern, featuring a
+// statement that holds a variable as its subject, and it is not a pair of the
+// index, whereas the fact `(j zr k) p hub`, sharing the same structure, is
+// one.
+TEST_CASE("predicate index: a pattern over a statement or a set pattern that holds a variable is no pair of the index" * doctest::test_suite("slow"))
+{
+    const Fixture               f = fixture_copy("zelph_pidx_composite");
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+    interactive.process(".load \"" + f.bin.string() + "\"");
+
+    interactive.process("((X zr k) p hub) => (X hit yes)");
+    CHECK(closure_counts(interactive, collector, kFacts));
+    interactive.process("(j zr k) p hub");
+    CHECK(closure_counts(interactive, collector, kFacts + 1));
+
+    // A set pattern constructed by a program outside a rule is not a
+    // counter id either, and a statement over it is not a pair of the
+    // index.
+    interactive.process(R"(%(zelph/fact (zelph/set (zelph/var) "a") "p" "hub"))");
+    CHECK(closure_counts(interactive, collector, kFacts + 1));
+
+    fs::remove_all(f.root);
+}
+
 // Replaces "predicate index: a removed refutation marking puts its fact into
 // the next closure", which relied on `¬(z7 p hub)` claiming the rule's pattern
 // it refuted: upon deletion of the marking, the fact became data and joined

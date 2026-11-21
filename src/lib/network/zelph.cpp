@@ -445,15 +445,15 @@ adjacency_set Zelph::get_fact_subjects(const Node predicate, const Node object) 
 adjacency_set Zelph::transitive_targets(const Node start, const Node predicate, const bool include_start) const
 {
     // Before the locks, never inside them -- see unasserted_snapshot.
-    const auto skip        = unasserted_snapshot();
+    const auto skips       = closure_skips(predicate);
     const auto bookkeeping = bookkeeping_facts(predicate);
 
     adjacency_set result;
-    if (_pImpl->try_transitive_direct(start, predicate, include_start, /*forward*/ true, kDirectClosureScanBudget, skip.get(), result, 0, nullptr, bookkeeping.get()))
+    if (_pImpl->try_transitive_direct(start, predicate, include_start, /*forward*/ true, kDirectClosureScanBudget, skips.every.get(), result, 0, nullptr, bookkeeping.get(), nullptr, skips.composite.get()))
         return result;
 
     result.clear();
-    const auto         idx   = _pImpl->predicate_index(predicate, skip.get());
+    const auto         idx   = _pImpl->predicate_index(predicate, skips.every.get(), skips.composite.get());
     const SkippedSteps steps = bookkeeping ? bookkeeping_steps(this, *bookkeeping, predicate) : SkippedSteps{};
     return bfs_over_index(idx->forward, start, include_start, bookkeeping ? &steps : nullptr, /*forward*/ true);
 }
@@ -510,15 +510,15 @@ bool Zelph::transitive_walk(const Node start, const Node target, const Node pred
 // Transitive closure following the predicate backward (object -> subject).
 adjacency_set Zelph::transitive_sources(const Node target, const Node predicate, const bool include_target) const
 {
-    const auto skip        = unasserted_snapshot();
+    const auto skips       = closure_skips(predicate);
     const auto bookkeeping = bookkeeping_facts(predicate); // see transitive_targets
 
     adjacency_set result;
-    if (_pImpl->try_transitive_direct(target, predicate, include_target, /*forward*/ false, kDirectClosureScanBudget, skip.get(), result, 0, nullptr, bookkeeping.get()))
+    if (_pImpl->try_transitive_direct(target, predicate, include_target, /*forward*/ false, kDirectClosureScanBudget, skips.every.get(), result, 0, nullptr, bookkeeping.get(), nullptr, skips.composite.get()))
         return result;
 
     result.clear();
-    const auto         idx   = _pImpl->predicate_index(predicate, skip.get());
+    const auto         idx   = _pImpl->predicate_index(predicate, skips.every.get(), skips.composite.get());
     const SkippedSteps steps = bookkeeping ? bookkeeping_steps(this, *bookkeeping, predicate) : SkippedSteps{};
     return bfs_over_index(idx->backward, target, include_target, bookkeeping ? &steps : nullptr, /*forward*/ false);
 }
@@ -1343,10 +1343,7 @@ void Zelph::enter_template_vars(const Node relation, const Node subject, const N
     // 1.2 % more instructions than when it disarmed the stores instead. A
     // `=>` fact takes the whole path, since its conditions might hold a
     // variable within a collection bearing a counter id.
-    if (predicate != core.Causes && Impl::is_counter_id(subject) && Impl::is_counter_id(predicate)
-        && std::all_of(objects.begin(), objects.end(), [](const Node t)
-                       { return Impl::is_counter_id(t); }))
-        return;
+    if (predicate != core.Causes && Impl::is_counter_id(predicate) && Impl::counter_ids_alone(subject, objects)) return;
 
     std::shared_ptr<std::unordered_set<Node>> vars; // lazily allocated
 

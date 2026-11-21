@@ -101,7 +101,7 @@ unsigned int Zelph::Impl::index_build_threads()
 // Phase 1: extract (subject, object) pairs from the predicate's
 // relation nodes (parallel; see previous comments on locking and
 // swap-bound random access). Returns the unsorted forward pairs.
-std::vector<IndexPair> Zelph::Impl::extract_predicate_pairs(const Node predicate, const adjacency_set* skip) const
+std::vector<IndexPair> Zelph::Impl::extract_predicate_pairs(const Node predicate, const adjacency_set* skip, const adjacency_set* skip_composite) const
 {
     // Same lock order as writers (connect): left before right.
     std::shared_lock<std::shared_mutex> lock_left(_smtx_left);
@@ -136,10 +136,12 @@ std::vector<IndexPair> Zelph::Impl::extract_predicate_pairs(const Node predicate
                 const Node rel = rels[i];
 
                 // A statement nobody claimed carries no edge: a rule's
-                // ground pattern, or a fact carrying a variable. The
-                // set is snapshotted by the caller because asking
-                // directly would take its mutex under the adjacency
-                // locks -- see Zelph::unasserted_snapshot.
+                // ground pattern or a refuted fact, and, when
+                // `skip_composite` is null, a fact carrying a variable
+                // as well (Zelph::closure_skips). The set is
+                // snapshotted by the caller because asking directly
+                // would take its mutex under the adjacency locks --
+                // see Zelph::unasserted_snapshot.
                 if (skip != nullptr && skip->count(rel) != 0) continue;
 
                 const auto rel_it = _nodes.find(rel);
@@ -202,6 +204,12 @@ std::vector<IndexPair> Zelph::Impl::extract_predicate_pairs(const Node predicate
                 // A self-fact keeps its object in that bidirectional
                 // entry, so the split above leaves it empty.
                 if (objects.empty()) objects.insert(subject);
+
+                // A statement of counter ids alone has no entry in the
+                // variable store, thus only an edge with an end
+                // belonging to a different class is asked about there
+                // (Zelph::closure_skips).
+                if (skip_composite != nullptr && !counter_ids_alone(subject, objects) && skip_composite->count(rel) != 0) continue;
 
                 for (const Node obj : objects)
                 {
@@ -317,7 +325,7 @@ std::shared_ptr<const PredicateIndex> Zelph::Impl::index_from_pairs(std::vector<
     return idx;
 }
 
-std::shared_ptr<const PredicateIndex> Zelph::Impl::predicate_index(const Node predicate, const adjacency_set* skip) const
+std::shared_ptr<const PredicateIndex> Zelph::Impl::predicate_index(const Node predicate, const adjacency_set* skip, const adjacency_set* skip_composite) const
 {
     {
         std::shared_lock lock(_pred_idx_mtx);
@@ -327,13 +335,13 @@ std::shared_ptr<const PredicateIndex> Zelph::Impl::predicate_index(const Node pr
 
     std::vector<IndexPair> fw;
 #ifdef __EMSCRIPTEN__
-    fw = extract_predicate_pairs(predicate, skip);
+    fw = extract_predicate_pairs(predicate, skip, skip_composite);
 #else
     bool fresh = false;
 
     if (!try_load_pidx(predicate, fw))
     {
-        fw    = extract_predicate_pairs(predicate, skip);
+        fw    = extract_predicate_pairs(predicate, skip, skip_composite);
         fresh = true;
     }
 #endif
@@ -441,7 +449,7 @@ void Zelph::Impl::invalidate_relation_type_set() const
 // been scanned - hub nodes blow the budget immediately, signalling
 // the caller to switch to the predicate index. On false, `result`
 // is partial and must be discarded.
-bool Zelph::Impl::try_transitive_direct(Node start, Node predicate, bool include_start, bool forward, size_t scan_budget, const adjacency_set* skip, adjacency_set& result, const Node stop_at, ankerl::unordered_dense::map<Node, std::pair<Node, Node>>* via, const adjacency_set* skip2, size_t* const scanned_out) const
+bool Zelph::Impl::try_transitive_direct(Node start, Node predicate, bool include_start, bool forward, size_t scan_budget, const adjacency_set* skip, adjacency_set& result, const Node stop_at, ankerl::unordered_dense::map<Node, std::pair<Node, Node>>* via, const adjacency_set* skip2, size_t* const scanned_out, const adjacency_set* skip_composite) const
 {
     size_t  scanned_here = 0;
     size_t& scanned      = scanned_out != nullptr ? *scanned_out : scanned_here;
@@ -545,10 +553,19 @@ bool Zelph::Impl::try_transitive_direct(Node start, Node predicate, bool include
             // to k, and the one-or-more closure of k contains k.
             if (objects.empty()) objects.insert(subject);
 
+            // Only a relation that leads from `n` in the direction of the
+            // walk qualifies as a step. This is verified prior to the test
+            // below: a walk scans every relation connected to its node under
+            // the predicate, and for each one it discards here, that test
+            // would be paid for nothing.
+            if (forward ? subject != n : objects.count(n) == 0) continue;
+
+            // As in the index build: the variable store holds no statement
+            // of counter ids alone.
+            if (skip_composite != nullptr && !counter_ids_alone(subject, objects) && skip_composite->count(rel) != 0) continue;
+
             if (forward)
             {
-                if (subject != n) continue;
-
                 for (const Node obj : objects)
                 {
                     if (is_var(obj)) continue;
@@ -563,8 +580,6 @@ bool Zelph::Impl::try_transitive_direct(Node start, Node predicate, bool include
             }
             else
             {
-                if (objects.count(n) == 0) continue;
-
                 if (seen.insert(subject).second)
                 {
                     result.insert(subject);

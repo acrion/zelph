@@ -25,8 +25,10 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #include <doctest/doctest.h>
 
+#include "network/zelph.hpp"
 #include "test_helpers.hpp"
 
+#include <algorithm>
 #include <filesystem>
 
 using namespace zelph::test;
@@ -738,6 +740,117 @@ TEST_CASE("path condition: a walk steps along no bookkeeping, as a condition mat
         interactive.process(R"(%(zelph/out (string "SOURCES-" (length (zelph/closure-sources "refuted" "~")))))");
         CHECK(any_output_contains(collector, "SOURCES-1")); });
     std::filesystem::remove(file);
+}
+
+// A walk steps along no statement that nobody claimed, and the closure reads
+// which statements those are in two parts (Zelph::closure_skips). A rule's
+// ground pattern and a refuted fact can lie between two atoms, so every edge
+// is examined with respect to them. A pattern containing a variable has an
+// end that is not a counter id (the variable itself, or a statement, a set
+// pattern, or a collection of a rule's text that holds it), and only an edge
+// possessing such an end is asked about the patterns known to the variable
+// store: a walk across a network of data paid one lookup per edge it scanned
+// for patterns that none of those edges can be. The answers remain
+// unchanged: `a zp b` is a rule's ground pattern situated between atoms,
+// `a zp (X zr k)` and `(X zr k) zp m` are patterns over a statement
+// containing a variable, as object and as subject, and none of the three
+// constitutes a step.
+TEST_CASE("path condition: a walk steps along no pattern of a rule, between atoms or over a statement that holds a variable")
+{
+    const auto file = std::filesystem::temp_directory_path() / "zelph_path_patterns.bin";
+    run_both_modes([&](auto& collector, auto& interactive)
+                   {
+        const auto answers = [&](const std::string& query)
+        {
+            collector.clear();
+            interactive.process(query);
+            auto found = collect_answers(collector);
+            std::sort(found.begin(), found.end());
+            return found;
+        };
+
+        feed(interactive, "x zp a\na zp (j zr k)\n(j zr k) zp m\n(a zp b) => (c zq d)\n(a zp (X zr k)) => (X hit yes)\n((X zr k) zp m) => (X met yes)\n");
+        SUBCASE("in the session") {}
+        SUBCASE("after .save and .load")
+        {
+            interactive.process(".save \"" + file.string() + "\"");
+            interactive.process(".load \"" + file.string() + "\"");
+        }
+
+        CHECK(answers("x zp⁺ O") == std::vector<std::string>{"x zp⁺ (j zr k)", "x zp⁺ a", "x zp⁺ m"});
+        CHECK(answers("S zp⁺ m") == std::vector<std::string>{"(j zr k) zp⁺ m", "a zp⁺ m", "x zp⁺ m"});
+        CHECK(answers("S zp⁺ b").empty()); });
+    std::filesystem::remove(file);
+}
+
+// Under `=>` a statement consisting solely of counter ids can be a rule
+// that holds its variables within its text: the comma list of
+// `(X zr Y, Y zr X) => !` is a collection bearing a counter id, and `!` is
+// a core node. The closure therefore inquires about each edge of that
+// predicate, and a walk along `=>`, which a program may request
+// (zelph/closure), does not step from a rule's conditions to its
+// consequence.
+TEST_CASE("path condition: a walk along => steps along no rule whose statement holds counter ids alone")
+{
+    using namespace zelph::network;
+    Zelph      z([](const zelph::io::OutputEvent&) {});
+    const Node zr  = z.node("zr");
+    const Node X   = z.var();
+    const Node Y   = z.var();
+    const Node set = z.conjunction_collection({z.fact(X, zr, {Y}), z.fact(Y, zr, {X})});
+    z.fact(set, z.core.IsA, {z.core.Conjunction});
+    z.fact(set, z.core.Causes, {z.core.Contradiction});
+
+    CHECK(z.transitive_targets(set, z.core.Causes, false).empty());
+    CHECK(z.transitive_sources(z.core.Contradiction, z.core.Causes, false).empty());
+}
+
+// A predicate that is not a counter id can hold a variable itself: with a
+// rule in predicate position, `x ((X zp Y) => (Y zp X)) y` is a statement
+// between two atoms that holds the rule's variables, making it a pattern
+// rather than a claim. Under such a predicate, the closure therefore inquires
+// about every edge, just as it does under `=>`, and a walk along it does not
+// step from `x` to `y`.
+TEST_CASE("path condition: a walk along a predicate that holds a variable steps along no statement between atoms")
+{
+    using namespace zelph::network;
+    Zelph      z([](const zelph::io::OutputEvent&) {});
+    const Node zp   = z.node("zp");
+    const Node X    = z.var();
+    const Node Y    = z.var();
+    const Node rule = z.fact(z.fact(X, zp, {Y}), z.core.Causes, {z.fact(Y, zp, {X})});
+    const Node x    = z.node("x");
+    const Node y    = z.node("y");
+    const Node held = z.fact(x, rule, {y});
+    REQUIRE(z.var_in_closure(held));
+
+    CHECK(z.transitive_targets(x, rule, false).empty());
+    CHECK(z.transitive_sources(y, rule, false).empty());
+}
+
+// A set pattern constructed by a program outside a rule takes its id from
+// the node counter, within a class distinct from others, and holds its
+// variable. A statement over it is therefore a pattern, even though neither
+// of its ends is a variable or a statement, and the closure counts as plain
+// only an id belonging to the class of the named nodes
+// (Network::is_counter_id): a walk steps along no statement over such a
+// pattern, whether as its subject or as its object.
+TEST_CASE("path condition: a walk steps along no statement over a set pattern built outside a rule")
+{
+    using namespace zelph::network;
+    Zelph      z([](const zelph::io::OutputEvent&) {});
+    const Node p       = z.node("p");
+    const Node hub     = z.node("hub");
+    const Node c       = z.node("c");
+    const Node pattern = z.set({z.var(), z.node("a")});
+    z.fact(pattern, p, {hub});
+    z.fact(hub, p, {pattern});
+    z.fact(c, p, {hub});
+
+    const adjacency_set sources = z.transitive_sources(hub, p, false);
+    CHECK(sources.size() == 1);
+    CHECK(sources.count(c) == 1);
+    CHECK(z.transitive_targets(hub, p, false).empty());
 }
 
 // A path condition takes the identical offer: a record's memberships do not

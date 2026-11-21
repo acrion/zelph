@@ -172,9 +172,9 @@ namespace zelph::network
         static adjacency_set                         fact_objects_of(const adjacency_set& rel_left, const adjacency_set& rel_right);
         static bool                                  is_fact_subject(const Node rel, const Node predicate, const Node cand, const adjacency_set& rel_left, const adjacency_set& rel_right, const adjacency_set& objects);
         static unsigned int                          index_build_threads();
-        std::vector<IndexPair>                       extract_predicate_pairs(const Node predicate, const adjacency_set* skip) const;
+        std::vector<IndexPair>                       extract_predicate_pairs(const Node predicate, const adjacency_set* skip, const adjacency_set* skip_composite) const;
         static std::shared_ptr<const PredicateIndex> index_from_pairs(std::vector<IndexPair>& fw);
-        std::shared_ptr<const PredicateIndex>        predicate_index(const Node predicate, const adjacency_set* skip) const;
+        std::shared_ptr<const PredicateIndex>        predicate_index(const Node predicate, const adjacency_set* skip, const adjacency_set* skip_composite) const;
         bool                                         try_indexed_fact_lookup(Node predicate, Node node, bool forward, adjacency_set& out) const;
         void                                         invalidate_predicate_index() const noexcept;
         void                                         invalidate_relation_type_set() const;
@@ -195,7 +195,9 @@ namespace zelph::network
         // node that is reached, the fact it was reached by and the node it
         // came from. `skip2`: further facts to bypass during traversal.
         // `scanned`: the count of adjacency entries the walk has read.
-        bool try_transitive_direct(Node start, Node predicate, bool include_start, bool forward, size_t scan_budget, const adjacency_set* skip, adjacency_set& result, Node stop_at = 0, ankerl::unordered_dense::map<Node, std::pair<Node, Node>>* via = nullptr, const adjacency_set* skip2 = nullptr, size_t* scanned = nullptr) const;
+        // `skip_composite`: facts to bypass that are asked about only for
+        // an edge with an end that is not a counter id (Zelph::closure_skips).
+        bool try_transitive_direct(Node start, Node predicate, bool include_start, bool forward, size_t scan_budget, const adjacency_set* skip, adjacency_set& result, Node stop_at = 0, ankerl::unordered_dense::map<Node, std::pair<Node, Node>>* via = nullptr, const adjacency_set* skip2 = nullptr, size_t* scanned = nullptr, const adjacency_set* skip_composite = nullptr) const;
 
         void emit(io::OutputChannel channel, const std::string& text, bool newline = true, bool finding = false) const
         {

@@ -1892,6 +1892,31 @@ namespace zelph::network
         // triple it writes while the store is complete.
         void enter_template_vars(Node relation, Node subject, Node predicate, const adjacency_set& objects) const;
 
+        // The content of `unasserted_snapshot`, split into two halves, for a
+        // traversal along `predicate`. A rule's ground pattern and a refuted
+        // fact are statements of any shape, so `every` holds them and the
+        // traversal queries it regarding every edge. The entries within the
+        // variable store represent a different case: under a predicate that
+        // is a counter id other than `=>`, a statement consisting solely of
+        // counter ids has none (Network::counter_ids_alone), thus they stand
+        // in `composite`, and the traversal asks it only about an edge with
+        // an end of another class. A traversal across a network of data
+        // would otherwise pay one lookup per edge it scans for patterns that
+        // none of those edges can be. Under `=>`, and under a predicate that
+        // is not a counter id itself, a statement of counter ids may have an
+        // entry: `every` then holds both halves, while `composite` holds
+        // nothing.
+        struct ClosureSkips
+        {
+            std::shared_ptr<const adjacency_set> every;
+            std::shared_ptr<const adjacency_set> composite;
+        };
+        ClosureSkips closure_skips(Node predicate) const;
+        // One half of unasserted_snapshot or both: `ground` the patterns of
+        // rules that hold no variable and the refuted facts, `variable` the
+        // entries of the variable store.
+        std::shared_ptr<const adjacency_set> unasserted_part(bool ground, bool variable) const;
+
         // The halves of var_in_closure and try_get_template_vars for a
         // store that is not complete (Impl's _template_vars_mode), out of
         // line, so that the readers on the hot path keep the single load

@@ -669,23 +669,28 @@ bool Zelph::is_asserted_fact(const Node fact) const
 
 std::shared_ptr<const adjacency_set> Zelph::unasserted_snapshot() const
 {
+    return unasserted_part(true, true);
+}
+
+std::shared_ptr<const adjacency_set> Zelph::unasserted_part(const bool ground, const bool variable) const
+{
     auto out = std::make_shared<adjacency_set>();
 
-    if (_pImpl->_has_rule_patterns.load(std::memory_order_acquire))
+    if (ground && _pImpl->_has_rule_patterns.load(std::memory_order_acquire))
     {
         std::shared_lock lock(_pImpl->_rule_patterns_mtx);
         for (const Node n : _pImpl->_rule_patterns)
             out->insert(n);
     }
 
-    if (_pImpl->_has_refuted_facts.load(std::memory_order_acquire))
+    if (ground && _pImpl->_has_refuted_facts.load(std::memory_order_acquire))
     {
         std::shared_lock lock(_pImpl->_refuted_facts_mtx);
         for (const Node n : _pImpl->_refuted_facts)
             out->insert(n);
     }
 
-    if (_pImpl->_template_vars_mode.load(std::memory_order_acquire) != Impl::stores_disarmed)
+    if (variable && _pImpl->_template_vars_mode.load(std::memory_order_acquire) != Impl::stores_disarmed)
     {
         std::shared_lock lock(_pImpl->_template_vars_mtx);
         for (const auto& entry : _pImpl->_template_vars)
@@ -696,6 +701,12 @@ std::shared_ptr<const adjacency_set> Zelph::unasserted_snapshot() const
 
     if (out->empty()) return nullptr;
     return out;
+}
+
+Zelph::ClosureSkips Zelph::closure_skips(const Node predicate) const
+{
+    if (predicate == core.Causes || !Impl::is_counter_id(predicate)) return {unasserted_snapshot(), nullptr};
+    return {unasserted_part(true, false), unasserted_part(false, true)};
 }
 
 Zelph::VarClosureStats Zelph::var_closure_stats() const
