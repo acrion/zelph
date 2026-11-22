@@ -757,6 +757,8 @@ zelph-> %(each e ((zelph/run :quiet :derived) :derived) (zelph/out (string/forma
 
 `zelph/run-delta` removes that term for the rules eligible to be seeded. It seeds the fixpoint with the facts created since the last run and lets semi-naive evaluation proceed from that point, ensuring their expense aligns with the size of the new additions rather than the size of the graph.
 
+The session of [Running the engine](#running-the-engine) continues with three additional lines:
+
 ```
 %(zelph/fact "plato" "~" "human")
 %(zelph/run-delta)
@@ -767,11 +769,11 @@ zelph-> %(each e ((zelph/run :quiet :derived) :derived) (zelph/out (string/forma
 zelph-> <zelph/node plato ~ human>
 zelph-> Starting reasoning with 24 worker threads.
 (plato ~ mortal) ⇐ {(plato ~ human)}
-Reasoning complete. Total unification matches processed: 0. Total contradictions
+Reasoning complete. Total unification matches processed: 1. Total contradictions
 found: 0.
-Reasoning summary: 0 matches processed, 0 contradictions found.
+Reasoning summary: 1 matches processed, 0 contradictions found.
 Parallel unifications activated for 0 distinct fixed relations.
-Reasoning complete in 0h0m0.000s – 0 matches processed, 0 contradictions found.
+Reasoning complete in 0h0m0.000s – 1 matches processed, 0 contradictions found.
 Ready.
 zelph-> plato is mortal: true
 ```

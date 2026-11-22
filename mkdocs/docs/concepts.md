@@ -356,7 +356,8 @@ In a pattern – the condition within a rule, a query, or a statement held by a 
 zelph> {(john enters card1) (card1 ~ card)} can nil
 zelph> {(eve enters card3) (card3 ~ card) (card3 ~ red)} can nil
 zelph> ({(X enters C) (C ~ card)} can nil) => (X ~ able)
-(john ~ able) ⇐ ({(john enters card1) (card1 ~ card)} can nil)
+zelph+> X ~ able
+Answer: john ~ able
 zelph> {(X enters C) (C ~ card) (C ~ red)} can nil
 Answer: {(eve enters card3) (card3 ~ card) (card3 ~ red)} can nil
 ```
