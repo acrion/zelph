@@ -651,7 +651,9 @@ namespace zelph::network
         // from it, and after `.fact-stores off` or a removal the store
         // becomes disarmed; a traversal then rejects a variable via the
         // is_var tests on the triple it reads, which covers every pattern
-        // except one whose SUBJECT is itself composite.
+        // except one in which the variable stands inside a composite subject
+        // or a composite object: a walk along `zp` then steps along the rule
+        // patterns `(X zr k) zp m` and `a zp (X zr k)`.
         std::shared_ptr<const adjacency_set> unasserted_snapshot() const;
 
         struct VarClosureStats
