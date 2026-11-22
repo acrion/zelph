@@ -1122,16 +1122,20 @@ void Reasoning::prune_nodes(Node pattern, const Node target_var, size_t& removed
 
         // How far the collection has progressed, stated solely by the
         // calling thread: as it awaits the pool, and between two victims
-        // where it gathers independently.
+        // where it gathers independently. Each step of prune_collect_step
+        // victims gets one line, and the line names the step, not the count
+        // that the calling thread happened to read: over the pool that count
+        // was a different number in each run, and a step that the workers
+        // passed between two observations got no line whatsoever.
         size_t     reported        = 0;
         const auto report_examined = [&]
         {
             if (!report) return;
             const size_t seen = examined.load(std::memory_order_relaxed);
-            if (seen >= reported + prune_collect_step)
+            while (seen >= reported + prune_collect_step)
             {
-                reported = seen - seen % prune_collect_step;
-                out_stream() << "  " << (base + seen) << " of " << victims.size()
+                reported += prune_collect_step;
+                out_stream() << "  " << (base + reported) << " of " << victims.size()
                              << " node(s) examined" << std::endl;
             }
         };
@@ -1202,10 +1206,22 @@ void Reasoning::prune_nodes(Node pattern, const Node target_var, size_t& removed
         // smaller ones instead, because its size is what bounds the
         // fact-structure cache and what makes the union argument in
         // collect_doomed hold.
-        while (_pool->pending_tasks > 0)
+        //
+        // Whether a task remains pending is read AHEAD of a report, not
+        // behind it: the last report then comes once the last task has
+        // ended, and it prints the steps that the workers passed since the
+        // prior report. Read behind the report, as the condition of the
+        // loop, the last task might tally its last victims and end between
+        // the two, and those steps would receive no line. With a single
+        // worker the loop is not entered: the calling thread has reported
+        // between two victims, and a report here would print the lines of a
+        // collection that had said nothing.
+        bool pending = !by_itself;
+        while (pending)
         {
+            pending = _pool->pending_tasks > 0;
             report_examined();
-            std::this_thread::yield();
+            if (pending) std::this_thread::yield();
         }
 
         _pool->wait();

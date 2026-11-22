@@ -671,6 +671,96 @@ TEST_CASE("threads: a prune counts a victim inside another victim's closure as a
     }
 }
 
+// Starting at 100,000 victims, the removal of nodes indicates the progress of
+// its collection, with one line generated for every step of 10,000 victims.
+// When the collection was spread over the pool, each line showed the count that
+// the calling thread had read at that moment:
+// "15764 of 120000 node(s) examined", followed by "32128 of ...", varying
+// numbers in each run, and no line recorded for a step that workers had passed
+// between two observations, while a single thread printed each step. Every step
+// has one line that names it. 120,000 victims make two batches, so the lines of
+// the second batch continue counting from where the first one ended; on a
+// platform that offers no count of its page faults, the second batch is also
+// spread over the pool.
+namespace
+{
+    // 120,000 nodes `n<i>`, each serving as the subject of a single fact
+    // `n<i> rel hub`.
+    void write_victims(const zelph::console::Interactive& interactive)
+    {
+        interactive.process(R"(%(let [hub (zelph/resolve "hub") rel (zelph/resolve "rel")] )"
+                            R"((for i 0 120000 (zelph/fact (zelph/resolve (string "n" i)) rel hub))))");
+    }
+
+    // What `.prune-nodes A rel hub` prints to the output channel then.
+    std::vector<std::string> lines_of_the_prune()
+    {
+        std::vector<std::string> lines{"Pruning 120000 node(s) and 120000 matched fact(s)..."};
+        for (std::size_t step = 10000; step <= 120000; step += 10000)
+        {
+            lines.push_back("  " + std::to_string(step) + " of 120000 node(s) examined");
+            if (step == 100000 || step == 120000)
+                lines.push_back("  " + std::to_string(step) + " of 120000 node(s) removed");
+        }
+        lines.emplace_back("  removing the names of 120000 node(s)...");
+        lines.emplace_back("Pruned 120000 matching facts and 120000 nodes.");
+        return lines;
+    }
+} // namespace
+
+TEST_CASE("threads: a prune prints the same progress lines whatever the number of threads" * doctest::test_suite("slow"))
+{
+    for (const std::string setting : {".threads 1", ".threads 2", ".threads 8"})
+    {
+        CAPTURE(setting);
+        zelph::io::OutputCollector  collector;
+        zelph::console::Interactive interactive(collector.sink());
+        interactive.process(setting);
+        write_victims(interactive);
+        collector.clear();
+        interactive.process(".prune-nodes A rel hub");
+        std::vector<std::string> lines;
+        for (const auto& event : collector.events())
+            if (event.channel == zelph::io::OutputChannel::Out) lines.push_back(event.text);
+        CHECK(lines == lines_of_the_prune());
+    }
+}
+
+// The calling thread prints the progress lines for a batch while the pool
+// collects, and it is delayed for the duration required to write each line:
+// whether to a terminal or to a pipe being read at a sluggish pace. Meanwhile,
+// the workers continue operating. A step they passed during this interval got
+// no line, since the next line showed the count read after the wait; and when
+// the last task concluded during the wait, the loop ended without a further
+// observation, thus omitting the last steps of the batch as well. On a lightly
+// loaded machine with many CPUs, both happen too rarely for the case above to
+// show them. The handler for this case holds the first progress line for half
+// a second, sufficient time for eight threads to pass every further step of
+// the first batch and finish their tasks: the remaining nine lines of that
+// batch are due once the workers have completed.
+TEST_CASE("threads: a prune names every step that its workers pass while a progress line is being written" * doctest::test_suite("slow"))
+{
+    std::vector<std::string> lines;
+    bool                     held = false;
+    {
+        zelph::console::Interactive interactive([&](const zelph::io::OutputEvent& event)
+                                                {
+            if (event.channel != zelph::io::OutputChannel::Out) return;
+            lines.push_back(event.text);
+            if (!held && event.text.ends_with("node(s) examined"))
+            {
+                held = true;
+                std::this_thread::sleep_for(std::chrono::milliseconds(500));
+            } });
+        interactive.process(".threads 8");
+        write_victims(interactive);
+        lines.clear();
+        interactive.process(".prune-nodes A rel hub");
+    }
+    REQUIRE(held);
+    CHECK(lines == lines_of_the_prune());
+}
+
 // The tasks of a scan spread over the pool apply their own copy of the filters
 // that a scan on a single thread applies to a candidate and its readings: a
 // rule's ground pattern, a refuted fact, a rule's text, and what the engine

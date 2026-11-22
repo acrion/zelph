@@ -3537,27 +3537,31 @@ TEST_CASE("pruning: a batch reports its progress from INSIDE the collection phas
             examined_before_first_removal.push_back(std::stoull(e.text.substr(0, pos)));
         }
 
-        // The batch spoke while it was collecting, not only after completion,
-        // and that -- not how OFTEN it spoke -- is the property. The line is
-        // emitted by a polling loop that yields while the workers run
-        // (reasoning_pruning.cpp), so the number of lines measures the
-        // scheduler: a machine whose workers cross several steps between two
-        // observations reports fewer. Windows CI reported 2 where this once
-        // demanded 5. The regression it guards against produces ZERO, because
-        // the old code reported after the batch rather than during it.
+        // One line for each step of 10 000 victims, prior to the line that
+        // reports the batch as removed. With a single worker (the subcase
+        // "single-core"), the calling thread outputs these lines between two
+        // victims of its own collection and at no other time, so a collection
+        // that yields no output fails this subcase. Over the pool, they are
+        // emitted by the loop that the calling thread uses to await the
+        // workers (reasoning_pruning.cpp): it reports whenever it gets to look
+        // at their count, and again once the final task concludes. A line
+        // previously displayed the count the loop had read, so the number of
+        // lines and their values measured the scheduler: a machine whose
+        // workers crossed several steps between two observations reported
+        // fewer lines, and other numbers in each run. Windows CI reported 2
+        // where this once demanded 5. For this reason, no case demands a line
+        // WHILE the workers are active: when the calling thread is kept off
+        // the processor for the length of a collection, a correct build prints
+        // all ten lines at the end. What this case holds over the pool is that
+        // the loop issues a report at all; without that report, the batch
+        // prints none of these lines. The regression it guards against
+        // produces ZERO, because the old code reported after the batch rather
+        // than during it.
         REQUIRE(removal_seen); // not vacuous: the prune really ran
-        CHECK(examined_before_first_removal.size() >= 1);
-
-        // Monotone and inside the job it reports against -- a counter that
-        // restarts per worker, or overshoots the batch, is a wrong number
-        // rather than a missing one.
-        size_t previous = 0;
-        for (const size_t seen : examined_before_first_removal)
-        {
-            CHECK(seen > previous);
-            CHECK(seen <= 100001);
-            previous = seen;
-        } });
+        std::vector<size_t> every_step;
+        for (size_t step = 10000; step <= 100000; step += 10000)
+            every_step.push_back(step);
+        CHECK(examined_before_first_removal == every_step); });
 }
 
 TEST_CASE("removal: a removed edge takes its probability with it")
