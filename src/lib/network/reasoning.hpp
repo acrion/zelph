@@ -445,6 +445,12 @@ namespace zelph::network
         // counters, starting a fresh measurement window (.prof reset).
         void profiler_dump(bool reset_after = false);
 
+        // The worker threads of this engine's pool that execute: none until
+        // the first piece of work has been spread over them, and thereafter as
+        // many as the engine's count was at that time
+        // (Zelph::parallel_threads).
+        std::size_t worker_threads_running() const { return _pool->count(); }
+
         // --- Rendering helpers shared by the console and the export ---
 
         // Count and report one detected contradiction. Every catch site in

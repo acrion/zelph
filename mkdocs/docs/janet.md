@@ -673,6 +673,9 @@ Listing all rules:
 - **`(zelph/node-map-load-factor &opt factor)`**  
   Fetches the load factor that the node map can attain once its bucket array reaches 2^31 buckets, or sets it as the `.node-map-load-factor` command does: to a number from 0.8 to 0.95, or with `:default` to the factor the session started with. Returns the factor afterwards. A number containing up to seven decimals is returned exactly as supplied; the engine keeps the factor in single precision, thus additional decimals are not kept. Any other argument is rejected, including a string such as `"0.9"`. A program constructing a very large network sets the factor before doing so; `.help .node-map-load-factor` says what the factor trades off. The factor is a setting of the engine, so `.new` restores the default. Available only in the main thread.
 
+- **`(zelph/threads &opt count)`**  
+  Fetches the number of threads that parallel work may use, or sets it as the `.threads` command does: a whole number between 1 and 1024, or `:auto`, which sets it to the count of the process – this being the value named by the environment variable `ZELPH_THREADS`, or otherwise the number of CPUs the process can utilize, capped by its cgroup quota. Returns the resulting count. Any other argument is rejected, including a string like `"4"`. The `.help .threads` command explains what the count governs. The count is an engine setting, so invoking `.new` resets it to the count specified in a `--default` line if the process was started with one (`zelph --default '.threads <count>'`), and to the count of the process otherwise. Available only in the main thread.
+
 Auto-run is tied to _processing an input line_: it fires after a statement, and after a Janet block closes. Code that only calls the Janet API — a program driving zelph as a library, or a long-running script that keeps asserting facts between queries — never triggers it, and so has to run the engine itself.
 
 Given this script:
@@ -781,7 +784,7 @@ Measured on a graph holding fact bases of 72 facts each, with one rule, assertin
 | 400 | 190.7 ms | 1.26 ms |
 | 1200 | 532.3 ms | 1.02 ms |
 
-Both derive identical facts, except in cases where two runs of the same input might diverge anyway: when using non-stratifiable rules, or under `.parallel` with a rule containing a fresh variable (refer to [Deduction Output Modes](rules.md#deduction-output-modes)). The complete run grows with the graph; the seeded variant does not. The figures correspond to a single positive rule.
+Both derive identical facts, except in cases where a program’s outcome relies on the sequence in which matches are handled: when using non-stratifiable rules, or with a rule containing a fresh variable (refer to [Deduction Output Modes](rules.md#deduction-output-modes)). The complete run grows with the graph; the seeded variant does not. The figures correspond to a single positive rule.
 
 This is only equivalent to a full run when the graph already is a fixpoint of the current rules — otherwise the skipped pass is exactly the one that would have found the older consequences. `zelph/run-delta` therefore checks, and falls back to a full pass (with a note on the diagnostic channel) unless all of the following hold:
 
@@ -1711,6 +1714,7 @@ Error in line "kw John is": refused
 | `.strata`                       | `(zelph/strata)`                                    | Array of negation levels for the rules, with a single table dedicated to each rule |
 | `.negation-records on`          | `(zelph/negation-records true)`                     | Switch the negation records on; without an argument, read the switch        |
 | `.node-map-load-factor 0.9`     | `(zelph/node-map-load-factor 0.9)`                  | Set the load factor of the node map; when no argument is provided, retrieve it |
+| `.threads 4`                    | `(zelph/threads 4)`                                 | Set the number of threads that parallel work can utilize; if no argument is provided, retrieve the current value |
 | `.cluster <name>`               | `(zelph/cluster "name")`                            | Activate a cluster; returns the active name, or `nil` for the default       |
 | `.cluster-drop <name>`          | `(zelph/cluster-drop "name")`                       | Roll back everything created in the cluster; returns the node count removed |
 | `.cluster` (listing)            | `(zelph/clusters)`                                  | Array of `[name node-count]` tuples                                         |

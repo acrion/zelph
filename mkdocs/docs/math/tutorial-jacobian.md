@@ -163,7 +163,7 @@ Starting reasoning with 24 worker threads.
 Reasoning complete. Total unification matches processed: 62958. Total
 contradictions found: 0.
 Reasoning summary: 62958 matches processed, 0 contradictions found.
-Parallel unifications activated for 69 distinct fixed relations.
+Parallel unifications activated for 0 distinct fixed relations.
 Reasoning complete in 0h0m…s – 62958 matches processed, 0 contradictions found.
 Ready.
 zelph> _M jdet _P
@@ -200,7 +200,7 @@ Reasoning complete. Total unification matches processed: 104159. Total
 contradictions found: 0.
 Note: 15406 deductions were hidden.
 Reasoning summary: 104159 matches processed, 0 contradictions found.
-Parallel unifications activated for 63 distinct fixed relations.
+Parallel unifications activated for 0 distinct fixed relations.
 Reasoning complete in 0h0m…s – 104159 matches processed, 0 contradictions found.
 Ready.
 zelph> _M jdet _P

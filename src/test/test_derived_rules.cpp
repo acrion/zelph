@@ -4704,8 +4704,8 @@ TEST_CASE("derived rules: a construction reads an untagged set of one condition 
             }
             return counts;
         };
-        // Sorted: in parallel mode, the order of the answers varies across
-        // runs.
+        // Sorted: what is compared are the answers, not the order in which
+        // they appear.
         const auto answers = [&](const std::string& query)
         {
             collector.clear();

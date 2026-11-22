@@ -1458,7 +1458,7 @@ Every decision above rests on facts about zelph that were established by running
 ### Answers and Mapping
 
 - Yes/no answers are three-valued: `Yes. …`, `No. It is false that …`, `It is not provable that …`; the status comes from `zelph/exists` – the exact probe first, then the plain form, which also reads a fact with several objects ([DEC-YESNO-WIDER](#dec-yesno-wider)) – else from a query over `~ refuted` in a scratch cluster; nothing is created in the caller's graph (S49).
-- One output line per answer, prefixed `Answer: `; `No answer.` for an empty wh-question; answers are sorted, because unification returns them unordered (S50).
+- One output line per answer, prefixed `Answer: `; `No answer.` for an empty wh-question; answers are sorted, because the engine does not define an order for the rows it returns (S50).
 - Disjunction in conclusions and statements is refused (S52).
 - Un-saying an earlier block by dropping its cluster is unsound (the drop destroys later blocks' facts on nodes it created) and never offered; rollback within one handler call and what-if checks are sound; clusters are not saved (S53).
 - The pre-resolution markers are the front end's own design; DRS referents are symbols, conditions are tuples (S54).

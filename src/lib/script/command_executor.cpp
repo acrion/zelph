@@ -77,6 +77,7 @@ namespace
     constexpr DefaultSetting default_settings[] = {
         {".lang", false, CommandExecutor::DefaultScope::Engine},
         {".parallel", true, CommandExecutor::DefaultScope::Engine},
+        {".threads", false, CommandExecutor::DefaultScope::Engine},
         {".anchors", false, CommandExecutor::DefaultScope::Engine},
         {".semi-naive", false, CommandExecutor::DefaultScope::Engine},
         {".fact-stores", false, CommandExecutor::DefaultScope::Engine},
@@ -395,6 +396,8 @@ namespace zelph::console
 #endif
         _command_map[".parallel"] = [this](auto& c)
         { cmd_parallel(c); };
+        _command_map[".threads"] = [this](auto& c)
+        { cmd_threads(c); };
         _command_map[".anchors"] = [this](auto& c)
         { cmd_anchors(c); };
         _command_map[".semi-naive"] = [this](auto& c)

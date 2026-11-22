@@ -403,6 +403,8 @@ add_library(zelph_lib ${ZELPH_LIB_TYPE}
     chrono/stopwatch.cpp
     chrono/stopwatch.hpp
 
+    concurrency/thread_count.cpp
+    concurrency/thread_count.hpp
     concurrency/thread_pool.hpp
 
     io/data_manager.hpp

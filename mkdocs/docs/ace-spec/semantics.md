@@ -1070,8 +1070,8 @@ gives fresh head variables in the same `=>` fact. zelph's no-duplicate-witness g
 join over facts, makes a witness only when no assignment of the fresh variables already makes every
 head a fact, so a named fact present before the run satisfies the head. Limits, documented and pinned
 by tests: the witness set depends on which rule fires first and is unique only up to homomorphism; a
-witness made before a named fact arrives is kept; under `.parallel` two runs on one input may derive
-different witnesses. A witness is an unnamed node, and answers render it as an indefinite.
+witness made before a named fact arrives is kept. A witness is an unnamed node, and answers render it
+as an indefinite.
 `:rule/endless-generation` keeps self-feeding rules out ([Static Checks](#static-checks);
 [Fresh Variables: Generative Rules](../logic.md#fresh-variables-generative-rules)).
 

@@ -24,6 +24,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 */
 
 #include "unification.hpp"
+#include "concurrency/thread_count.hpp"
 #include "fact_structure.hpp"
 #include "string/string_utils.hpp"
 #include "zelph_impl.hpp"
@@ -1120,6 +1121,45 @@ static bool is_engine_bookkeeping(const Zelph* n, const FactStructure& fs)
     return n->prune_scan() && n->is_rule_text_fact(fs.subject, fs.predicate, fs.objects);
 }
 
+// Whether the scan of a relation's entire extent matches `fs`, a reading of
+// the candidate `fact` whose predicate is `relation`. The scan on one thread
+// asks it in Next() unless the snapshot is prefiltered, and every task that
+// spreads the scan over the pool asks it.
+//
+// A reading that hashes back to the candidate is exact, since a fact's
+// identifier is the hash of its triple: it is matched. Every alternative
+// reading gets the verdict that the scan on a single thread previously
+// delivered, based on the test applied to the candidate's edges before
+// decoding: the reading is excluded when the relation refers back to the
+// candidate, the candidate has more than one outgoing edge, and it does not
+// satisfy `p p O` according to its hash. The hash alone cannot determine the
+// outcome: when the walk verifies none of a node's readings, it retains all of
+// them (finish_fact_structures) -- in a partial view, within a graph missing
+// edges, and when it reads a node that points at the candidate as one of its
+// objects -- and among those readings, one may designate the relation as the
+// predicate of a candidate that is only the relation's subject.
+//
+// The verdicts that differ from the old scan are therefore those of readings
+// that hash back and that the edge test excluded, and these are facts where the
+// subject is their predicate. One instance is `p p q` once a statement uses it
+// as its predicate: the edge test took that statement as an additional object
+// of the fact, and the use declares the fact a relation (`(p p q) ~ ->`),
+// thereby granting it its second outgoing edge. The other is `r r r`, which
+// arises solely through a name merge, once a statement holds it: the edge test
+// had no object left to hash. Any other statement whose predicate is also one
+// of its objects, which likewise only a name merge enables, yields no reading
+// that hashes back, because the walk does not count a reading's predicate among
+// its objects, and thus retains the old verdict. The hash is computed only for
+// a reading whose predicate is the relation, and the edges are looked up only
+// for a reading that does not hash back.
+static bool scan_matches_reading(const Zelph* const n, const Node fact, const FactStructure& fs, const Node relation)
+{
+    if (Zelph::create_hash(fs.predicate, fs.subject, fs.objects) == fact) return true;
+    return !(n->has_left_edge(fact, relation)
+             && n->_pImpl->right_count_of(fact) > 1
+             && !n->read_scope().subject_is_predicate(fact, relation));
+}
+
 Unification::Unification(
     Zelph*                            n,
     Node                              condition,
@@ -1524,9 +1564,18 @@ Unification::Unification(
             }
         }
 
-        if (_pool && _n->use_parallel() && _relation_variable == 0 && _relation_pattern == 0
+        // The scan of an entire relation is spread over the pool where more
+        // than one thread may work on it (parallel_threads() returns 1 when
+        // `.parallel` is off) and where the relation contains sufficient facts
+        // to justify the overhead of waking multiple threads
+        // (thread_count::parallel_scan_min_facts). Below that number, the scan
+        // remains confined to this thread, which reads the same candidates in
+        // the same order.
+        const std::size_t threads = _pool != nullptr ? _n->parallel_threads() : 1;
+        if (threads > 1 && _relation_variable == 0 && _relation_pattern == 0
             && !subject_is_bound && !object_is_bound
-            && !_partial_snapshot_valid && !concurrency::tl_is_pool_worker)
+            && !_partial_snapshot_valid && !concurrency::tl_is_pool_worker
+            && _n->_pImpl->left_count_of(*_relation_list.begin()) >= concurrency::thread_count::parallel_scan_min_facts)
         {
             Node fixed_rel = *_relation_list.begin();
 
@@ -1575,18 +1624,30 @@ Unification::Unification(
                     u_log(_n, _log_depth, "parallel snapshot: " + std::to_string(_snapshot_vec.size()) + " candidate facts for relation " + U_NODE(fixed_rel));
                 }
 
-                size_t threads    = std::thread::hardware_concurrency();
-                size_t chunks     = std::min(threads * 4, snapshot.size());
-                size_t chunk_size = snapshot.size() / chunks;
-                _active_tasks     = chunks;
+                // Each task performs a scan over a single contiguous range of
+                // the snapshot and retains the results in a dedicated list,
+                // with the task that ends last handing the lists on in the
+                // order of their respective ranges. The matches consequently
+                // appear in the order of the snapshot, which corresponds to
+                // the sequence in which a single thread reads them during the
+                // scan, regardless of the number of threads or which task ends
+                // first. The lists are associated with their respective tasks:
+                // a unification is made for every condition that is evaluated,
+                // and very few of them launch.
+                size_t chunks             = std::min(threads * 4, snapshot.size());
+                size_t chunk_size         = snapshot.size() / chunks;
+                _active_tasks             = chunks;
+                const auto found_by_chunk = std::make_shared<std::vector<std::vector<std::shared_ptr<Variables>>>>(chunks);
+                _pool->start(threads);
 
                 for (size_t c = 0; c < chunks; ++c)
                 {
                     size_t start = c * chunk_size;
                     size_t end   = (c + 1 == chunks) ? _snapshot_vec.size() : (c + 1) * chunk_size;
 
-                    _pool->enqueue([this, fixed_rel, start, end]()
+                    _pool->enqueue([this, fixed_rel, start, end, c, found_by_chunk]()
                                    {
+                                   std::vector<std::shared_ptr<Variables>>& found = (*found_by_chunk)[c];
                                    uint64_t local_scanned = 0;
                                    for (size_t i = start; i < end; ++i)
                                    {
@@ -1602,14 +1663,15 @@ Unification::Unification(
                                            if (fs.predicate != fixed_rel) continue;
                                            if (is_rule_text(_n, fact, fs, _candidates)) continue;
 
+                                           // The test of the reading is requested
+                                           // solely for a reading that has achieved a
+                                           // match: see Next().
                                            auto bindings = extract_bindings(fs.subject, fs.objects, fixed_rel, _log_depth);
-                                           if (!bindings.empty() && is_engine_bookkeeping(_n, fs)) continue; // not data either
+                                           if (bindings.empty()) continue;
+                                           if (!scan_matches_reading(_n, fact, fs, fixed_rel)) continue;
+                                           if (is_engine_bookkeeping(_n, fs)) continue; // not data either
                                            for (auto& r : bindings)
-                                           {
-                                               std::lock_guard<std::mutex> l(_queue_mtx);
-                                               _match_queue.push(std::move(r));
-                                               _queue_cv.notify_one();
-                                           }
+                                               found.push_back(std::move(r));
                                        }
                                    }
                                    if (_n->logging_active())
@@ -1618,6 +1680,12 @@ Unification::Unification(
                                    }
                                    {
                                        std::lock_guard<std::mutex> l(_queue_mtx);
+                                       if (_active_tasks == 1)
+                                       {
+                                           for (auto& of_chunk : *found_by_chunk)
+                                               for (auto& match : of_chunk)
+                                                   _match_queue.push(std::move(match));
+                                       }
                                        --_active_tasks;
                                        _queue_cv.notify_all();
                                    } });
@@ -1756,357 +1824,346 @@ bool Unification::increment_fact_index()
         return false;
     }
 
-    do
+    if (!_fact_index_initialized)
     {
-        if (!_fact_index_initialized)
+        // Check if the Subject or Object is already bound. If so, iterate only their connections.
+        bool optimized_snapshot = false;
+        bool partial_used       = false;
+        Node current_rel        = *_relation_index;
+        _snapshot_prefiltered   = false;
+        _listed                 = false;
+
+        // The candidates a resumed enumeration has still to come (see
+        // start_after).
+        const Node resume_after = current_rel == _resume_relation ? _resume_fact : 0;
+
+        if (_seed_fact != 0)
         {
-            // Check if the Subject or Object is already bound. If so, iterate only their connections.
-            bool optimized_snapshot = false;
-            bool partial_used       = false;
-            Node current_rel        = *_relation_index;
-            _snapshot_prefiltered   = false;
-            _listed                 = false;
-
-            // The candidates a resumed enumeration has still to come (see
-            // start_after).
-            const Node resume_after = current_rel == _resume_relation ? _resume_fact : 0;
-
-            if (_seed_fact != 0)
+            // Semi-naive seed mode: the candidate set is exactly the
+            // seeded fact -- no snapshot, no anchor lookup. The generic
+            // bookkeeping below stays active, so note_relation_scan
+            // honestly records a scan of size 1 for this relation and
+            // scans/fact metrics remain comparable across modes.
+            _facts_snapshot.clear();
+            _facts_snapshot.insert(_seed_fact);
+            optimized_snapshot = true;
+        }
+        else if (_partial_snapshot_valid)
+        {
+            // Partial-pattern anchor (see the constructor): the complete
+            // candidate superset was precomputed by climbing from a
+            // concrete inner node. Built only for the single fixed
+            // relation, so it is consumed exactly once.
+            _facts_snapshot         = std::move(_partial_snapshot);
+            _partial_snapshot_valid = false;
+            partial_used            = true;
+            optimized_snapshot      = true;
+            _snapshot_prefiltered   = true; // climb's top-level filter is
+                                            // always the fixed relation and
+                                            // applies the test of the edges
+                                            // within scan_matches_reading
+                                            // itself
+        }
+        else if (_n->use_anchors())
+        {
+            // Subject/object-driven anchoring is gated on use_anchors(),
+            // not use_parallel(): these lookups are index shortcuts
+            // orthogonal to threading. ".anchors off" restores the
+            // full-relation reference scan of the fallback branch below.
+            //
+            // Rule-template nodes exist in the graph. The subject/object-
+            // driven shortcut must not anchor on nodes that are themselves
+            // rule topology: the conjunction set node, or pattern fact
+            // nodes containing variables.
+            //
+            // Concrete atoms that merely OCCUR inside the template (e.g.
+            // the constant Q6256 in a condition (A P31 Q6256)) are valid
+            // anchors: their adjacency is exactly the data we want to
+            // scan. The previous BFS-based check rejected them, forcing a
+            // full-relation snapshot -- catastrophic for high-cardinality
+            // relations like P31 (~15M facts).
+            //
+            // Template fact nodes that still end up in the candidate
+            // snapshot are rejected later by extract_bindings via
+            // contains_variable_shallow, exactly as in the full-scan path.
+            //
+            // A node in the pattern that holds the conditions of a rule as
+            // a set matches rules sharing identical members, rather than
+            // just the node itself (unify_condition), a node that holds a
+            // set pattern matches set constants (unify_nodes), and neither
+            // serves as an anchor; a bound value represents the node it
+            // refers to. `own`: the node belongs to the pattern,
+            // `by_members`: it is a set of conditions that is matched by
+            // its members.
+            auto is_concrete_lookup_node = [&](Node nd, const bool own, const bool by_members) -> bool
             {
-                // Semi-naive seed mode: the candidate set is exactly the
-                // seeded fact -- no snapshot, no anchor lookup. The generic
-                // bookkeeping below stays active, so note_relation_scan
-                // honestly records a scan of size 1 for this relation and
-                // scans/fact metrics remain comparable across modes.
-                _facts_snapshot.clear();
-                _facts_snapshot.insert(_seed_fact);
-                optimized_snapshot = true;
-            }
-            else if (_partial_snapshot_valid)
-            {
-                // Partial-pattern anchor (see the constructor): the complete
-                // candidate superset was precomputed by climbing from a
-                // concrete inner node. Built only for the single fixed
-                // relation, so it is consumed exactly once.
-                _facts_snapshot         = std::move(_partial_snapshot);
-                _partial_snapshot_valid = false;
-                partial_used            = true;
-                optimized_snapshot      = true;
-                _snapshot_prefiltered   = true; // climb's top-level filter is
-                                                // always the fixed relation and
-                                                // applies exactly the predicate-
-                                                // vs-subject exclusion below
-            }
-            else if (_n->use_anchors())
-            {
-                // Subject/object-driven anchoring is gated on use_anchors(),
-                // not use_parallel(): these lookups are index shortcuts
-                // orthogonal to threading. ".anchors off" restores the
-                // full-relation reference scan of the fallback branch below.
-                //
-                // Rule-template nodes exist in the graph. The subject/object-
-                // driven shortcut must not anchor on nodes that are themselves
-                // rule topology: the conjunction set node, or pattern fact
-                // nodes containing variables.
-                //
-                // Concrete atoms that merely OCCUR inside the template (e.g.
-                // the constant Q6256 in a condition (A P31 Q6256)) are valid
-                // anchors: their adjacency is exactly the data we want to
-                // scan. The previous BFS-based check rejected them, forcing a
-                // full-relation snapshot -- catastrophic for high-cardinality
-                // relations like P31 (~15M facts).
-                //
-                // Template fact nodes that still end up in the candidate
-                // snapshot are rejected later by extract_bindings via
-                // contains_variable_shallow, exactly as in the full-scan path.
-                //
-                // A node in the pattern that holds the conditions of a rule as
-                // a set matches rules sharing identical members, rather than
-                // just the node itself (unify_condition), a node that holds a
-                // set pattern matches set constants (unify_nodes), and neither
-                // serves as an anchor; a bound value represents the node it
-                // refers to. `own`: the node belongs to the pattern,
-                // `by_members`: it is a set of conditions that is matched by
-                // its members.
-                auto is_concrete_lookup_node = [&](Node nd, const bool own, const bool by_members) -> bool
+                if (nd == 0 || matches_any(nd)) return false;
+
+                if (Zelph::Impl::is_var(nd))
+                    nd = string::get(*_variables, nd, nd);
+
+                if (nd == 0 || Zelph::Impl::is_var(nd) || !_n->exists(nd))
+                    return false;
+
+                if (nd == _parent || _n->var_in_closure(nd))
                 {
-                    if (nd == 0 || matches_any(nd)) return false;
-
-                    if (Zelph::Impl::is_var(nd))
-                        nd = string::get(*_variables, nd, nd);
-
-                    if (nd == 0 || Zelph::Impl::is_var(nd) || !_n->exists(nd))
-                        return false;
-
-                    if (nd == _parent || _n->var_in_closure(nd))
-                    {
-                        if (_n->should_log(1) && _n->should_log(_log_depth - 1))
-                            u_log(_n, _log_depth, "is_concrete_lookup_node: REJECT (template) " + U_NODE(nd));
-                        return false;
-                    }
-
-                    if (own && (by_members || holds_member_matched_set(_n, nd)))
-                        return false;
-
-                    // Nor does a statement serve as an anchor, or as a part of
-                    // the exact probe below, where a fact involving
-                    // additional objects may match it: its adjacency holds
-                    // only the facts that hold it as it stands, and a broader
-                    // fact also matches it (see anchor_role below).
-                    if (may_match_wider_statement(_n, nd))
-                        return false;
-
-                    return true;
-                };
-
-                // The role the anchor must fulfil within a candidate (see
-                // skip_candidates_in_other_roles). Only an atom matches
-                // nothing but itself; a statement matches a broader one
-                // too, whose objects include its own, thus enabling a fact
-                // to match through a statement in the other role:
-                // ((a p b) bad Z) matches ((a p b c) bad (a p b)).
-                auto anchor_role = [&](const Node anchor, const Zelph::AnchorRole role)
-                {
-                    return _role_filter && !Zelph::Impl::is_hash(anchor) ? role : Zelph::AnchorRole::Any;
-                };
-
-                // Taken by id, the candidates are added to a list
-                // (see enumerate_by_id).
-                auto collect = [&](const Node anchor, const Zelph::AnchorRole role)
-                {
-                    _listed = _by_id;
-                    if (_listed) _facts_snapshot.clear();
-                    const std::size_t walked = _listed ? _n->collect_anchored_facts(anchor, current_rel, _listed_facts, anchor_role(anchor, role), resume_after)
-                                                       : _n->collect_anchored_facts(anchor, current_rel, _facts_snapshot, anchor_role(anchor, role), resume_after);
-                    _scanned += walked;
-                    if (_n->logging_active()) PROF(anchor_walked.fetch_add(walked, std::memory_order_relaxed));
-                };
-
-                // The subject, whether bound or grounded, and the first object.
-                Node s = _subject;
-                if (Zelph::Impl::is_var(s)) s = string::get(*_variables, s, s);
-                if (_subject_grounded != 0) s = _subject_grounded; // anchor on the grounded pattern node
-                const bool subject_concrete = is_concrete_lookup_node(s, s == _subject, subject_by_members(current_rel));
-
-                Node o               = 0;
-                bool object_concrete = false;
-                if (!_objects.empty())
-                {
-                    o = *_objects.begin();
-                    if (Zelph::Impl::is_var(o)) o = string::get(*_variables, o, o);
-                    object_concrete = is_concrete_lookup_node(o, o == *_objects.begin(), false);
-                }
-
-                // A condition in which the relation is fixed and both the
-                // subject and all objects are concrete denotes a single
-                // triple. If no fact with additional objects can state it --
-                // none may exist for the relation, and none can match a
-                // statement among its parts (is_concrete_lookup_node) --
-                // then that triple's own fact stands as the sole candidate,
-                // and a single hash probe finds it. Read from an anchor, the
-                // condition incurs the cost of the anchor's whole adjacency:
-                // `A isdigit true` in the stdlib's comparison rules, with A
-                // bound to a digit, walked every list cell that holds the
-                // digit, causing each comparison to scale with the numbers
-                // in the graph. The candidate is tried just like any other
-                // in Next().
-                bool probed = false;
-                if (subject_concrete && object_concrete && _relation_variable == 0 && _relation_pattern == 0
-                    && !_n->may_hold_wider_statements(current_rel))
-                {
-                    adjacency_set triple_objects{o};
-                    bool          all_concrete = true;
-                    for (auto ob = std::next(_objects.begin()); ob != _objects.end(); ++ob)
-                    {
-                        Node x = *ob;
-                        if (Zelph::Impl::is_var(x)) x = string::get(*_variables, x, x);
-                        if (!is_concrete_lookup_node(x, x == *ob, false))
-                        {
-                            all_concrete = false;
-                            break;
-                        }
-                        triple_objects.insert(x);
-                    }
-                    if (all_concrete)
-                    {
-                        const Answer answer = _n->check_fact(s, current_rel, triple_objects);
-                        _listed             = _by_id;
-                        _facts_snapshot.clear();
-                        _listed_facts.clear();
-                        if (answer.is_known() && answer.relation() > resume_after)
-                        {
-                            if (_listed)
-                                _listed_facts.push_back(answer.relation());
-                            else
-                                _facts_snapshot.insert(answer.relation());
-                        }
-                        _scanned += 1;
-                        if (_n->logging_active()) PROF(exact_probes.fetch_add(1, std::memory_order_relaxed));
-                        optimized_snapshot    = true;
-                        _snapshot_prefiltered = true;
-                        probed                = true;
-                        if (_n->should_log(1) && _n->should_log(_log_depth - 1))
-                        {
-                            u_log(_n, _log_depth, std::string("exact probe: rel=") + U_NODE(current_rel) + " subj=" + U_NODE(s) + " size=" + std::to_string(snapshot_size()));
-                        }
-                    }
-                }
-
-                // Otherwise, the anchor functions as a bound end of the
-                // condition. Every fact it can match holds the concrete
-                // subject as its subject and includes the concrete object
-                // among its objects, so with both ends bound, either
-                // adjacency yields all candidates, and the smaller one is
-                // read.
-                if (probed)
-                {
-                    // the probe has set the candidates
-                }
-                else if (subject_concrete && (!object_concrete || _n->_pImpl->right_count_of(s) <= _n->_pImpl->right_count_of(o)))
-                {
-                    // Strategy: Subject Driven
-                    // One lock scope filters the anchor's adjacency straight
-                    // into the snapshot (Zelph::collect_anchored_facts).
-                    collect(s, Zelph::AnchorRole::Subject);
-                    optimized_snapshot    = true;
-                    _snapshot_prefiltered = true;
                     if (_n->should_log(1) && _n->should_log(_log_depth - 1))
-                    {
-                        u_log(_n, _log_depth, std::string("optimized_snapshot=") + (optimized_snapshot ? "YES" : "NO") + " rel=" + U_NODE(current_rel) + " subj=" + U_NODE(s) + (optimized_snapshot ? " size=" + std::to_string(snapshot_size()) : ""));
-                    }
+                        u_log(_n, _log_depth, "is_concrete_lookup_node: REJECT (template) " + U_NODE(nd));
+                    return false;
                 }
-                else if (object_concrete)
-                {
-                    // Strategy: Object Driven
-                    // One lock scope filters the anchor's adjacency straight
-                    // into the snapshot (Zelph::collect_anchored_facts).
-                    collect(o, Zelph::AnchorRole::Object);
-                    optimized_snapshot    = true;
-                    _snapshot_prefiltered = true;
-                    if (_n->should_log(1) && _n->should_log(_log_depth - 1))
-                    {
-                        u_log(_n, _log_depth, std::string("optimized_snapshot=") + (optimized_snapshot ? "YES" : "NO") + " rel=" + U_NODE(current_rel) + " obj=" + U_NODE(o) + (optimized_snapshot ? " size=" + std::to_string(snapshot_size()) : ""));
-                    }
-                }
+
+                if (own && (by_members || holds_member_matched_set(_n, nd)))
+                    return false;
+
+                // Nor does a statement serve as an anchor, or as a part of
+                // the exact probe below, where a fact involving
+                // additional objects may match it: its adjacency holds
+                // only the facts that hold it as it stands, and a broader
+                // fact also matches it (see anchor_role below).
+                if (may_match_wider_statement(_n, nd))
+                    return false;
+
+                return true;
+            };
+
+            // The role the anchor must fulfil within a candidate (see
+            // skip_candidates_in_other_roles). Only an atom matches
+            // nothing but itself; a statement matches a broader one
+            // too, whose objects include its own, thus enabling a fact
+            // to match through a statement in the other role:
+            // ((a p b) bad Z) matches ((a p b c) bad (a p b)).
+            auto anchor_role = [&](const Node anchor, const Zelph::AnchorRole role)
+            {
+                return _role_filter && !Zelph::Impl::is_hash(anchor) ? role : Zelph::AnchorRole::Any;
+            };
+
+            // Taken by id, the candidates are added to a list
+            // (see enumerate_by_id).
+            auto collect = [&](const Node anchor, const Zelph::AnchorRole role)
+            {
+                _listed = _by_id;
+                if (_listed) _facts_snapshot.clear();
+                const std::size_t walked = _listed ? _n->collect_anchored_facts(anchor, current_rel, _listed_facts, anchor_role(anchor, role), resume_after)
+                                                   : _n->collect_anchored_facts(anchor, current_rel, _facts_snapshot, anchor_role(anchor, role), resume_after);
+                _scanned += walked;
+                if (_n->logging_active()) PROF(anchor_walked.fetch_add(walked, std::memory_order_relaxed));
+            };
+
+            // The subject, whether bound or grounded, and the first object.
+            Node s = _subject;
+            if (Zelph::Impl::is_var(s)) s = string::get(*_variables, s, s);
+            if (_subject_grounded != 0) s = _subject_grounded; // anchor on the grounded pattern node
+            const bool subject_concrete = is_concrete_lookup_node(s, s == _subject, subject_by_members(current_rel));
+
+            Node o               = 0;
+            bool object_concrete = false;
+            if (!_objects.empty())
+            {
+                o = *_objects.begin();
+                if (Zelph::Impl::is_var(o)) o = string::get(*_variables, o, o);
+                object_concrete = is_concrete_lookup_node(o, o == *_objects.begin(), false);
             }
 
-            if (optimized_snapshot)
+            // A condition in which the relation is fixed and both the
+            // subject and all objects are concrete denotes a single
+            // triple. If no fact with additional objects can state it --
+            // none may exist for the relation, and none can match a
+            // statement among its parts (is_concrete_lookup_node) --
+            // then that triple's own fact stands as the sole candidate,
+            // and a single hash probe finds it. Read from an anchor, the
+            // condition incurs the cost of the anchor's whole adjacency:
+            // `A isdigit true` in the stdlib's comparison rules, with A
+            // bound to a digit, walked every list cell that holds the
+            // digit, causing each comparison to scale with the numbers
+            // in the graph. The candidate is tried just like any other
+            // in Next().
+            bool probed = false;
+            if (subject_concrete && object_concrete && _relation_variable == 0 && _relation_pattern == 0
+                && !_n->may_hold_wider_statements(current_rel))
             {
-                if (_n->should_log(1))
-                    u_log(_n, _log_depth, "DIAG increment_fact_index: optimized_snapshot=YES, _facts_snapshot.size()=" + std::to_string(snapshot_size()));
-            }
-            else
-            {
-                if (_n->should_log(1))
-                    u_log(_n, _log_depth, "DIAG increment_fact_index: optimized_snapshot=NO, _facts_snapshot.size()=" + std::to_string(_facts_snapshot.size()));
-
-                // Fallback: Snapshot entire relation extent (slow for huge relations)
-                if (_by_id && _n && _n->_pImpl)
+                adjacency_set triple_objects{o};
+                bool          all_concrete = true;
+                for (auto ob = std::next(_objects.begin()); ob != _objects.end(); ++ob)
                 {
-                    // Taken by id, the relation's facts are added to a list
-                    // (see enumerate_by_id).
+                    Node x = *ob;
+                    if (Zelph::Impl::is_var(x)) x = string::get(*_variables, x, x);
+                    if (!is_concrete_lookup_node(x, x == *ob, false))
+                    {
+                        all_concrete = false;
+                        break;
+                    }
+                    triple_objects.insert(x);
+                }
+                if (all_concrete)
+                {
+                    const Answer answer = _n->check_fact(s, current_rel, triple_objects);
+                    _listed             = _by_id;
                     _facts_snapshot.clear();
-                    _listed = true;
-                    _scanned += _n->_pImpl->list_left_of(current_rel, _listed_facts, resume_after);
+                    _listed_facts.clear();
+                    if (answer.is_known() && answer.relation() > resume_after)
+                    {
+                        if (_listed)
+                            _listed_facts.push_back(answer.relation());
+                        else
+                            _facts_snapshot.insert(answer.relation());
+                    }
+                    _scanned += 1;
+                    if (_n->logging_active()) PROF(exact_probes.fetch_add(1, std::memory_order_relaxed));
+                    optimized_snapshot    = true;
+                    _snapshot_prefiltered = true;
+                    probed                = true;
+                    if (_n->should_log(1) && _n->should_log(_log_depth - 1))
+                    {
+                        u_log(_n, _log_depth, std::string("exact probe: rel=") + U_NODE(current_rel) + " subj=" + U_NODE(s) + " size=" + std::to_string(snapshot_size()));
+                    }
                 }
-                else if (!_n || !_n->_pImpl || !_n->_pImpl->snapshot_left_of(current_rel, _facts_snapshot))
-                {
-                    return false; // there is a relation without any facts that use it (might happen if it has been explicitly defined via fact(r, core.IsA, core.RelationType))
-                }
-                else
-                    _scanned += _facts_snapshot.size();
             }
 
-            // Taken by identifier, a snapshot within a set is listed and
-            // sorted; one within a sorted vector, and a list in that order
-            // already, are taken as they are (see enumerate_by_id).
-            if (_by_id && !_listed && !_facts_snapshot.iterates_sorted())
+            // Otherwise, the anchor functions as a bound end of the
+            // condition. Every fact it can match holds the concrete
+            // subject as its subject and includes the concrete object
+            // among its objects, so with both ends bound, either
+            // adjacency yields all candidates, and the smaller one is
+            // read.
+            if (probed)
             {
-                _listed_facts.assign(_facts_snapshot.begin(), _facts_snapshot.end());
-                _facts_snapshot.clear();
-                _listed = true;
+                // the probe has set the candidates
             }
-            if (_listed && !std::is_sorted(_listed_facts.begin(), _listed_facts.end()))
-                sort_ids(_listed_facts);
-
-            // If the snapshot is empty,
-            // we must not initialize the iterator to begin() and then check *_fact_index,
-            // because begin() == end(), and dereferencing end() crashes.
-            if (snapshot_size() == 0)
+            else if (subject_concrete && (!object_concrete || _n->_pImpl->right_count_of(s) <= _n->_pImpl->right_count_of(o)))
             {
-                return false;
-            }
-
-            if (_n->logging_active())
-            {
+                // Strategy: Subject Driven
+                // One lock scope filters the anchor's adjacency straight
+                // into the snapshot (Zelph::collect_anchored_facts).
+                collect(s, Zelph::AnchorRole::Subject);
+                optimized_snapshot    = true;
+                _snapshot_prefiltered = true;
                 if (_n->should_log(1) && _n->should_log(_log_depth - 1))
                 {
-                    u_log(_n, _log_depth, "increment_fact_index: " + std::to_string(snapshot_size()) + " candidate facts for relation " + U_NODE(*_relation_index));
+                    u_log(_n, _log_depth, std::string("optimized_snapshot=") + (optimized_snapshot ? "YES" : "NO") + " rel=" + U_NODE(current_rel) + " subj=" + U_NODE(s) + (optimized_snapshot ? " size=" + std::to_string(snapshot_size()) : ""));
                 }
-
-                PROF(relation_snapshots.fetch_add(1, std::memory_order_relaxed));
-                PROF(snapshot_facts_total.fetch_add(snapshot_size(), std::memory_order_relaxed));
-                if (partial_used)
-                {
-                    PROF(snapshot_partial_anchor.fetch_add(1, std::memory_order_relaxed));
-                }
-                else if (optimized_snapshot)
-                {
-                    PROF(snapshot_subject_driven.fetch_add(1, std::memory_order_relaxed));
-                }
-                else
-                {
-                    PROF(snapshot_full_relation.fetch_add(1, std::memory_order_relaxed));
-                }
-                if (current_rel) PROF(note_relation_scan(current_rel, snapshot_size()));
             }
-
-            if (_listed)
+            else if (object_concrete)
             {
-                const Node* const first = _listed_facts.data();
-                const Node* const last  = first + _listed_facts.size();
-                _fact_index             = adjacency_set::iterator(first, last);
-                _facts_end              = adjacency_set::iterator(last, last);
-            }
-            else
-            {
-                _listed_facts.clear();
-                _fact_index = _facts_snapshot.begin(); // used to iterate over all facts that have relation type *_relation_index
-                _facts_end  = _facts_snapshot.end();
-            }
-            _fact_index_initialized = true;
-
-            if (_resume_fact != 0) // see start_after
-            {
-                if (current_rel == _resume_relation)
-                    while (_fact_index != _facts_end && *_fact_index <= _resume_fact)
-                        ++_fact_index;
-                _resume_fact = 0;
-                if (_fact_index == _facts_end) return false;
+                // Strategy: Object Driven
+                // One lock scope filters the anchor's adjacency straight
+                // into the snapshot (Zelph::collect_anchored_facts).
+                collect(o, Zelph::AnchorRole::Object);
+                optimized_snapshot    = true;
+                _snapshot_prefiltered = true;
+                if (_n->should_log(1) && _n->should_log(_log_depth - 1))
+                {
+                    u_log(_n, _log_depth, std::string("optimized_snapshot=") + (optimized_snapshot ? "YES" : "NO") + " rel=" + U_NODE(current_rel) + " obj=" + U_NODE(o) + (optimized_snapshot ? " size=" + std::to_string(snapshot_size()) : ""));
+                }
             }
         }
-        else if (++_fact_index == _facts_end) // increment and return false if we reached the end, so _relation_index will be incremented
+
+        if (optimized_snapshot)
+        {
+            if (_n->should_log(1))
+                u_log(_n, _log_depth, "DIAG increment_fact_index: optimized_snapshot=YES, _facts_snapshot.size()=" + std::to_string(snapshot_size()));
+        }
+        else
+        {
+            if (_n->should_log(1))
+                u_log(_n, _log_depth, "DIAG increment_fact_index: optimized_snapshot=NO, _facts_snapshot.size()=" + std::to_string(_facts_snapshot.size()));
+
+            // Fallback: Snapshot entire relation extent (slow for huge relations)
+            if (_by_id && _n && _n->_pImpl)
+            {
+                // Taken by id, the relation's facts are added to a list
+                // (see enumerate_by_id).
+                _facts_snapshot.clear();
+                _listed = true;
+                _scanned += _n->_pImpl->list_left_of(current_rel, _listed_facts, resume_after);
+            }
+            else if (!_n || !_n->_pImpl || !_n->_pImpl->snapshot_left_of(current_rel, _facts_snapshot))
+            {
+                return false; // there is a relation without any facts that use it (might happen if it has been explicitly defined via fact(r, core.IsA, core.RelationType))
+            }
+            else
+                _scanned += _facts_snapshot.size();
+        }
+
+        // Taken by identifier, a snapshot within a set is listed and
+        // sorted; one within a sorted vector, and a list in that order
+        // already, are taken as they are (see enumerate_by_id).
+        if (_by_id && !_listed && !_facts_snapshot.iterates_sorted())
+        {
+            _listed_facts.assign(_facts_snapshot.begin(), _facts_snapshot.end());
+            _facts_snapshot.clear();
+            _listed = true;
+        }
+        if (_listed && !std::is_sorted(_listed_facts.begin(), _listed_facts.end()))
+            sort_ids(_listed_facts);
+
+        // If the snapshot is empty,
+        // we must not initialize the iterator to begin() and then check *_fact_index,
+        // because begin() == end(), and dereferencing end() crashes.
+        if (snapshot_size() == 0)
         {
             return false;
         }
-        // Skip nodes that are not relations of type *_relation_index but
-        // relations having *_relation_index as their subject (recognised by
-        // the bidirectional connection to the subject). The second probe is
-        // the subject == predicate exemption: there both roles share one
-        // outgoing edge, so the relation IS the predicate. Order matters --
-        // has_left_edge answers no for every ordinary candidate, so the
-        // outgoing-degree lookup is paid only for the rare fact that really
-        // does have the relation as its subject.
-        //
-        // A statement or a rule that holds such a fact adds to its outgoing
-        // edges, and the fact vanished from every scan of its predicate as
-        // soon as anything held it, so the hash of its triple decides where
-        // the degree does not.
-    } while (!_snapshot_prefiltered
-             && _n->has_left_edge(*_fact_index, *_relation_index)
-             && _n->_pImpl->right_count_of(*_fact_index) > 1
-             && !_n->read_scope().subject_is_predicate(*_fact_index, *_relation_index));
 
+        if (_n->logging_active())
+        {
+            if (_n->should_log(1) && _n->should_log(_log_depth - 1))
+            {
+                u_log(_n, _log_depth, "increment_fact_index: " + std::to_string(snapshot_size()) + " candidate facts for relation " + U_NODE(*_relation_index));
+            }
+
+            PROF(relation_snapshots.fetch_add(1, std::memory_order_relaxed));
+            PROF(snapshot_facts_total.fetch_add(snapshot_size(), std::memory_order_relaxed));
+            if (partial_used)
+            {
+                PROF(snapshot_partial_anchor.fetch_add(1, std::memory_order_relaxed));
+            }
+            else if (optimized_snapshot)
+            {
+                PROF(snapshot_subject_driven.fetch_add(1, std::memory_order_relaxed));
+            }
+            else
+            {
+                PROF(snapshot_full_relation.fetch_add(1, std::memory_order_relaxed));
+            }
+            if (current_rel) PROF(note_relation_scan(current_rel, snapshot_size()));
+        }
+
+        if (_listed)
+        {
+            const Node* const first = _listed_facts.data();
+            const Node* const last  = first + _listed_facts.size();
+            _fact_index             = adjacency_set::iterator(first, last);
+            _facts_end              = adjacency_set::iterator(last, last);
+        }
+        else
+        {
+            _listed_facts.clear();
+            _fact_index = _facts_snapshot.begin(); // used to iterate over all facts that have relation type *_relation_index
+            _facts_end  = _facts_snapshot.end();
+        }
+        _fact_index_initialized = true;
+
+        if (_resume_fact != 0) // see start_after
+        {
+            if (current_rel == _resume_relation)
+                while (_fact_index != _facts_end && *_fact_index <= _resume_fact)
+                    ++_fact_index;
+            _resume_fact = 0;
+            if (_fact_index == _facts_end) return false;
+        }
+    }
+    else if (++_fact_index == _facts_end) // increment and return false if we reached the end, so _relation_index will be incremented
+    {
+        return false;
+    }
+    // The relation's complete extent also holds the facts where the relation
+    // serves as the SUBJECT, including its declaration `p ~ ->`: a fact
+    // references its subject just as it references its predicate. No candidate
+    // undergoes testing before decoding: Next() decodes each one, keeps the
+    // readings where the predicate matches the relation, and, unless the
+    // snapshot is prefiltered, forwards each to scan_matches_reading, which
+    // examines the candidate's edges solely for a reading that does not hash
+    // back to it.
     return true;
 }
 
@@ -2181,8 +2238,22 @@ std::shared_ptr<Variables> Unification::Next()
                     if (fs.predicate != *_relation_index) continue;
                     if (is_rule_text(_n, fact, fs, _candidates)) continue;
 
+                    // The test of the reading (scan_matches_reading) is
+                    // requested solely for a reading that has achieved a
+                    // match, just as the bookkeeping test is. The tests
+                    // form a conjunction, so altering their sequence has no
+                    // impact on the outcome, and the hash computed by this
+                    // one incurs a cost exceeding the combined expense of all
+                    // others. In the Jacobian example
+                    // (dev_scripts/test-jacobian-var), fewer than one reading
+                    // in four produces a match, and the test, when applied to
+                    // every reading whose predicate is the relation,
+                    // increased the cost by 0.4 % of that example's
+                    // instructions.
                     auto bindings = extract_bindings(fs.subject, fs.objects, *_relation_index, _log_depth);
-                    if (!bindings.empty() && is_engine_bookkeeping(_n, fs)) continue; // not data either
+                    if (bindings.empty()) continue;
+                    if (!_snapshot_prefiltered && !scan_matches_reading(_n, fact, fs, *_relation_index)) continue;
+                    if (is_engine_bookkeeping(_n, fs)) continue; // not data either
                     for (auto& r : bindings)
                     {
                         if (!first)

@@ -125,6 +125,7 @@ namespace zelph::console
             "",
             "Engine Behaviour",
             "  .parallel                                 – Toggle parallel processing (default: on)",
+            "  .threads [<count>|auto]                   – Show or set the number of threads that parallel work may use (default: auto)",
             "  .anchors [on|off]                         – Show or set anchor-based candidate lookups in unification (default: on)",
             "  .semi-naive [on|off|check]                – Show or set the fixpoint evaluation strategy (default: on)",
             "  .fact-stores [on|off]                     – Show or disable the fact-path acceleration stores (memory vs. speed)",
@@ -614,10 +615,8 @@ namespace zelph::console
                             "and the command still exits as if it had worked. Export from the run that\n"
                             "does the deriving, or start from .new. The same property means only the\n"
                             "FIRST derivation of a fact is written -- one justification per fact, not\n"
-                            "all of them. Under .parallel, which justification comes first varies between\n"
-                            "runs, and with it the premises in the file; the conclusions do not, unless\n"
-                            "the program has rules that are not stratifiable or a rule with a fresh\n"
-                            "variable. With .parallel off, two runs write the same file.\n"
+                            "all of them. Which justification comes first does not depend on the run or\n"
+                            "on .threads: two runs of the same input write the same file.\n"
                             "Contradictions are the exception and repeat, so that a second run does not\n"
                             "hand back an empty file: count them by deduplicating on the premise set,\n"
                             "not by counting lines."},
@@ -1046,7 +1045,7 @@ namespace zelph::console
                      "Clears the complete network, including node names. Re-initializes core nodes.\n"
                      "Also clears the import registry, so all scripts can be imported again.\n"
                      "The engine is created anew, so everything it holds returns to its default:\n"
-                     "the settings .parallel, .anchors, .semi-naive, .fact-stores,\n"
+                     "the settings .parallel, .threads, .anchors, .semi-naive, .fact-stores,\n"
                      ".contradiction-records, .negation-records, .explain-budget,\n"
                      ".node-map-load-factor, .lang, .log and .log-janet, the records of\n"
                      ".negation-records, the clusters, and every Janet definition.\n"
@@ -1195,6 +1194,8 @@ namespace zelph::console
             {".parallel", ".parallel\n"
                           "Toggles parallel processing on/off.\n"
                           "Default is on for performance.\n"
+                          "How many threads work is the setting of .threads; this switch is the\n"
+                          "permission to use more than one of them.\n"
                           "\n"
                           "'on' is a permission, not an instruction: a bulk removal decides per\n"
                           "batch whether spreading its read phase over the pool is worth it, and\n"
@@ -1204,6 +1205,27 @@ namespace zelph::console
                           "keeps the pool exactly while the graph is being paged in, which is\n"
                           "the case that made the read phase parallel in the first place.\n"
                           "'off' means one thread everywhere, unconditionally."},
+
+            {".threads", ".threads [<count>|auto]\n"
+                         "Shows or sets the number of threads that parallel work may use: the scan\n"
+                         "of a relation that a rule or a query reads whole, the build of the index\n"
+                         "behind a path condition, and the reading half of a bulk removal.\n"
+                         "\n"
+                         "auto, the default, is the count of the process: the number that the\n"
+                         "environment variable ZELPH_THREADS names, and otherwise the CPUs the\n"
+                         "process may run on (its affinity mask) or, where that is fewer, the CPUs\n"
+                         "that its cgroup quota grants, and at least 1. <count> is a number from 1\n"
+                         "to 1024 and may exceed the CPUs of the machine.\n"
+                         "\n"
+                         "The threads start with the first piece of work that is spread over them.\n"
+                         "A relation with fewer than 4096 facts is scanned on one thread whatever\n"
+                         "the count is, because waking the others would cost more than they gain.\n"
+                         "A scan that is spread over threads hands its matches on in the order in\n"
+                         "which one thread finds them.\n"
+                         "\n"
+                         ".parallel is the permission to work in parallel at all: while it is off,\n"
+                         "none of this work is spread over threads, whatever the count says.\n"
+                         "(zelph/threads) reads the count and sets it."},
 
             {".anchors", ".anchors [on|off]\n"
                          "Controls the unification engine's anchor-based candidate lookups:\n"

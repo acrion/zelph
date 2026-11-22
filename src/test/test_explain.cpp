@@ -4119,22 +4119,27 @@ TEST_CASE("explain: looking for a second justification costs no more than the pr
 // building it cost a scan per rule: with thousands of rules a generator made,
 // each explanation of an axiom used to take seconds. It is now preserved from
 // one explanation to the next. The identifier of a fact is the hash of its
-// content, meaning two runs over the same program hold the same graph -- yet
-// the order in which the search meets a node's facts reflected the sequence
-// in which the forward pass constructed the structures, and a parallel run
-// constructs them in a different sequence each time. The step shown by the
-// SCC rule within the transitive closure of a ring, the first instantiation
-// recorded, varied across runs: four different trees emerged in five runs of
-// the same program. The search now lists the matches of a condition in the
-// order of the facts' identifiers, and a walk takes its edges in that order,
-// so the tree depends solely on the graph.
-TEST_CASE("explain: the tree does not depend on the order in which a parallel run built the graph" * doctest::test_suite("slow"))
+// content, meaning two sessions over the same program hold the same graph --
+// yet the order in which the search meets a node's facts reflected the
+// sequence in which the forward pass constructed the structures, and that
+// sequence was different in every run while a scan handed its matches on in
+// the order in which its threads ended. The step shown by the SCC rule within
+// the transitive closure of a ring, the first instantiation recorded, varied
+// across runs: four different trees emerged in five runs of the same program.
+// The search now lists the matches of a condition in the order of the facts'
+// identifiers, and a walk takes its edges in that order, so the tree depends
+// solely on the graph. Two runs of one program now derive in one order, so the
+// sessions below differ in what else changes the order in which a run derives:
+// seeded iterations, classic passes, and one thread.
+TEST_CASE("explain: the tree does not depend on the order in which a run built the graph" * doctest::test_suite("slow"))
 {
-    const auto session = []
+    const auto session = [](const std::vector<const char*>& settings)
     {
         zelph::io::OutputCollector  collector;
         zelph::console::Interactive interactive(collector.sink());
-        std::string                 program = ".deductions off\nsub ~ trans\n(R ~ trans, X R Y, Y R Z) => (X R Z)\n";
+        for (const char* setting : settings)
+            interactive.process(setting);
+        std::string program = ".deductions off\nsub ~ trans\n(R ~ trans, X R Y, Y R Z) => (X R Z)\n";
         for (int i = 0; i < 100; ++i)
             program += "c" + std::to_string(i) + " sub c" + std::to_string((i + 1) % 100) + "\n";
         process_lines(interactive, program);
@@ -4148,9 +4153,11 @@ TEST_CASE("explain: the tree does not depend on the order in which a parallel ru
         }
         return trees;
     };
-    const std::string first = session();
-    CHECK(session() == first);
-    CHECK(session() == first);
+    const std::string first = session({});
+    CHECK(session({}) == first);
+    CHECK(session({".semi-naive off"}) == first);
+    CHECK(session({".parallel"}) == first);
+    CHECK(session({".parallel", ".semi-naive off"}) == first);
 }
 
 // The sequence of matches for a condition follows the order of the facts'

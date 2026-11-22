@@ -12,7 +12,7 @@ Queries are statements that contain variables (single uppercase letters) but no 
 - **Multi-Conditions (Conjunctions)**: Write the conditions as a comma list, e.g. `cond1, cond2`, or use the explicit form `*{(cond1) (cond2)} ~ conjunction`. Note that neither carries outer parentheses: `(cond1, cond2)` on a line by itself is a *term*, i.e. the beginning of a statement, and awaits the rest of it – see [Basic Usage](quickstart.md#basic-usage).
 - **Wildcards**: Use variables for subjects, relations, or objects (e.g., `X R Y` matches any triple).
 - **Inference Integration**: Automatically performed after each command (also see command `.auto-run`).
-- **Output**: Matches are printed with bound values. If no matches: only the query is echoed. The order of the answers is not specified – with parallel unification (the default, see `.parallel`) it can differ between two runs of the same query; see [Deduction Output Modes](rules.md#deduction-output-modes). Every binding is answered just once, even when two facts state it, as a narrower fact alongside a wider one does (refer to [Facts with Multiple Objects](logic.md#facts-with-multiple-objects)).
+- **Output**: Matches are printed with bound values. If no matches: only the query is echoed. The order of the answers is not specified, although two executions with the same input give them in the same order; see [Deduction Output Modes](rules.md#deduction-output-modes). Every binding is answered just once, even when two facts state it, as a narrower fact alongside a wider one does (refer to [Facts with Multiple Objects](logic.md#facts-with-multiple-objects)).
 - **Limitations**: A query is a statement, so it may span several lines, but each answer is one line and there is no paging.
 
 ## General Queries

@@ -25,6 +25,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #include "capi/zelph_c.h"
 
+#include "concurrency/thread_count.hpp"
 #include "interactive.hpp"
 #include "network/adjacency_set.hpp"
 #include "network/answer.hpp"
@@ -1243,6 +1244,34 @@ int32_t zelph_set_parallel(zelph_engine* engine, int32_t enabled, int32_t* out_p
         const bool previous = graph->use_parallel();
         if (out_previous) *out_previous = previous ? 1 : 0;
         if (previous != (enabled != 0)) graph->toggle_parallel();
+        return succeed(); });
+}
+
+int32_t zelph_set_threads(zelph_engine* engine, int32_t threads, int32_t* out_previous)
+{
+    if (!engine) return fail(ZELPH_INVALID_ARGUMENT, "engine is required");
+    if (threads < 0 || static_cast<uint32_t>(threads) > zelph::concurrency::thread_count::max_threads)
+        return fail(ZELPH_INVALID_ARGUMENT, "threads is a number from 1 to " + std::to_string(zelph::concurrency::thread_count::max_threads) + ", or 0 for the count of the process");
+
+    if (const int32_t refused = require_owner(engine, "zelph_set_threads"); refused != ZELPH_OK) return refused;
+
+    return guarded([&]
+                   {
+        auto* graph = engine->interactive.graph();
+        if (out_previous) *out_previous = static_cast<int32_t>(graph->threads_setting());
+        graph->set_threads(static_cast<unsigned>(threads));
+        return succeed(); });
+}
+
+int32_t zelph_threads(zelph_engine* engine, int32_t* out_threads)
+{
+    if (!engine || !out_threads) return fail(ZELPH_INVALID_ARGUMENT, "engine and out_threads are required");
+
+    if (const int32_t refused = require_owner(engine, "zelph_threads"); refused != ZELPH_OK) return refused;
+
+    return guarded([&]
+                   {
+        *out_threads = static_cast<int32_t>(engine->interactive.graph()->threads());
         return succeed(); });
 }
 

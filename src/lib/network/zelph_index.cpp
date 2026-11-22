@@ -88,20 +88,12 @@ bool Zelph::Impl::is_fact_subject(const Node rel, const Node predicate, const No
     return create_hash(predicate, cand, adjacency_set{cand}) == rel;
 }
 
-unsigned int Zelph::Impl::index_build_threads()
-{
-#ifdef __EMSCRIPTEN__
-    return 1u; // single-threaded wasm build: forces the serial path below
-#else
-    const unsigned int hw = std::thread::hardware_concurrency();
-    return hw == 0 ? 4u : hw;
-#endif
-}
-
-// Phase 1: extract (subject, object) pairs from the predicate's
-// relation nodes (parallel; see previous comments on locking and
-// swap-bound random access). Returns the unsorted forward pairs.
-std::vector<IndexPair> Zelph::Impl::extract_predicate_pairs(const Node predicate, const adjacency_set* skip, const adjacency_set* skip_composite) const
+// Phase 1: extract (subject, object) pairs from the predicate's relation nodes
+// (parallel; see previous comments on locking and swap-bound random access).
+// Returns the unsorted forward pairs. `threads` indicates the number of
+// threads the engine's parallel work may employ (Zelph::parallel_threads):
+// using 1 means no thread is initiated during the build.
+std::vector<IndexPair> Zelph::Impl::extract_predicate_pairs(const Node predicate, const adjacency_set* skip, const adjacency_set* skip_composite, const unsigned threads) const
 {
     // Same lock order as writers (connect): left before right.
     std::shared_lock<std::shared_mutex> lock_left(_smtx_left);
@@ -118,7 +110,7 @@ std::vector<IndexPair> Zelph::Impl::extract_predicate_pairs(const Node predicate
         rels.push_back(rel);
 
     const size_t n_threads =
-        rels.size() >= (size_t(1) << 15) ? index_build_threads() : 1;
+        rels.size() >= (size_t(1) << 15) ? std::max(threads, 1U) : 1;
 
     emit(io::OutputChannel::Diagnostic,
          "Building adjacency index over " + std::to_string(rels.size())
@@ -233,13 +225,28 @@ std::vector<IndexPair> Zelph::Impl::extract_predicate_pairs(const Node predicate
         std::vector<std::thread> workers;
         workers.reserve(n_threads);
         const size_t chunk = (rels.size() + n_threads - 1) / n_threads;
-        for (size_t t = 0; t < n_threads; ++t)
+        try
         {
-            const size_t begin = t * chunk;
-            const size_t end   = std::min(rels.size(), begin + chunk);
-            if (begin >= end) break;
-            workers.emplace_back([&extract_chunk, &partial, begin, end, t]
-                                 { extract_chunk(begin, end, partial[t]); });
+            for (size_t t = 0; t < n_threads; ++t)
+            {
+                const size_t begin = t * chunk;
+                const size_t end   = std::min(rels.size(), begin + chunk);
+                if (begin >= end) break;
+                workers.emplace_back([&extract_chunk, &partial, begin, end, t]
+                                     { extract_chunk(begin, end, partial[t]); });
+            }
+        }
+        catch (...)
+        {
+            // A thread that fails to start due to a limit on the number of a
+            // user's processes or a container's throws an exception while the
+            // previously started threads continue running, and destroying a
+            // thread that has not been joined results in process abortion
+            // (std::terminate). They are joined, and the caller gets the
+            // exception.
+            for (auto& w : workers)
+                w.join();
+            throw;
         }
         for (auto& w : workers)
             w.join();
@@ -267,7 +274,7 @@ std::vector<IndexPair> Zelph::Impl::extract_predicate_pairs(const Node predicate
 
 // Phase 2: sort each direction and fill the maps with exact-size
 // vectors. fw is sorted in place (and stays valid for persisting).
-std::shared_ptr<const PredicateIndex> Zelph::Impl::index_from_pairs(std::vector<IndexPair>& fw)
+std::shared_ptr<const PredicateIndex> Zelph::Impl::index_from_pairs(std::vector<IndexPair>& fw, const unsigned threads)
 {
     auto idx = std::make_shared<PredicateIndex>();
 
@@ -308,13 +315,22 @@ std::shared_ptr<const PredicateIndex> Zelph::Impl::index_from_pairs(std::vector<
     };
 
 #ifdef __EMSCRIPTEN__
+    (void)threads;
     fill(bw, idx->backward);
     fill(fw, idx->forward);
 #else
-    std::thread bw_thread([&]
-                          { fill(bw, idx->backward); });
-    fill(fw, idx->forward);
-    bw_thread.join();
+    if (threads > 1)
+    {
+        std::thread bw_thread([&]
+                              { fill(bw, idx->backward); });
+        fill(fw, idx->forward);
+        bw_thread.join();
+    }
+    else
+    {
+        fill(bw, idx->backward);
+        fill(fw, idx->forward);
+    }
 #endif
 
     if (failed.load(std::memory_order_relaxed))
@@ -325,7 +341,7 @@ std::shared_ptr<const PredicateIndex> Zelph::Impl::index_from_pairs(std::vector<
     return idx;
 }
 
-std::shared_ptr<const PredicateIndex> Zelph::Impl::predicate_index(const Node predicate, const adjacency_set* skip, const adjacency_set* skip_composite) const
+std::shared_ptr<const PredicateIndex> Zelph::Impl::predicate_index(const Node predicate, const adjacency_set* skip, const adjacency_set* skip_composite, const unsigned threads) const
 {
     {
         std::shared_lock lock(_pred_idx_mtx);
@@ -335,18 +351,18 @@ std::shared_ptr<const PredicateIndex> Zelph::Impl::predicate_index(const Node pr
 
     std::vector<IndexPair> fw;
 #ifdef __EMSCRIPTEN__
-    fw = extract_predicate_pairs(predicate, skip, skip_composite);
+    fw = extract_predicate_pairs(predicate, skip, skip_composite, threads);
 #else
     bool fresh = false;
 
     if (!try_load_pidx(predicate, fw))
     {
-        fw    = extract_predicate_pairs(predicate, skip, skip_composite);
+        fw    = extract_predicate_pairs(predicate, skip, skip_composite, threads);
         fresh = true;
     }
 #endif
 
-    auto idx = index_from_pairs(fw); // sorts fw in place
+    auto idx = index_from_pairs(fw, threads); // sorts fw in place
 
     emit(io::OutputChannel::Diagnostic,
          "Adjacency index ready: " + std::to_string(fw.size()) + " edges.");

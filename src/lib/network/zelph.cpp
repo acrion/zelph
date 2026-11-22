@@ -24,6 +24,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 */
 
 #include "zelph.hpp"
+#include "concurrency/thread_count.hpp"
 #include "fact_structure.hpp"
 #include "reasoning.hpp"
 #include "string/node_to_string.hpp"
@@ -165,6 +166,7 @@ std::string Zelph::get_version()
 Zelph::Zelph(const io::OutputHandler& output)
     : _pImpl{new Impl(output)}
     , core({_pImpl->create(), _pImpl->create(), _pImpl->create(), _pImpl->create(), _pImpl->create(), _pImpl->create(), _pImpl->create(), _pImpl->create(), _pImpl->create(), _pImpl->create()})
+    , _threads_of_process{concurrency::process_threads().count}
 {
     _pImpl->_core_names = &_core_names_by_node;
     _pImpl->publish_lang(_lang);
@@ -453,7 +455,7 @@ adjacency_set Zelph::transitive_targets(const Node start, const Node predicate, 
         return result;
 
     result.clear();
-    const auto         idx   = _pImpl->predicate_index(predicate, skips.every.get(), skips.composite.get());
+    const auto         idx   = _pImpl->predicate_index(predicate, skips.every.get(), skips.composite.get(), parallel_threads());
     const SkippedSteps steps = bookkeeping ? bookkeeping_steps(this, *bookkeeping, predicate) : SkippedSteps{};
     return bfs_over_index(idx->forward, start, include_start, bookkeeping ? &steps : nullptr, /*forward*/ true);
 }
@@ -518,7 +520,7 @@ adjacency_set Zelph::transitive_sources(const Node target, const Node predicate,
         return result;
 
     result.clear();
-    const auto         idx   = _pImpl->predicate_index(predicate, skips.every.get(), skips.composite.get());
+    const auto         idx   = _pImpl->predicate_index(predicate, skips.every.get(), skips.composite.get(), parallel_threads());
     const SkippedSteps steps = bookkeeping ? bookkeeping_steps(this, *bookkeeping, predicate) : SkippedSteps{};
     return bfs_over_index(idx->backward, target, include_target, bookkeeping ? &steps : nullptr, /*forward*/ false);
 }
@@ -717,6 +719,15 @@ adjacency_set Zelph::get_facts_of_predicate(const Node relation) const
 bool Zelph::has_left_edge(Node b, Node a) const
 {
     return _pImpl->has_left_edge(b, a);
+}
+
+void Zelph::set_threads(const unsigned count)
+{
+    if (count > concurrency::thread_count::max_threads)
+        throw std::invalid_argument("the number of threads is at most " + std::to_string(concurrency::thread_count::max_threads));
+#ifndef __EMSCRIPTEN__
+    _threads = count;
+#endif
 }
 
 bool Zelph::has_right_edge(Node a, Node b) const

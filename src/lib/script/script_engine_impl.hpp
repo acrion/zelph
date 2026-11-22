@@ -551,6 +551,7 @@ namespace zelph
         static Janet janet_cfun_zelph_defeated(int32_t argc, Janet* argv);
         static Janet janet_cfun_zelph_negation_records(int32_t argc, Janet* argv);
         static Janet janet_cfun_zelph_node_map_load_factor(int32_t argc, Janet* argv);
+        static Janet janet_cfun_zelph_threads(int32_t argc, Janet* argv);
         static Janet janet_cfun_zelph_explain(int32_t argc, Janet* argv);
         static void  cluster_preamble(int32_t argc, Janet* argv, const char* name);
         static Janet janet_cfun_zelph_cluster(int32_t argc, Janet* argv);

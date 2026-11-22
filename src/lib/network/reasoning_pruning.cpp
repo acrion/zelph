@@ -1091,8 +1091,9 @@ void Reasoning::prune_nodes(Node pattern, const Node target_var, size_t& removed
 
     // `.parallel` off has to mean single-threaded HERE too, or the setting
     // would be a half-truth and the suite's single-core subcase would not be
-    // one.
-    const size_t pool_workers = use_parallel() ? std::max<size_t>(1, _pool->count()) : 1;
+    // one. The number of workers is the engine's count
+    // (Zelph::parallel_threads).
+    const size_t pool_workers = parallel_threads();
 
     // The FIRST batch spreads over the pool whatever the graph looks like:
     // nothing has been measured yet, and the expensive mistake is the other
@@ -1119,42 +1120,81 @@ void Reasoning::prune_nodes(Node pattern, const Node target_var, size_t& removed
         // and only it prints, which is why no output lock is needed here.
         std::atomic<size_t> examined{0};
 
+        // How far the collection has progressed, stated solely by the
+        // calling thread: as it awaits the pool, and between two victims
+        // where it gathers independently.
+        size_t     reported        = 0;
+        const auto report_examined = [&]
+        {
+            if (!report) return;
+            const size_t seen = examined.load(std::memory_order_relaxed);
+            if (seen >= reported + prune_collect_step)
+            {
+                reported = seen - seen % prune_collect_step;
+                out_stream() << "  " << (base + seen) << " of " << victims.size()
+                             << " node(s) examined" << std::endl;
+            }
+        };
+
+        // With a single worker, the calling thread performs the
+        // collection independently: a pool thread that it would merely
+        // wait for gains nothing, and the pool would need to be
+        // initiated for it.
+        const bool by_itself = workers == 1;
+        if (!by_itself) _pool->start(pool_workers);
+
         for (size_t w = 0; w < workers; ++w)
         {
             const size_t from = base + w * span;
             const size_t to   = std::min(from + span, stop);
             if (from >= to) continue;
 
-            _pool->enqueue([this, from, to, w, &victims, &found, &taken, &examined, &failure, &failure_mtx]()
-                           {
-                               try
-                               {
-                                   for (size_t i = from; i < to; ++i)
-                                   {
-                                       const Node victim = victims[i];
+            auto collect = [this, from, to, w, by_itself, &victims, &found, &taken, &examined, &failure, &failure_mtx, &report_examined]()
+            {
+                try
+                {
+                    for (size_t i = from; i < to; ++i)
+                    {
+                        const Node victim = victims[i];
 
-                                       examined.fetch_add(1, std::memory_order_relaxed);
+                        examined.fetch_add(1, std::memory_order_relaxed);
+                        if (by_itself) report_examined();
 
-                                       // A victim can be part of ANOTHER victim's
-                                       // closure -- "X rel o" binds X to `a` and to
-                                       // `(a p b)` alike. Whoever reaches it first
-                                       // walks it; the second call returns at once.
-                                       if (found[w].count(victim) != 0) continue;
-                                       if (!_pImpl->exists(victim)) continue;
+                        // A victim can be part of ANOTHER victim's
+                        // closure -- "X rel o" binds X to `a` and to
+                        // `(a p b)` alike. Whoever reaches it first
+                        // walks it; the second call returns at once. It
+                        // is still counted as a victim: excluded, the
+                        // two numbers reported by the command varied
+                        // depending on whether one worker held both
+                        // victims, and those values were influenced by
+                        // the number of threads.
+                        if (found[w].count(victim) != 0)
+                        {
+                            ++taken[w];
+                            continue;
+                        }
+                        if (!_pImpl->exists(victim)) continue;
 
-                                       collect_doomed(victim, found[w]);
-                                       ++taken[w];
-                                   }
-                               }
-                               catch (...)
-                               {
-                                   // The pool's worker loop does not catch, and an
-                                   // escaping exception would take the process with
-                                   // it. Kept and rethrown on the calling thread,
-                                   // where the serial version threw.
-                                   const std::lock_guard<std::mutex> guard(failure_mtx);
-                                   if (!failure) failure = std::current_exception();
-                               } });
+                        collect_doomed(victim, found[w]);
+                        ++taken[w];
+                    }
+                }
+                catch (...)
+                {
+                    // The pool's worker loop does not catch, and an
+                    // escaping exception would take the process with
+                    // it. Kept and rethrown on the calling thread,
+                    // where the serial version threw.
+                    const std::lock_guard<std::mutex> guard(failure_mtx);
+                    if (!failure) failure = std::current_exception();
+                }
+            };
+
+            if (by_itself)
+                collect();
+            else
+                _pool->enqueue(std::move(collect));
         }
 
         // ThreadPool::wait() spins on pending_tasks, so waiting here costs the
@@ -1162,19 +1202,9 @@ void Reasoning::prune_nodes(Node pattern, const Node target_var, size_t& removed
         // smaller ones instead, because its size is what bounds the
         // fact-structure cache and what makes the union argument in
         // collect_doomed hold.
-        size_t reported = 0;
         while (_pool->pending_tasks > 0)
         {
-            if (report)
-            {
-                const size_t seen = examined.load(std::memory_order_relaxed);
-                if (seen >= reported + prune_collect_step)
-                {
-                    reported = seen - seen % prune_collect_step;
-                    out_stream() << "  " << (base + seen) << " of " << victims.size()
-                                 << " node(s) examined" << std::endl;
-                }
-            }
+            report_examined();
             std::this_thread::yield();
         }
 
@@ -1209,6 +1239,19 @@ void Reasoning::prune_nodes(Node pattern, const Node target_var, size_t& removed
             victims_taken += taken[w];
         }
 
+        // The union is erased in ascending order of the ids. A union
+        // comprising over 128 nodes iterates according to the order of
+        // insertion, which aligns with the workers and therefore the number of
+        // threads, and the removals leave the adjacency of a surviving node in
+        // an arrangement contingent on their sequence: every subsequent scan
+        // adheres to that order, and the same program printed its deductions
+        // in a different order, some with alternate premises, for each thread
+        // count. A batch of 100,000 victims that take two facts each makes a
+        // union of 300,000 nodes, which requires approximately 16 ms to sort,
+        // compared to 0.29 s for the whole prune of that batch: it is paid so
+        // that a prune leaves the same graph regardless of the number of
+        // threads.
+        doomed.sort();
         remove_doomed(doomed, &named_dead);
 
         // What the pattern NAMED against what came along: a doomed node that

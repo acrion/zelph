@@ -31,7 +31,7 @@ One engine per process. The Janet script engine keeps a process-wide instance po
 
 **`zelph_nn_eval_nodes` is safe to call from any number of threads at once, including while another thread is training the same network.** That guarantee comes from `NeuralNet` itself and is the reason a compiled net can serve a parallel search: the weights are guarded by a sequence lock, so an evaluation overlapping a training step reads again and always observes one whole set of weights, and neither the handle lookup nor the evaluation alters memory accessed by another thread, allowing evaluations to scale with the number of executing threads. `zelph_nn_write_back` is also permissible on any thread: it modifies solely the weights of the net’s own synapses, under the lock of the graph’s weight store, and creates nothing. `zelph_save` reads the weights under the same lock, whereas `zelph_load` replaces the graph without taking it, thus a write-back must not run while the engine’s thread performs the load.
 
-**The graph is tied to the thread responsible for creating the engine.** Any attempt to modify it, run the engine, or alter its state from a different thread results in a `ZELPH_RUNTIME_ERROR`, with `zelph_last_error()` identifying the function and saying "main thread only": `zelph_fact`, `zelph_refute`, `zelph_mention`, `zelph_list`, `zelph_set`, `zelph_collection`, `zelph_negate`, `zelph_variable`, `zelph_clear_variables`, `zelph_rule`, the three run functions, `zelph_set_parallel`, `zelph_query`, the four cluster calls, `zelph_load`, `zelph_save`, `zelph_nn_compile`, and `zelph_nn_connect_layers` – exactly as the corresponding Janet functions are refused on a Janet thread. On a different thread, `zelph_resolve` carries out nothing but a name lookup, and a name lacking a corresponding node is rejected with the message "zelph_resolve: '<name>' has no node, and creating one is main thread only". Reading the graph (`zelph_fact_parts`, `zelph_list_elements`, `zelph_name`, `zelph_sources`, `zelph_targets`, `zelph_exists`) is permitted. `zelph_engine_destroy` cannot reject anything: invoke it on the thread that created the engine.
+**The graph is tied to the thread responsible for creating the engine.** Any attempt to modify it, run the engine, or alter its state from a different thread results in a `ZELPH_RUNTIME_ERROR`, with `zelph_last_error()` identifying the function and saying "main thread only": `zelph_fact`, `zelph_refute`, `zelph_mention`, `zelph_list`, `zelph_set`, `zelph_collection`, `zelph_negate`, `zelph_variable`, `zelph_clear_variables`, `zelph_rule`, the three run functions, `zelph_set_parallel`, `zelph_set_threads`, `zelph_threads`, `zelph_query`, the four cluster calls, `zelph_load`, `zelph_save`, `zelph_nn_compile`, and `zelph_nn_connect_layers` – exactly as the corresponding Janet functions are refused on a Janet thread. On a different thread, `zelph_resolve` carries out nothing but a name lookup, and a name lacking a corresponding node is rejected with the message "zelph_resolve: '<name>' has no node, and creating one is main thread only". Reading the graph (`zelph_fact_parts`, `zelph_list_elements`, `zelph_name`, `zelph_sources`, `zelph_targets`, `zelph_exists`) is permitted. `zelph_engine_destroy` cannot reject anything: invoke it on the thread that created the engine.
 
 ## The graph
 
@@ -211,6 +211,7 @@ The graph is not only a store, and this is the surface a program needs to use ru
 | `zelph_rule(engine, conditions, n, consequences, m, out)` | When every condition holds, deduce every consequence. The consequences correspond to the objects in a single `=>` fact, meaning the rule fires once per binding, and a fresh variable shared by two of them refers to one node. Returns the condition set. A consequence that attempts to record a fact whose predicate is a variable that no condition binds is refused with `ZELPH_RUNTIME_ERROR`, and nothing is written. |
 | `zelph_run` / `zelph_run_once` / `zelph_run_delta` | Forward chaining: to a fixed point, one pass, or seeded by what was created since the previous run. A `=>` fact authored by `zelph_fact` is examined first (refer to `zelph_fact`). |
 | `zelph_set_parallel` | Whether unification may spread a relation's candidates over worker threads. On by default; returns the previous value |
+| `zelph_set_threads(engine, threads, out_previous)` / `zelph_threads(engine, out_threads)` | The number of threads that parallel work can employ: a value ranging from 1 to 1024, or 0 to indicate the process’s count. `out_previous` obtains the value the engine had previously received, 0 when it relied on the process’s count; `zelph_threads` indicates the count currently in use |
 | `zelph_query(engine, pattern, pairs, pair_count, row_sizes, row_count)` | Answer a pattern. The bindings come back flat - `2n` node ids per row, alternating variable and value - with one size per row |
 | `zelph_cluster(engine, name)` | Activate a cluster, or deactivate with a null name. Nodes *created* while one is active are recorded in it. A name beginning with `__` is refused with `ZELPH_INVALID_ARGUMENT`: the engine’s internal scratch clusters are designated with this prefix |
 | `zelph_cluster_active` / `_drop` / `_count` | The active cluster's name; remove everything a cluster recorded and report how many; how large a cluster is |
@@ -251,11 +252,15 @@ Passing a **null** callback is not the quiet option — it means "write to the p
 streams", which is the REPL's behaviour and the loudest one. Keeping `ERROR` matters: a caller
 that silences that too will debug the next failure blind.
 
-`zelph_set_parallel` is a throughput/latency choice and not a semantic one: the derived facts
-are the same either way. Parallelism pays on a large graph and costs on a small one, where
-dispatch dominates the scan it replaces. A caller performing reasoning across numerous small
-fact bases in a loop is precisely the case that wants it off – and the REPL reaches the
-identical switch as `.parallel`.
+`zelph_set_parallel` and `zelph_set_threads` are decisions about throughput, not semantics: the derived facts
+remain unchanged regardless of their values. The switch enables working in parallel at all, and the count
+indicates how many threads are used; the REPL accesses these two via `.parallel` and `.threads`. An engine
+lacking its own count adopts the process’s count: the number specified by the environment variable
+`ZELPH_THREADS`, or otherwise the number of CPUs available to the process (its affinity mask), limited by the
+CPUs permitted by its cgroup quota. Worker threads begin only when the first piece of work is spread over
+them, and a relation containing fewer than 4096 facts is scanned on the calling thread irrespective of the
+count, so a caller performing reasoning across numerous small fact bases in a loop starts no thread and needs
+neither setting.
 
 ## Rust
 

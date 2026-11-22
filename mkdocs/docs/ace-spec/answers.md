@@ -434,8 +434,9 @@ and closures above. Each distinct row becomes one answer line:
   "Which man is rich?" answers `John is rich.`
 - **Empty.** A wh-question without rows prints `No answer.` (without the `Answer: ` prefix; it is no
   ACE and is never re-entered).
-- **Order.** Lines of one question are sorted by their text (parallel unification returns rows
-  unordered); questions answer in sentence order. Each line is one `zelph/out` call.
+- **Order.** Lines of one question are sorted by their text (the engine does not define an
+  order for the rows it returns); questions answer in sentence order. Each line is one
+  `zelph/out` call.
 
 !!! example "Specified session — the behaviour this specification requires, not yet implemented"
 

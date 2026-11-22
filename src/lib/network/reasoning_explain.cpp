@@ -1079,15 +1079,15 @@ namespace zelph::network
             };
 
             // The subsequent match for a level's condition whose premise
-            // holds, along with its associated bindings; 0 if no such
-            // match exists. Unification takes the facts in the sequence
-            // dictated by their ids (Unification::enumerate_by_id). When no
-            // specific order is enforced, it proceeds according to the
-            // sequence in which the facts were inserted into the starting
-            // node, an order that varies across distinct parallel runs,
-            // causing the instantiation the search recorded first -- namely,
-            // the one a proof shows and the step the SCC rule performs -- to
-            // differ between two runs on the same graph. Node ids are content
+            // holds, along with its associated bindings; 0 if no such match
+            // exists. Unification takes the facts in the sequence dictated by
+            // their ids (Unification::enumerate_by_id). When no specific order
+            // is enforced, it proceeds according to the sequence in which the
+            // facts were inserted into the starting node, a sequence
+            // contingent on how the graph was constructed, causing the
+            // instantiation the search recorded first -- namely, the one a
+            // proof shows and the step the SCC rule performs -- to differ
+            // between two sessions on the same graph. Node ids are content
             // hashes, hence their order is the graph's own.
             //
             // Each match is retrieved individually, as the search demands.

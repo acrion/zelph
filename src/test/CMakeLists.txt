@@ -112,6 +112,7 @@ add_executable(zelph_tests
     test_syntax_errors.cpp
     test_symbolic.cpp
     test_symbolic_integers.cpp
+    test_threads.cpp
     test_topoly.cpp
     test_var_closure.cpp
     test_versions.cpp

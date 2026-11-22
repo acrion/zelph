@@ -25,6 +25,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #include "script/command_executor_impl.hpp"
 
+#include "concurrency/thread_count.hpp"
 #include "network/reasoning.hpp"
 #include "script/script_engine.hpp"
 #include "string/string_utils.hpp"
@@ -83,6 +84,58 @@ namespace zelph::console
 
         _n->toggle_parallel();
         _n->out("Parallel processing is now " + std::string(_n->use_parallel() ? "enabled" : "disabled") + ".", true);
+    }
+
+    void CommandExecutor::Impl::cmd_threads(const std::vector<std::string>& cmd)
+    {
+        namespace thread_count = concurrency::thread_count;
+
+        // The count, and its source when the engine lacks its own: the
+        // environment variable, or the information reported by the
+        // platform.
+        const auto status = [this]
+        {
+            std::string text = "Threads: " + std::to_string(_n->threads());
+#ifdef __EMSCRIPTEN__
+            text += " (this build runs on one thread)";
+#else
+            if (_n->threads_setting() == 0)
+            {
+                const concurrency::ProcessThreads& process = concurrency::process_threads();
+                if (process.from_environment)
+                    text += " (ZELPH_THREADS)";
+                else if (process.unusable.empty())
+                    text += " (automatic)";
+                else
+                    text += " (automatic; ZELPH_THREADS is \"" + process.unusable + "\", which is no number from 1 to " + std::to_string(thread_count::max_threads) + ")";
+            }
+            if (!_n->use_parallel()) text += ", unused while parallel processing is disabled (.parallel)";
+#endif
+            return text;
+        };
+
+        if (cmd.size() == 1)
+        {
+            _n->out(status(), true);
+            return;
+        }
+
+        const auto usage = []
+        {
+            return std::runtime_error("Usage: .threads [<count>|auto] -- <count> is a number from 1 to " + std::to_string(thread_count::max_threads)
+                                      + ", the threads that parallel work may use");
+        };
+        if (cmd.size() != 2) throw usage();
+
+        unsigned count = 0; // auto: the count of the process
+        if (cmd[1] != "auto")
+        {
+            const std::optional<unsigned> named = thread_count::named_count(cmd[1]);
+            if (!named) throw usage();
+            count = *named;
+        }
+        _n->set_threads(count);
+        _n->out(status(), true);
     }
 
     void CommandExecutor::Impl::cmd_anchors(const std::vector<std::string>& cmd)

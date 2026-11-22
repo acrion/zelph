@@ -2197,6 +2197,9 @@ TEST_CASE("capi: every call that writes the graph or changes the engine is refus
         refused("zelph_run_delta", zelph_run_delta(engine));
         int32_t previous = -1;
         refused("zelph_set_parallel", zelph_set_parallel(engine, 0, &previous));
+        refused("zelph_set_threads", zelph_set_threads(engine, 2, &previous));
+        int32_t threads = -1;
+        refused("zelph_threads", zelph_threads(engine, &threads));
         size_t pairs = 0;
         size_t rows  = 0;
         refused("zelph_query", zelph_query(engine, condition, nullptr, &pairs, nullptr, &rows));
@@ -3084,6 +3087,53 @@ TEST_CASE("capi: parallel evaluation is reachable and changes no derivation")
     // A null out-parameter is allowed.
     REQUIRE(zelph_set_parallel(engine, 1, nullptr) == ZELPH_OK);
     CHECK(zelph_set_parallel(nullptr, 1, nullptr) == ZELPH_INVALID_ARGUMENT);
+}
+
+// The number of threads was equal to the number of CPUs present in the
+// machine, and nothing a host could change: a host that executes several
+// engines' worth of work on its own threads, or one restricted to just a few
+// CPUs, could only switch the engine's parallel work off entirely.
+TEST_CASE("capi: the number of threads is read and set, and 0 returns to the count of the process")
+{
+    Engine engine;
+
+    int32_t of_process = 0;
+    REQUIRE(zelph_threads(engine, &of_process) == ZELPH_OK);
+    CHECK(of_process >= 1);
+
+    // The prior value is what the engine had received, 0 when it relied on the
+    // count of the process, allowing a caller to restore it.
+    int32_t previous = -1;
+    REQUIRE(zelph_set_threads(engine, 3, &previous) == ZELPH_OK);
+    CHECK(previous == 0);
+    int32_t threads = 0;
+    REQUIRE(zelph_threads(engine, &threads) == ZELPH_OK);
+    CHECK(threads == 3);
+
+    REQUIRE(zelph_set_threads(engine, 5, &previous) == ZELPH_OK);
+    CHECK(previous == 3);
+    REQUIRE(zelph_set_threads(engine, 0, &previous) == ZELPH_OK);
+    CHECK(previous == 5);
+    REQUIRE(zelph_threads(engine, &threads) == ZELPH_OK);
+    CHECK(threads == of_process);
+
+    // What is no count is rejected and alters nothing.
+    REQUIRE(zelph_set_threads(engine, 2, nullptr) == ZELPH_OK);
+    CHECK(zelph_set_threads(engine, -1, &previous) == ZELPH_INVALID_ARGUMENT);
+    CHECK(zelph_set_threads(engine, 1025, &previous) == ZELPH_INVALID_ARGUMENT);
+    CHECK(std::string(zelph_last_error()).find("threads is a number from 1 to 1024") != std::string::npos);
+    REQUIRE(zelph_threads(engine, &threads) == ZELPH_OK);
+    CHECK(threads == 2);
+
+    CHECK(zelph_set_threads(nullptr, 2, nullptr) == ZELPH_INVALID_ARGUMENT);
+    CHECK(zelph_threads(nullptr, &threads) == ZELPH_INVALID_ARGUMENT);
+    CHECK(zelph_threads(engine, nullptr) == ZELPH_INVALID_ARGUMENT);
+
+    // The zelph_set_parallel switch is a configuration in its own right,
+    // distinct from the count: switching it leaves the count unchanged.
+    REQUIRE(zelph_set_parallel(engine, 0, nullptr) == ZELPH_OK);
+    REQUIRE(zelph_threads(engine, &threads) == ZELPH_OK);
+    CHECK(threads == 2);
 }
 
 // ---------------------------------------------------------------------------

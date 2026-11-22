@@ -25,10 +25,12 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #include "script/script_engine_impl.hpp"
 
+#include "concurrency/thread_count.hpp"
 #include "network/reasoning.hpp"
 
 #include <janet.h>
 
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <exception>
@@ -552,6 +554,43 @@ namespace zelph
 
         Janet res = janet_wrap_number(sizing::as_written(s_instance->_n->node_map_load_factor()));
         if (s_instance->_log_janet_functions) s_instance->log_janet_call("zelph/node-map-load-factor", argc, argv, false, res);
+        return res;
+    }
+
+    // The .threads command for a front end that controls zelph via Janet: when
+    // invoked without an argument, it reads the number of threads that
+    // parallel work may use, and when supplied with a whole number or with
+    // :auto, it sets that number as the command does, subsequently returning
+    // it in every case. The argument must be a number, just as the argument
+    // for zelph/node-map-load-factor must be: the string "4" is refused rather
+    // than interpreted.
+    Janet ScriptEngine::Impl::janet_cfun_zelph_threads(int32_t argc, Janet* argv)
+    {
+        namespace thread_count = concurrency::thread_count;
+
+        janet_arity(argc, 0, 1);
+        if (!s_instance) return janet_wrap_nil();
+        if (s_instance->_log_janet_functions) s_instance->log_janet_call("zelph/threads", argc, argv, true);
+
+        require_main_thread("zelph/threads");
+
+        if (argc == 1)
+        {
+            unsigned count = 0; // :auto, the count of the process
+            if (!janet_keyeq(argv[0], "auto"))
+            {
+                const double number = janet_checktype(argv[0], JANET_NUMBER) ? janet_unwrap_number(argv[0]) : 0.0;
+                if (!(number >= 1.0 && number <= thread_count::max_threads) || number != std::floor(number))
+                    janet_panicf("zelph/threads: the argument is a whole number from 1 to %d, the threads that parallel work may use, or :auto, got %v",
+                                 static_cast<int>(thread_count::max_threads),
+                                 argv[0]);
+                count = static_cast<unsigned>(number);
+            }
+            s_instance->_n->set_threads(count);
+        }
+
+        Janet res = janet_wrap_number(s_instance->_n->threads());
+        if (s_instance->_log_janet_functions) s_instance->log_janet_call("zelph/threads", argc, argv, false, res);
         return res;
     }
 

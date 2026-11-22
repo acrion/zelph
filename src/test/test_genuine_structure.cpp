@@ -28,6 +28,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include <algorithm>
 #include <filesystem>
 
+#include "concurrency/thread_count.hpp"
 #include "directory_rewrite.hpp"
 #include "io/output.hpp"
 #include "network/fact_structure.hpp"
@@ -342,6 +343,132 @@ x (a p b) y
     collector.clear();
     interactive.process("A p B");
     CHECK(answers_contain(collector, "a p b"));
+
+    fs::remove(path);
+}
+
+// The scan of a relation's full extent puts each reading of a candidate whose
+// predicate is the relation to a single test (scan_matches_reading in
+// unification.cpp): a reading that hashes back to the candidate is considered
+// matched, while any other keeps the verdict from the test of the candidate's
+// edges that the scan on one thread performed before decoding. These statements
+// make a node whose readings the walk is unable to verify. `(s0 q o)` serves as
+// the subject in `((s0 q o) t u)`, and `(h1 (s0 q o) h2)` uses it as a
+// predicate and is itself an object of a statement that functions as a
+// predicate, leaving the walk incapable of naming that user's predicate: it
+// reads the user as one additional object of `(s0 q o)`. No reading of
+// `(s0 q o)` then hashes back, the walk retains all of them, and one of them
+// has `((s0 q o) t u)` as its predicate. The walk reads every node in a network
+// read back from a file, and every node once a prune has disarmed the stores.
+// Matched solely by its predicate, that reading responded to `X R Y` with
+// `s0 ((s0 q o) t u) o`, and a rule over `((s0 q o) t u)` derived `s0 saw o`.
+namespace
+{
+    const char* const unverified_reading_shape = R"(
+s0 q o
+(s0 q o) t u
+a ((s0 q o) t u) b
+h1 (s0 q o) h2
+z1 z2 (h1 (s0 q o) h2)
+k1 (z1 z2 (h1 (s0 q o) h2)) k2
+)";
+
+    // The prune removes a statement unrelated to the shape: what matters is
+    // that it disarms the stores.
+    const char* const disarming_prune = "zz nothing yy\n.prune-facts zz nothing yy\n";
+} // namespace
+
+TEST_CASE("save/load: a scan does not match a reading of a node that names a relation whose subject the node is")
+{
+    using namespace zelph::test;
+    namespace fs = std::filesystem;
+
+    const auto path = fs::temp_directory_path() / "zelph_unverified_reading.bin";
+    {
+        zelph::io::OutputCollector  collector;
+        zelph::console::Interactive interactive(collector.sink());
+        process_lines(interactive, unverified_reading_shape);
+        interactive.process(".save \"" + path.string() + "\"");
+    }
+
+    run_both_modes([&](auto& collector, auto& interactive)
+                   {
+        SUBCASE("read back from a file") { interactive.process(".load \"" + path.string() + "\""); }
+        SUBCASE("after a prune that disarms the stores")
+        {
+            process_lines(interactive, std::string(unverified_reading_shape) + disarming_prune);
+            REQUIRE_FALSE(interactive.graph()->fact_stores_enabled());
+        }
+
+        // A variable relation scans each relation on the asking thread. The
+        // fact `a ((s0 q o) t u) b` shows how the relation appears when
+        // printed; no answer can assign it the subject s0.
+        collector.clear();
+        interactive.process("X R Y");
+        const std::vector<std::string> answers = collect_answers(collector);
+        CHECK(std::ranges::any_of(answers, [](const std::string& answer)
+                                  { return answer.starts_with("a (("); }));
+        CHECK_FALSE(std::ranges::any_of(answers, [](const std::string& answer)
+                                        { return answer.starts_with("s0 (("); }));
+
+        interactive.process("(X ((s0 q o) t u) Y) => (X saw Y)");
+        interactive.run(true, false, false);
+        collector.clear();
+        interactive.process("X saw Y");
+        CHECK(collect_answers(collector) == std::vector<std::string>{"a saw b"}); });
+
+    fs::remove(path);
+}
+
+// The identical shape within a relation sufficiently extensive that its scan
+// is spread over the pool: the scan's tasks subject each reading to the same
+// test. They never applied the test associated with the edges, and with them
+// the rule derived `s0 saw o`.
+TEST_CASE("save/load: a scan spread over the pool does not match a reading of a node that names a relation whose subject the node is" * doctest::test_suite("slow"))
+{
+    using namespace zelph::test;
+    namespace fs            = std::filesystem;
+    const std::size_t facts = zelph::concurrency::thread_count::parallel_scan_min_facts;
+
+    const auto path = fs::temp_directory_path() / "zelph_unverified_reading_pool.bin";
+    {
+        zelph::io::OutputCollector  collector;
+        zelph::console::Interactive interactive(collector.sink());
+        process_lines(interactive, unverified_reading_shape);
+        interactive.process(".save \"" + path.string() + "\"");
+    }
+
+    bool from_file = false;
+    SUBCASE("read back from a file") { from_file = true; }
+    SUBCASE("after a prune that disarms the stores") {}
+
+    const auto derived = [&](const char* setting, const char* expected_launch)
+    {
+        zelph::io::OutputCollector  collector;
+        zelph::console::Interactive interactive(collector.sink());
+        interactive.process(setting);
+        if (from_file)
+            interactive.process(".load \"" + path.string() + "\""); // a load switches auto-run off autonomously
+        else
+            process_lines(interactive, std::string(unverified_reading_shape) + disarming_prune + ".auto-run");
+        interactive.process(R"(%(let [r (zelph/fact (zelph/fact "s0" "q" "o") "t" "u")] (for i 0 )" + std::to_string(facts)
+                            + R"( (zelph/fact (string "a" i) r (string "b" i)))))");
+        interactive.process("(X ((s0 q o) t u) Y) => (X saw Y)");
+        collector.clear();
+        interactive.run(true, false, false);
+        CHECK(any_event_contains(collector, expected_launch));
+        collector.clear();
+        interactive.process("X saw Y");
+        std::vector<std::string> answers = collect_answers(collector);
+        std::ranges::sort(answers);
+        return answers;
+    };
+
+    const std::vector<std::string> on_pool = derived(".threads 4", "Parallel unifications activated for 1 distinct fixed relations.");
+    CHECK(on_pool.size() == facts + 1);
+    CHECK_FALSE(std::ranges::any_of(on_pool, [](const std::string& answer)
+                                    { return answer.starts_with("s0 "); }));
+    CHECK(derived(".parallel", "Parallel unifications activated for 0 distinct fixed relations.") == on_pool);
 
     fs::remove(path);
 }

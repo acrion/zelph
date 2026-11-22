@@ -1146,7 +1146,7 @@ is sound in its current form: it is deferred until all potential divisors have b
 
 Two boundaries are worth knowing:
 
-- **Rules that negate what they help derive.** If the conclusions of a rule, through supplementary rules, can generate a fact that the rule’s own negation tests – `(A p A, ¬(A q A)) => (A r A)` together with `(A r A) => (A q A)` – the program fails to have any stratified reading. These rules operate at the same level and alternate as previously outlined. This method remains sound only when every negation is settled by facts obtained during the identical positive saturation phase, which is precisely how the identity fallback in the [simplifier](math/symbolic.md) is built; otherwise, the result depends on the order of evaluation, and with `.parallel`, this sequence can differ between runs. Contradiction rules (conclusion `!`) stay fully safe: they derive no facts at all.
+- **Rules that negate what they help derive.** If the conclusions of a rule, through supplementary rules, can generate a fact that the rule’s own negation tests – `(A p A, ¬(A q A)) => (A r A)` together with `(A r A) => (A q A)` – the program fails to have any stratified reading. These rules operate at the same level and alternate as previously outlined. This method remains sound only when every negation is settled by facts obtained during the identical positive saturation phase, which is precisely how the identity fallback in the [simplifier](math/symbolic.md) is built; otherwise, the result depends on the order of evaluation. Contradiction rules (conclusion `!`) stay fully safe: they derive no facts at all.
 
 - **Stratification arranges _derived_ facts, not your input.** Negation is evaluated during each run, based on the asserted facts currently present. Should a negated pattern need to be blocked by base facts, assert those facts _prior_ to the triggering fact. In a typed or piped session, and in a script specified via the command line, inference runs after each statement; a module imported using `.import` executes just once, following complete reading, meaning the sequence within a module does not matter.
 
@@ -1265,7 +1265,7 @@ With only one value `v`, the binding `X = v, Y = v` is blocked by `!=`, so the r
 zelph> a prop v1
 (a has_pair v v1) ⇐ {(a prop v) (v1 != v) (a prop v1)}
 zelph> a prop v2
-(a has_pair v v2) ⇐ {(a prop v2) (v != v2) (a prop v)}
+(a has_pair v v2) ⇐ {(a prop v) (v2 != v) (a prop v2)}
 (a has_pair v1 v2) ⇐ {(a prop v2) (v1 != v2) (a prop v1)}
 ```
 
@@ -1280,7 +1280,7 @@ zelph> (P is functional, A P X, A P Y, X != Y) => !
 zelph> date_of_birth is functional
 zelph> alice date_of_birth 1990
 zelph> alice date_of_birth 1991
-! ⇐ {(alice date_of_birth 1990) (alice date_of_birth 1991) (date_of_birth is functional) (1991 != 1990)}
+! ⇐ {(alice date_of_birth 1991) (alice date_of_birth 1990) (date_of_birth is functional) (1990 != 1991)}
 Found one or more contradictions!
 ```
 
@@ -1362,7 +1362,7 @@ zelph> a prop v1
 zelph> a prop v2
 zelph> (A prop X, A prop Y, X != Y) => (A ~ several)
 ((X != Y), (A prop Y), (A prop X)) => (A ~ several)
-(a ~ several) ⇐ {(v2 != v1) (a prop v1) (a prop v2)}
+(a ~ several) ⇐ {(v1 != v2) (a prop v2) (a prop v1)}
 zelph> (A prop X, ¬(A ~ several)) => (X ~ sole)
 (¬(A ~ several), (A prop X)) => (X ~ sole)
 (w ~ sole) ⇐ {(¬(b ~ several)) (b prop w)}
@@ -1381,8 +1381,8 @@ zelph> bob born &1960
 zelph> carol born &1960
 zelph> (X born A, Y born B, A zelph:lt B) => (X "born before" Y)
 ((A zelph:lt B), (Y born B), (X born A)) => (X "born before" Y)
-(alice "born before" bob) ⇐ {(&1950 zelph:lt &1960) (bob born &1960) (alice born &1950)}
 (alice "born before" carol) ⇐ {(&1950 zelph:lt &1960) (carol born &1960) (alice born &1950)}
+(alice "born before" bob) ⇐ {(&1950 zelph:lt &1960) (bob born &1960) (alice born &1950)}
 zelph> .explain alice "born before" bob
 alice "born before" bob
    ├─ alice born &1950  [axiom]
@@ -1390,8 +1390,8 @@ alice "born before" bob
    └─ &1950 zelph:lt &1960  [compared]
 zelph> X born A, A zelph:ge &1955
 A zelph:ge &1955, X born A
-Answer: &1960 zelph:ge &1955, bob born &1960
 Answer: &1960 zelph:ge &1955, carol born &1960
+Answer: &1960 zelph:ge &1955, bob born &1960
 ```
 
 The deduction line names the comparison under its bindings, much like it names a `!=` guard. `.explain` marks it `[compared]` instead of `[axiom]`, because it does not read a fact: the engine performed the comparison between the two numbers.
@@ -1455,8 +1455,8 @@ zelph> e value alice
 zelph> f value (pos zint &7)
 zelph> (X value A, Y value B, A zelph:eq B, X != Y) => (X "same value as" Y)
 ((X != Y), (X value A), (A zelph:eq B), (Y value B)) => (X "same value as" Y)
-(f "same value as" a) ⇐ {(f != a) (f value (pos zint &7)) ((pos zint &7) zelph:eq <007>) (a value <007>)}
 (f "same value as" b) ⇐ {(f != b) (f value (pos zint &7)) ((pos zint &7) zelph:eq &7) (b value &7)}
+(f "same value as" a) ⇐ {(f != a) (f value (pos zint &7)) ((pos zint &7) zelph:eq <007>) (a value <007>)}
 (b "same value as" f) ⇐ {(b != f) (b value &7) (&7 zelph:eq (pos zint &7)) (f value (pos zint &7))}
 (b "same value as" a) ⇐ {(b != a) (b value &7) (&7 zelph:eq <007>) (a value <007>)}
 (a "same value as" f) ⇐ {(a != f) (a value <007>) (<007> zelph:eq (pos zint &7)) (f value (pos zint &7))}
@@ -1621,7 +1621,7 @@ with the caveat that quantification ranges over the current fact base (closed-wo
 
 ### Existential Quantification
 
-Fresh variables (those present solely in the consequence) represent constructive existential quantification, assessed in the manner of the _restricted chase_ when handling existential rules: a new node is created only if no assignment of the fresh variables already makes the consequence hold (refer to [Fresh Variables](#fresh-variables-generative-rules)). Thus, the witness does not constitute a Skolem term of the condition variables: an existing node may serve as its substitute, and the order in which matches are examined not only determines which node that is but also whether a new node is created at all. With `.parallel`, this sequence differs across executions, meaning two runs on identical input may derive distinct facts (see [Deduction Output Modes](rules.md#deduction-output-modes)). In contrast, a collection constructed by a consequence is a Skolem term: its node is determined by the collection written in the rule and by the binding of the consequence’s variables, so a firing under the same binding will locate it again, and no alternative node can substitute for it.
+Fresh variables (those present solely in the consequence) represent constructive existential quantification, assessed in the manner of the _restricted chase_ when handling existential rules: a new node is created only if no assignment of the fresh variables already makes the consequence hold (refer to [Fresh Variables](#fresh-variables-generative-rules)). Thus, the witness does not constitute a Skolem term of the condition variables: an existing node may serve as its substitute, and the order in which matches are examined not only determines which node that is but also whether a new node is created at all. This sequence remains consistent across every run of the same input, even though a different evaluation strategy or a different ordering of the input lines might produce a different one (see [Deduction Output Modes](rules.md#deduction-output-modes)). In contrast, a collection constructed by a consequence is a Skolem term: its node is determined by the collection written in the rule and by the binding of the consequence’s variables, so a firing under the same binding will locate it again, and no alternative node can substitute for it.
 
 ### Conjunction
 

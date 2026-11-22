@@ -182,6 +182,7 @@ namespace zelph::console
         void cmd_log_janet(const std::vector<std::string>& cmd);
         void cmd_prof(const std::vector<std::string>& cmd);
         void cmd_parallel(const std::vector<std::string>& cmd);
+        void cmd_threads(const std::vector<std::string>& cmd);
         void cmd_anchors(const std::vector<std::string>& cmd);
         void cmd_semi_naive(const std::vector<std::string>& cmd);
         void cmd_fact_stores(const std::vector<std::string>& cmd);

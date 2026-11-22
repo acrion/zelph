@@ -139,24 +139,18 @@ TEST_CASE("run-export: a set among the conditions gives its members as premises"
         CHECK(premises.find("\"names\":{\"zelph\":\"n3\"}") != std::string::npos); });
 }
 
-TEST_CASE("run-export: the conclusions of a run are stable, and with .parallel off the whole file repeats")
+TEST_CASE("run-export: two runs of the same input write the same file")
 {
-    // Across the chain a..g, the fact (a before g) can be derived from
-    // (a before c) and (c before g), or from (a before e) and (e before g),
-    // and similarly for other intermediate steps, all in one run. Only the
-    // first derivation of a given fact is written, and when .parallel is
-    // active, the thread that reaches the conclusion first varies between
-    // runs: the premises associated with a record differ, yet the set of
-    // conclusions remains unchanged. The file rules.md asserts this
-    // behaviour for every program without rules that are not stratifiable
-    // and without a fresh variable, including this one, and promises that
-    // with .parallel off, two runs write the same file -- which is what
-    // this case pins.
-    //
-    // Only the conclusions are subjected to comparison under .parallel.
-    // The derivation that prevails there depends on timing, so asserting
-    // the premises DIFFER would effectively test the scheduler, and
-    // would fail whenever it happens to repeat itself.
+    // Across the chain a..g, the fact (a before g) can be derived from (a
+    // before c) and (c before g), or from (a before e) and (e before g), and
+    // similarly for other intermediate steps, all in one run. Only the first
+    // derivation of a given fact is written, and which derivation that is is
+    // independent of the run: rules.md promises that two runs of the same
+    // input write the same file, which is what this case pins, with .parallel
+    // off and with the default configuration. While the scan of a relation
+    // handed its matches on in the order in which its threads happened to end,
+    // the premises of a record varied across runs under the default setting,
+    // and only the set of conclusions remained consistent.
     auto export_chain = [](bool parallel, const std::string& file_name)
     {
         const std::filesystem::path out = std::filesystem::temp_directory_path() / file_name;
@@ -208,14 +202,15 @@ f before g
         return conclusions;
     };
 
-    SUBCASE("parallel: the same conclusions, whatever premises they name")
+    SUBCASE("the default setting: byte-identical files, the ones .parallel off writes")
     {
-        const auto first  = sorted_conclusions(export_chain(true, "zelph_test_export_stable_par1.jsonl"));
-        const auto second = sorted_conclusions(export_chain(true, "zelph_test_export_stable_par2.jsonl"));
+        const auto first  = export_chain(true, "zelph_test_export_stable_par1.jsonl");
+        const auto second = export_chain(true, "zelph_test_export_stable_par2.jsonl");
         // A chain composed of seven elements contains 21 ordered pairs, six
         // of which are specified.
-        CHECK(first.size() == 15);
+        CHECK(sorted_conclusions(first).size() == 15);
         CHECK(first == second);
+        CHECK(first == export_chain(false, "zelph_test_export_stable_par3.jsonl"));
     }
     SUBCASE(".parallel off: byte-identical files")
     {

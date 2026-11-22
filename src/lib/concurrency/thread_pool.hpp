@@ -26,6 +26,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #pragma once
 
 #include <atomic>
+#include <cstddef>
 #include <functional>
 
 #ifndef __EMSCRIPTEN__
@@ -33,6 +34,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
     #include <mutex>
     #include <queue>
     #include <thread>
+    #include <vector>
 #endif
 
 namespace zelph::concurrency
@@ -48,7 +50,7 @@ namespace zelph::concurrency
     class ThreadPool
     {
     public:
-        explicit ThreadPool(size_t /*num_threads*/) {}
+        void start(size_t /*num_threads*/) {}
 
         void enqueue(std::function<void()> task)
         {
@@ -62,9 +64,9 @@ namespace zelph::concurrency
             task();
         }
 
-        size_t count()
+        size_t count() const
         {
-            return 1; // one execution lane; callers may partition work by this
+            return 0; // no worker ever runs here
         }
 
         void wait()
@@ -75,11 +77,33 @@ namespace zelph::concurrency
         std::atomic<size_t> pending_tasks{0};
     };
 #else
+    // A pool possesses no thread until start() is called for its first launch:
+    // an engine that never spreads work over threads then costs none, and that
+    // is every engine within a small session, a test case, and a `.new`.
     class ThreadPool
     {
     public:
-        explicit ThreadPool(size_t num_threads)
+        ThreadPool()                             = default;
+        ThreadPool(const ThreadPool&)            = delete;
+        ThreadPool& operator=(const ThreadPool&) = delete;
+
+        ~ThreadPool()
         {
+            stop_workers();
+        }
+
+        // Executed before handing off the tasks of a launch: initiates
+        // `num_threads` workers, or replaces those currently running if their
+        // count differs, once the tasks still pending have ended. A scan's
+        // last task signals the end of the scan before its worker counts the
+        // task as completed, so a launch that immediately follows the scan may
+        // discover that task still pending; kept instead, the old workers ran
+        // that launch.
+        void start(const size_t num_threads)
+        {
+            if (workers.size() == num_threads) return;
+            wait();
+            stop_workers();
             for (size_t i = 0; i < num_threads; ++i)
             {
                 workers.emplace_back(
@@ -104,21 +128,22 @@ namespace zelph::concurrency
             }
         }
 
-        ~ThreadPool()
-        {
-            {
-                std::unique_lock<std::mutex> lock(queue_mutex);
-                stop = true;
-            }
-            condition.notify_all();
-            for (auto& worker : workers)
-            {
-                if (worker.joinable()) worker.join();
-            }
-        }
-
         void enqueue(std::function<void()> task)
         {
+            // Without a worker, nobody would ever take the task: it
+            // runs here, just as it does within the WebAssembly build.
+            if (workers.empty())
+            {
+                struct FlagGuard
+                {
+                    bool previous{tl_is_pool_worker};
+                    FlagGuard() { tl_is_pool_worker = true; }
+                    ~FlagGuard() { tl_is_pool_worker = previous; }
+                } guard;
+
+                task();
+                return;
+            }
             {
                 std::unique_lock<std::mutex> lock(queue_mutex);
                 tasks.emplace(std::move(task));
@@ -127,7 +152,8 @@ namespace zelph::concurrency
             condition.notify_one();
         }
 
-        size_t count()
+        // The workers that run: none before the first start().
+        size_t count() const
         {
             return workers.size();
         }
@@ -143,6 +169,21 @@ namespace zelph::concurrency
         std::atomic<size_t> pending_tasks{0};
 
     private:
+        void stop_workers()
+        {
+            {
+                std::unique_lock<std::mutex> lock(queue_mutex);
+                stop = true;
+            }
+            condition.notify_all();
+            for (auto& worker : workers)
+            {
+                if (worker.joinable()) worker.join();
+            }
+            workers.clear();
+            stop = false;
+        }
+
         std::vector<std::thread>          workers;
         std::queue<std::function<void()>> tasks;
         std::mutex                        queue_mutex;

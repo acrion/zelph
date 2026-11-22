@@ -363,8 +363,9 @@ namespace zelph::network
         bool                    _snapshot_prefiltered{false}; // snapshot provably contains no
                                                               // facts that use the relation as
                                                               // their SUBJECT (anchored/partial
-                                                              // paths); the per-fact
-                                                              // has_left_edge skip in the scan
-                                                              // loop is redundant then
+                                                              // paths); examining a reading's
+                                                              // edges in the scan loop
+                                                              // (scan_matches_reading) is
+                                                              // redundant then
     };
 }

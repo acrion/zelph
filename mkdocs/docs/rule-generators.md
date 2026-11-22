@@ -189,8 +189,8 @@ zelph> t go k
 zelph> u go m
 zelph> (G go H) => ((X G Y) => (Y in @{H}))
 (G go H) => ((X G Y) => (Y in @{Y H}))
-((X u Y) => (Y in @{m Y})) ⇐ (u go m)
 ((X t Y) => (Y in @{k Y})) ⇐ (t go k)
+((X u Y) => (Y in @{m Y})) ⇐ (u go m)
 zelph> a t bug1
 (bug1 in @{k bug1}) ⇐ (a t bug1)
 zelph> b u bug2
@@ -211,8 +211,8 @@ zelph> S in O
 Answer: e in @{e}
 zelph> a p b
 zelph+> S in O
-Answer: d in @{d e}
 Answer: e in @{d e}
+Answer: d in @{d e}
 zelph> c q O
 Answer: c q @{d e}
 ```

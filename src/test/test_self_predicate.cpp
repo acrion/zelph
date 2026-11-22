@@ -42,7 +42,10 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include "io/output.hpp"
 #include "network/zelph.hpp"
 
+#include <algorithm>
 #include <filesystem>
+#include <string>
+#include <vector>
 
 using namespace zelph::test;
 using namespace zelph::network;
@@ -148,6 +151,52 @@ TEST_CASE("self-predicate: a fact whose subject is its predicate stays queryable
         collector.clear();
         interactive.process(".list-predicate-usage");
         CHECK(any_output_contains(collector, "p 1")); });
+}
+
+// The scan of a relation's entire extent examined each candidate's edges
+// before decoding the candidate: whether the relation points back at it,
+// whether it possesses more than one outgoing edge, and whether it hashes back
+// as `p p O` with every node that only points at it taken as an object. A
+// statement that uses the fact as its predicate is such a node. Thus, once one
+// statement held `p p q` and another utilized it as a predicate, the scan on
+// one thread lost the fact, whereas the scan that is spread over the pool,
+// which never performed that test, found it: `.parallel` changed an answer.
+// The scan now decodes every candidate first, and a reading that hashes back
+// to the candidate, like the reading of `p p q`, is matched without performing
+// the edge test (scan_matches_reading in unification.cpp).
+//
+// Only the scan of the whole relation is held here. The lookups originating
+// from a bound subject or object (`p p O`, `S p q`), the climb from a concrete
+// part of a partially bound pattern (climb_partial_anchor in unification.cpp)
+// and the count of `.list-predicate-usage` apply the same edge test under
+// their respective locks and still result in the loss of the fact in this
+// state.
+TEST_CASE("self-predicate: a scan finds a fact whose subject is its predicate when one statement holds it and another uses it as a predicate")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+a p b
+p p q
+x (p p q) y
+(p p q) noted yes
+)");
+
+        collector.clear();
+        interactive.process("S p O");
+        std::vector<std::string> answers = collect_answers(collector);
+        std::sort(answers.begin(), answers.end());
+        CHECK(answers == std::vector<std::string>{"a p b", "p p q"});
+
+        // A rule whose condition performs a scan on the relation triggers in
+        // response to the fact.
+        interactive.process("(S p O) => (S seen O)");
+        interactive.run(true, false, false);
+        collector.clear();
+        interactive.process("S seen O");
+        answers = collect_answers(collector);
+        std::sort(answers.begin(), answers.end());
+        CHECK(answers == std::vector<std::string>{"a seen b", "p seen q"}); });
 }
 
 TEST_CASE("self-predicate: a rule fires on a subject == predicate fact")

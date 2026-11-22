@@ -27,6 +27,7 @@ use crate::Node;
 
 use std::ffi::{c_char, c_void, CStr, CString};
 use std::marker::PhantomData;
+use std::num::NonZeroUsize;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::Path;
 use std::ptr;
@@ -673,16 +674,45 @@ impl Engine {
     /// worker threads. On by default; returns what it was.
     ///
     /// A throughput/latency trade rather than a semantic one - the derived
-    /// facts are the same either way. Parallelism pays on a large graph and
-    /// costs on a small one, where dispatch dominates the scan it replaces.
-    /// A caller reasoning about many small fact bases in a loop is exactly the
-    /// case that wants it off.
+    /// facts are the same either way. A relation containing fewer than 4096
+    /// facts is scanned on the calling thread in any case, so a caller
+    /// reasoning about many small fact bases in a loop starts no worker thread
+    /// and has no reason to disable the switch.
     pub fn set_parallel(&self, enabled: bool) -> Result<bool> {
         let mut previous: i32 = 0;
         check(unsafe {
             zelph_sys::zelph_set_parallel(self.raw, i32::from(enabled), &mut previous)
         })?;
         Ok(previous != 0)
+    }
+
+    /// Sets the number of threads that the engine's parallel work may use: the
+    /// scan of a relation spread over worker threads, the build of the index
+    /// behind a path condition, and the reading half of a bulk removal. `None`
+    /// denotes the count of the process: the number specified by the
+    /// environment variable `ZELPH_THREADS`, or otherwise the CPUs available
+    /// to the process, capped by its cgroup quota. Returns the value
+    /// previously assigned to the engine, enabling the caller to restore it.
+    ///
+    /// A count exceeding 1024 is refused. [`Engine::set_parallel`] grants the
+    /// permission to work in parallel: as long as it is disabled, a single
+    /// thread performs all work, regardless of the count.
+    pub fn set_threads(&self, threads: Option<NonZeroUsize>) -> Result<Option<NonZeroUsize>> {
+        let wanted = match threads {
+            None => 0,
+            Some(count) => i32::try_from(count.get()).unwrap_or(i32::MAX),
+        };
+        let mut previous: i32 = 0;
+        check(unsafe { zelph_sys::zelph_set_threads(self.raw, wanted, &mut previous) })?;
+        Ok(usize::try_from(previous).ok().and_then(NonZeroUsize::new))
+    }
+
+    /// The number of threads in use: the count provided by
+    /// [`Engine::set_threads`], or the count of the process.
+    pub fn threads(&self) -> Result<usize> {
+        let mut threads: i32 = 0;
+        check(unsafe { zelph_sys::zelph_threads(self.raw, &mut threads) })?;
+        Ok(usize::try_from(threads).unwrap_or(1))
     }
 
     /// Reasoning seeded by what was created since the prior run, meaning that

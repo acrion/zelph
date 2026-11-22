@@ -963,6 +963,62 @@ s q d
         CHECK(node_count(collector, interactive) == before); });
 }
 
+// An object merged into the predicate of its fact turns `a r b` into a
+// statement whose predicate is also its object, which fact() refuses to write.
+// The walk offers no reading of it that hashes back: it does not count the
+// predicate among a reading's objects, and its one reading is `a r a`. The
+// scan of `r` gives such a reading the verdict of the test of the candidate's
+// edges, which excludes it, since `r` refers back to the statement via its
+// object. Matched by its predicate alone, as the scan that is spread over the
+// pool once did, `X r Y` answered `a r a` (printed `:r a`) and a rule over `r`
+// derived `a saw a`.
+TEST_CASE("name merge: an object merged into the predicate of its fact leaves no reading for a scan of the predicate")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+a r b
+c r d
+.name b r
+)");
+
+        collector.clear();
+        interactive.process("X r Y");
+        CHECK(collect_answers(collector) == std::vector<std::string>{"c r d"});
+
+        interactive.process("(X r Y) => (X saw Y)");
+        interactive.run(true, false, false);
+        collector.clear();
+        interactive.process("X saw Y");
+        CHECK(collect_answers(collector) == std::vector<std::string>{"c saw d"}); });
+}
+
+// A merge can also make the single statement of this kind that possesses a
+// reading: `r r b` with `b` merged into `r` results in `r r r`, which the walk
+// reads exactly as it is (printed `:r r`), and that reading hashes back, so a
+// scan of `r` matches it. While a statement holds the fact, the test of the
+// candidate's edges that the scan on one thread previously applied before
+// decoding excluded it, since its hash had no object left by which to tell `r r
+// r`: `X r Y` answered the fact over the pool, and on one thread only as long
+// as nothing held it.
+TEST_CASE("name merge: a fact merged into `r r r` is found by a scan of the predicate while a statement holds it")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        process_lines(interactive, R"(
+r r b
+(r r b) note ok
+c r d
+.name b r
+)");
+
+        CHECK(sorted_answers(collector, interactive, "X r Y") == std::vector<std::string>{":r r", "c r d"});
+
+        interactive.process("(X r Y) => (X seen Y)");
+        interactive.run(true, false, false);
+        CHECK(sorted_answers(collector, interactive, "X seen Y") == std::vector<std::string>{":seen r", "c seen d"}); });
+}
+
 TEST_CASE("name merge: a fact that becomes an existing one folds into it")
 {
     // Two statements that were different become the SAME statement. One node

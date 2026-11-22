@@ -232,11 +232,11 @@ zelph> y in @{a b}
 y in @{a b y}
 zelph> S in O
 Answer: a in @{a b y}
-Answer: x in @{a b x}
-Answer: y in @{a b y}
-Answer: b in @{a b y}
 Answer: a in @{a b x}
+Answer: y in @{a b y}
+Answer: x in @{a b x}
 Answer: b in @{a b x}
+Answer: b in @{a b y}
 ```
 
 `a` and `b` appear twice because each literal built its own container and put
@@ -257,9 +257,9 @@ Answer: bug1 in @{bug1 bug2}
 Answer: bug2 in @{bug1 bug2}
 ```
 
-(Which of the two deductions appears initially depends on the execution –
-along with the member that the initial deduction reveals – and so does the
-sequence of the responses; refer to [Querying](queries.md#key-features).)
+(The order of the two deductions, and with it the member that the first
+deduction reveals, holds no meaning, and neither does the order of the
+answers; refer to [Querying](queries.md#key-features).)
 
 That container is not the collection written in the rule, though, but instead a node constructed by the rule for it: the collection’s **term**, a single node into which every firing of the rule writes. The rule names its own collection, the facts it derives name the term, and whatever the rule derives never ends up within the rule’s own collection. The rule thus continues to assert the same content, regardless of how much the term has gathered:
 
@@ -282,8 +282,8 @@ zelph> (X reported Y) => (Y in @{bug1 bug2})
 (bug3 in @{bug3 bug1 bug2}) ⇐ (alice reported bug3)
 zelph> S in O
 Answer: bug3 in @{bug3 bug1 bug2}
-Answer: bug1 in @{bug3 bug1 bug2}
 Answer: bug2 in @{bug3 bug1 bug2}
+Answer: bug1 in @{bug3 bug1 bug2}
 ```
 
 A membership written within another statement, like `(X p Y) => ((Y in @{X}) is noted)`, writes into the term in the same way, because a statement also asserts the facts nested in it, except when situated inside a rule (see [Parentheses: Nested Facts](#parentheses-nested-facts)).

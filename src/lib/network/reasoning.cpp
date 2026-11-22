@@ -51,7 +51,7 @@ using namespace zelph::network;
 
 Reasoning::Reasoning(const io::OutputHandler& output)
     : Zelph{output}
-    , _pool{std::make_unique<concurrency::ThreadPool>(std::thread::hardware_concurrency())}
+    , _pool{std::make_unique<concurrency::ThreadPool>()}
     , _prof{this}
     , _seminaive_check{default_seminaive_check()}
 {
@@ -709,8 +709,11 @@ void Reasoning::run(const bool print_deductions, const bool export_derivations, 
         _export = std::make_unique<io::DerivationExport>(std::filesystem::path(_export_file), this);
     }
 
+    // The number of threads this run's parallel processing may use, which
+    // equals 1 when `.parallel` is off. The pool initializes its threads
+    // upon receiving the first scan, meaning a run might have none.
     if (!silent)
-        diagnostic("Starting reasoning with " + std::to_string(_pool->count()) + " worker threads.");
+        diagnostic("Starting reasoning with " + std::to_string(parallel_threads()) + (parallel_threads() == 1 ? " worker thread." : " worker threads."));
 
     // Once per run, for each evaluation strategy listed below: a run
     // creates no name, hence no comparison node emerges during its
@@ -782,12 +785,11 @@ void Reasoning::run(const bool print_deductions, const bool export_derivations, 
         // negation is settled by facts that the same positive saturation
         // derives, a principle explicitly justified in symbolic-core's header
         // regarding the identity fallback. Otherwise, the outcome risks
-        // depending on the order in which the rule's instances are evaluated,
-        // and under .parallel, this sequence can differ between runs; a
-        // program that is locally stratified likewise receives no such
-        // guarantee. Check mode reports a fact once its negated condition has
-        // become true; it does not see a choice between two outcomes that are
-        // both logically consistent.
+        // depending on the order in which the rule's instances are
+        // evaluated; a program that is locally stratified likewise receives
+        // no such guarantee. Check mode reports a fact once its negated
+        // condition has become true; it does not see a choice between two
+        // outcomes that are both logically consistent.
         int iteration = 0;
 
         // A rule can DERIVE another rule, and the schedule outlined below is

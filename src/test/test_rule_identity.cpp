@@ -2254,8 +2254,8 @@ TEST_CASE("rule identity: a rule that a rule writes is read as a term")
             interactive.process(".list-rules");
             return listed_rules(collector);
         };
-        // Sorted: in parallel mode, the order of the answers varies across
-        // runs.
+        // Sorted: what is compared is the answers, not the sequence in which
+        // they appear.
         const auto answers = [&](const std::string& query)
         {
             interactive.run(true, false, false);
@@ -2414,8 +2414,8 @@ TEST_CASE("rule identity: a rule that a condition names or quotes is read as a t
             interactive.process(".list-rules");
             return listed_rules(collector);
         };
-        // Sorted: in parallel mode, the order of the answers varies across
-        // runs.
+        // Sorted: what is compared is the answers, not the sequence in which
+        // they appear.
         const auto answers = [&](const std::string& query)
         {
             interactive.run(true, false, false);
@@ -2551,8 +2551,8 @@ TEST_CASE("rule identity: the members of a set of conditions in a term are read 
             interactive.process(".list-rules");
             return listed_rules(collector);
         };
-        // Sorted: in parallel mode, the order of the answers varies across
-        // runs.
+        // Sorted: what is compared is the answers, not the sequence in which
+        // they appear.
         const auto answers = [&](const std::string& query)
         {
             interactive.run(true, false, false);
@@ -2695,8 +2695,8 @@ TEST_CASE("rule identity: a rule's own set of conditions is a term, and so are i
             interactive.process(".list-rules");
             return listed_rules(collector);
         };
-        // Sorted: in parallel mode, the order of the answers varies across
-        // runs.
+        // Sorted: what is compared is the answers, not the sequence in which
+        // they appear.
         const auto answers = [&](const std::string& query)
         {
             interactive.run(true, false, false);
@@ -3105,8 +3105,8 @@ TEST_CASE("rule identity: a set of one condition at a rule's own subject is that
             interactive.process(".list-rules");
             return listed_rules(collector);
         };
-        // Sorted: in parallel mode, the order of the answers varies across
-        // runs.
+        // Sorted: what is compared is the answers, not the sequence in which
+        // they appear.
         const auto answers = [&](const std::string& query)
         {
             interactive.run(true, false, false);
@@ -3906,8 +3906,8 @@ TEST_CASE("rule identity: a named set constant over a rule's own collection is t
             interactive.process(".list-rules");
             return listed_rules(collector);
         };
-        // Sorted: in parallel mode, the order of the answers varies across
-        // runs.
+        // Sorted: what is compared is the answers, not the sequence in which
+        // they appear.
         const auto answers = [&](const std::string& query)
         {
             interactive.run(true, false, false);

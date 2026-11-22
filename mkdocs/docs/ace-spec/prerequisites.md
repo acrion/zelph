@@ -367,7 +367,7 @@ Reasoning complete. Total unification matches processed: 1. Total contradictions
 Found one or more contradictions!
 Warning: Additional reasoning iterations are required, but have been suppressed.
 Reasoning summary: 1 matches processed, 1 contradictions found.
-Parallel unifications activated for 1 distinct fixed relations.
+Parallel unifications activated for 0 distinct fixed relations.
 Reasoning complete in 0h0m0.000s – 1 matches processed, 1 contradictions found.
 Ready.
 zelph-> .run-once
@@ -377,7 +377,7 @@ Starting reasoning with 24 worker threads.
 Reasoning complete. Total unification matches processed: 1. Total contradictions found: 0 (1 already recorded in this network).
 Warning: Additional reasoning iterations are required, but have been suppressed.
 Reasoning summary: 1 matches processed, 0 contradictions found (1 already recorded in this network).
-Parallel unifications activated for 1 distinct fixed relations.
+Parallel unifications activated for 0 distinct fixed relations.
 Reasoning complete in 0h0m0.000s – 1 matches processed, 0 contradictions found (1 already recorded in this network).
 Ready.
 zelph-> .run-once
@@ -387,7 +387,7 @@ Starting reasoning with 24 worker threads.
 Reasoning complete. Total unification matches processed: 1. Total contradictions found: 0 (1 already recorded in this network).
 Warning: Additional reasoning iterations are required, but have been suppressed.
 Reasoning summary: 1 matches processed, 0 contradictions found (1 already recorded in this network).
-Parallel unifications activated for 1 distinct fixed relations.
+Parallel unifications activated for 0 distinct fixed relations.
 Reasoning complete in 0h0m0.000s – 1 matches processed, 0 contradictions found (1 already recorded in this network).
 Ready.
 zelph-> S ok O
@@ -480,7 +480,7 @@ Deduction printing mode: off
 zelph-> %(for i 0 20 (zelph/fact (string "i" i) "~" "man"))
 zelph-> (X ~ man) => (X ~ mortal)
 zelph-> .run
-Starting reasoning with 24 worker threads.
+Starting reasoning with 1 worker thread.
 Reasoning complete. Total unification matches processed: 20. Total contradictions found: 0.
 Note: 20 deductions were hidden.
 Reasoning summary: 20 matches processed, 0 contradictions found.
@@ -489,7 +489,7 @@ Reasoning complete in 0h0m0.000s – 20 matches processed, 0 contradictions foun
 Ready.
 zelph+-> (X ~ mortal) => (X ~ fallible)
 zelph+-> .run-delta
-Starting reasoning with 24 worker threads.
+Starting reasoning with 1 worker thread.
 Reasoning complete. Total unification matches processed: 20. Total contradictions found: 0.
 Note: 20 deductions were hidden.
 Reasoning summary: 20 matches processed, 0 contradictions found.
@@ -499,7 +499,7 @@ Ready.
 zelph+-> ((X ~ man), ¬(X waits nil)) => (X ~ impatient)
 zelph+-> .run-delta
 Incremental run not applicable (no previous run, bulk load, changed rule set, or non-semi-naive strategy) - running a full pass.
-Starting reasoning with 24 worker threads.
+Starting reasoning with 1 worker thread.
 Reasoning complete. Total unification matches processed: 80. Total contradictions found: 0.
 Note: 20 deductions were hidden.
 Reasoning summary: 80 matches processed, 0 contradictions found.
@@ -509,7 +509,7 @@ Ready.
 zelph+-> (X ~ fallible) => (X ~ human)
 zelph+-> .run-delta
 Incremental run not applicable (no previous run, bulk load, changed rule set, or non-semi-naive strategy) - running a full pass.
-Starting reasoning with 24 worker threads.
+Starting reasoning with 1 worker thread.
 Reasoning complete. Total unification matches processed: 80. Total contradictions found: 0.
 Note: 20 deductions were hidden.
 Reasoning summary: 80 matches processed, 0 contradictions found.
@@ -518,7 +518,7 @@ Reasoning complete in 0h0m0.000s – 80 matches processed, 0 contradictions foun
 Ready.
 zelph+-> bob ~ man
 zelph+-> .run-delta
-Starting reasoning with 24 worker threads.
+Starting reasoning with 1 worker thread.
 Reasoning complete. Total unification matches processed: 4. Total contradictions found: 0.
 Note: 4 deductions were hidden.
 Reasoning summary: 4 matches processed, 0 contradictions found.

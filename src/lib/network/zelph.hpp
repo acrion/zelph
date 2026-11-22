@@ -773,6 +773,24 @@ namespace zelph::network
         bool              use_parallel() const { return _use_parallel; }
         void              toggle_parallel() { _use_parallel = !_use_parallel; }
 
+        // The number of threads this engine employs for parallel operations:
+        // the scan of a relation spread over the pool, the build of a
+        // predicate index, and the gathering phase of a prune. It is the count
+        // given to set_threads, and otherwise the count of the process
+        // (concurrency::process_threads). `.parallel` is the authorization to
+        // perform work in parallel at all, a switch independent of the count:
+        // while it is off, parallel_threads() returns 1 regardless of what the
+        // count says.
+        unsigned threads() const { return _threads != 0 ? _threads : _threads_of_process; }
+        unsigned parallel_threads() const { return _use_parallel ? threads() : 1U; }
+        // The count this engine has been given, and 0 when it relies on the
+        // process's count, to which set_threads(0) returns. A count
+        // exceeding concurrency::thread_count::max_threads is refused
+        // (std::invalid_argument). The WebAssembly build runs on one thread
+        // and keeps no count.
+        unsigned threads_setting() const { return _threads; }
+        void     set_threads(unsigned count);
+
         // Anchor-based candidate lookups of the unification engine
         // (subject/object-driven snapshots, the exact probe of a condition
         // bound throughout, grounded-subject anchoring, partial-pattern
@@ -1721,6 +1739,8 @@ namespace zelph::network
         std::unordered_map<network::Node, std::string> _core_names_by_node;
         std::unordered_map<std::string, network::Node> _core_names_by_name;
         bool                                           _use_parallel{true};
+        unsigned                                       _threads{0};
+        const unsigned                                 _threads_of_process;
         bool                                           _use_anchors{true};
         mutable std::atomic<bool>                      _fs_cache_suspended{false};
         mutable std::atomic<uint64_t>                  _fs_cache_hits{0};

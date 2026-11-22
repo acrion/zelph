@@ -25,6 +25,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #include "test_helpers.hpp"
 
+#include "concurrency/thread_count.hpp"
 #include "io/output.hpp"
 #include "network/reasoning.hpp"
 #include "network/zelph.hpp"
@@ -426,19 +427,19 @@ TEST_CASE(".deductions: the mode is reported by name, and an unknown one is refu
                              std::runtime_error); });
 }
 
-TEST_CASE(".deductions all: with .parallel off, two runs print the same lines in the same order")
+TEST_CASE(".deductions all: two runs print the same lines in the same order")
 {
     // A fact that a run can attain through multiple paths is printed only
-    // once, accompanied by the premises from the derivation that produced
-    // it. With .parallel enabled, this is whichever thread arrived first,
-    // causing the premises following the arrow and the order of lines to
-    // differ across runs of the same input; rules.md ("Deduction Output
-    // Modes") states this explicitly and promises that with .parallel
-    // disabled, such variation does not occur. This case pins that
-    // guarantee. The default setting of .parallel is deliberately not
-    // compared: it recurs frequently enough that examining its variation
-    // would merely assess the scheduler's behaviour.
-    auto deduction_lines = []()
+    // once, accompanied by the premises from the derivation that produced it,
+    // which is the first such derivation the run encounters. The specific
+    // derivation that is selected does not vary with the run: two runs of
+    // identical input print the same lines in the same sequence, whether
+    // .parallel is off or the default setting is used, as rules.md
+    // ("Deduction Output Modes") specifies. While the scan of a relation
+    // handed its matches on in the order in which its threads happened to end,
+    // the premises after the arrow and the order of the lines varied across
+    // runs under the default setting, for this particular program.
+    auto deduction_lines = [](const bool parallel)
     {
         std::vector<std::string> lines;
         // Only one session at a time: launching a second live
@@ -446,7 +447,7 @@ TEST_CASE(".deductions all: with .parallel off, two runs print the same lines in
         // script engine with the first.
         zelph::io::OutputCollector  collector;
         zelph::console::Interactive interactive(collector.sink());
-        interactive.process(".parallel");
+        if (!parallel) interactive.process(".parallel");
         interactive.process(".semi-naive check");
         interactive.process(".deductions all");
         interactive.process(".auto-run");
@@ -466,12 +467,14 @@ f before g
         return lines;
     };
 
-    const auto first  = deduction_lines();
-    const auto second = deduction_lines();
+    const auto first  = deduction_lines(false);
+    const auto second = deduction_lines(false);
     // A chain consisting of seven elements contains 21 ordered pairs, six
     // of which are provided.
     CHECK(first.size() == 15);
     CHECK(first == second);
+    for (int run = 0; run < 3; ++run)
+        CHECK(deduction_lines(true) == first);
 }
 
 TEST_CASE(".deductions off: nothing is printed however long the session has been idle" * doctest::test_suite("slow"))
@@ -760,7 +763,7 @@ TEST_CASE("help: the option that makes a setting a default is named in the overv
     const std::set<std::string> of_the_session = listed_between("What belongs to the session stays:", " keep their mode");
     CHECK(of_the_session == std::set<std::string>{".auto-run", ".deductions", ".timer"});
     in_the_help.insert(of_the_session.begin(), of_the_session.end());
-    CHECK(of_the_list.size() == 14);
+    CHECK(of_the_list.size() == 15);
     CHECK(in_the_help == of_the_list);
 }
 
@@ -1394,23 +1397,42 @@ TEST_CASE("commands: the parallel-unification summary counts what it claims")
     //
     // Not run_both_modes: the number is a statement ABOUT the parallel path,
     // so the mode is the subject of the test rather than something it should
-    // be invariant under. All three cases below are the default (parallel)
-    // engine except the last, which turns it off.
+    // be invariant under. All four cases below are the default (parallel)
+    // engine except the last, which turns it off. The count is set, ensuring
+    // the cases also execute when the process operates with a single thread.
     const std::string unbound_rule = R"(
 a p b
 c p d
 (X p Y) => (X q Y)
 )";
 
-    SUBCASE("both sides unbound: the snapshot path is taken and counted")
+    SUBCASE("both sides unbound over a large relation: the snapshot path is taken and counted")
     {
         zelph::io::OutputCollector  collector;
         zelph::console::Interactive interactive(collector.sink());
+        interactive.process(".threads 2");
+        interactive.process(".auto-run");
+        interactive.process("%(for i 0 " + std::to_string(zelph::concurrency::thread_count::parallel_scan_min_facts) + R"( (zelph/fact (string "a" i) "p" (string "b" i))))");
         process_lines(interactive, unbound_rule);
 
         collector.clear();
         interactive.run(true, false, false);
         CHECK(any_event_contains(collector, "Parallel unifications activated for 1"));
+    }
+
+    SUBCASE("both sides unbound over a small relation: scanned on the asking thread")
+    {
+        // The two facts of the rule above alone: no thread is awakened in
+        // response to them (see "threads: a relation below the launch
+        // threshold ...").
+        zelph::io::OutputCollector  collector;
+        zelph::console::Interactive interactive(collector.sink());
+        interactive.process(".threads 2");
+        process_lines(interactive, unbound_rule);
+
+        collector.clear();
+        interactive.run(true, false, false);
+        CHECK(any_event_contains(collector, "Parallel unifications activated for 0"));
     }
 
     SUBCASE("a bound side keeps the snapshot path out of it")

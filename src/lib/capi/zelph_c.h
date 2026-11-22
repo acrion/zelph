@@ -60,6 +60,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
  * thread only": zelph_fact, zelph_refute, zelph_mention, zelph_list, zelph_set,
  * zelph_collection, zelph_negate, zelph_variable, zelph_clear_variables, zelph_rule,
  * zelph_run, zelph_run_once, zelph_run_delta, zelph_set_parallel,
+ * zelph_set_threads, zelph_threads,
  * zelph_query, the four zelph_cluster calls, zelph_load, zelph_save,
  * zelph_nn_compile, and zelph_nn_connect_layers -- exactly as their
  * equivalent Janet functions are refused on a Janet thread. On a different
@@ -431,14 +432,38 @@ extern "C"
        not reach it at all.
 
        It is a throughput/latency trade, not a correctness one: the derived
-       facts are the same either way. Parallelism pays on a large graph and
-       costs on a small one, where dispatch dominates the scan it replaces.
-       A caller reasoning about many small fact bases in a loop - which is
-       what `run_delta` and clusters are for - is exactly the case that wants
-       it off.
+       facts are the same either way. A relation containing fewer than 4096
+       facts is scanned on the calling thread in any case, so a caller
+       reasoning about many small fact bases in a loop - which is what
+       `run_delta` and clusters are for - starts no worker thread and has no
+       reason to switch it off.
 
        `enabled` is 0 or 1; `out_previous` may be null. */
     ZELPH_EXPORT int32_t zelph_set_parallel(zelph_engine* engine, int32_t enabled, int32_t* out_previous);
+
+    /* The number of threads that the engine's parallel work may use: the
+       scan of a relation that is spread over worker threads, the build of
+       the index behind a path condition, and the reading half of a bulk
+       removal. The REPL sets this value using `.threads`.
+
+       `threads` is a value ranging from 1 to 1024, or 0 to denote the count
+       of the process: the figure named by the environment variable
+       ZELPH_THREADS, otherwise the CPUs on which the process is permitted to
+       execute (its affinity mask), limited by the CPUs granted by its cgroup
+       quota, and no less than 1. `out_previous` can be null and receives
+       what the engine was previously supplied with, 0 when it relied on the
+       count of the process, so that a caller may restore it.
+
+       zelph_set_parallel grants the permission to work in parallel at all:
+       as long as it is disabled, a single thread handles all tasks,
+       regardless of the count. Worker threads start with the initial segment
+       of work spread over them, and a relation containing fewer than 4096
+       facts is scanned on the calling thread, irrespective of the count.
+
+       zelph_threads reports the count in use: the one given, or the count
+       of the process. */
+    ZELPH_EXPORT int32_t zelph_set_threads(zelph_engine* engine, int32_t threads, int32_t* out_previous);
+    ZELPH_EXPORT int32_t zelph_threads(zelph_engine* engine, int32_t* out_threads);
 
     /* Answer a query pattern - a fact containing variables.
      *

@@ -343,8 +343,9 @@ The following is a complete session log of `stdlib/examples/neural/nn-wikidata-d
 > The training is seeded, so the counts and the loss come out identical on
 > every run and on every machine – that is what makes the figures quotable. The
 > five rows printed under each of the two totals are a **sample** of the 99 and
-> the 42, and which five they are depends on the run: the reasoner is parallel,
-> and a set has no first element.
+> the 42: the first five entries returned by the query. Two runs return the
+> same five, yet their sequence holds no significance, as a set has no first
+> element.
 
 ```text
 $ zelph < demo.zph
@@ -363,8 +364,8 @@ Loading: left chunks=27, right chunks=27, nameOfNode chunks=13, nodeOfName chunk
 .............
 String pool size after load: 11423140
 Network loaded.
- Time needed for loading/importing: 0h0m46.977s
--- 46.977 s --
+ Time needed for loading/importing: 0h0m22.006s
+-- 22.006 s --
 zelph-> wikidata-> Importing file /media/stefan/data/Documents/git/my-projects/acrion/zelph-rdf/build-release/bin/stdlib/nn.zph...
 wikidata-> Importing file /media/stefan/data/Documents/git/my-projects/acrion/zelph-rdf/build-release/bin/stdlib/examples/neural/nn-wikidata-demo.zph...
 Active cluster: nn-demo
@@ -527,21 +528,21 @@ Q12536 (Abbasid Caliphate):
 Reasoning complete. Total unification matches processed: 1074. Total contradictions found: 0.
 Reasoning summary: 1074 matches processed, 0 contradictions found.
 Parallel unifications activated for 0 distinct fixed relations.
-Reasoning complete in 0h0m0.139s – 1074 matches processed, 0 contradictions found.
+Reasoning complete in 0h0m0.127s – 1074 matches processed, 0 contradictions found.
 Ready.
--- 204 ms --
+-- 199 ms --
 P30-verified facts: 99
-  Q203493 (Kingdom of Romania) -> Q46  conf=1.000
   Q7313 (Yuan dynasty) -> Q48  conf=0.981
+  Q203493 (Kingdom of Romania) -> Q46  conf=1.000
+  Q1470101 (Q1470101) -> Q46  conf=1.000
   Q8733 (Q8733) -> Q48  conf=0.982
   Q107258515 (Pahlavi Iran) -> Q48  conf=0.999
-  Q193152 (Great Moravia) -> Q46  conf=1.000
 P30-candidate facts: 42
   Q85804030 (Sultanate of Tarim) -> Q46  conf=0.527
   Q134302030 (Fetu kingdom) -> Q46  conf=0.527
   Q5362837 (Emirate of Jabal Shammar) -> Q46  conf=0.527
   Q332005 (Principality of Achaea) -> Q46  conf=0.527
-  Q113411770 (Grand Duchy of Yaroslavl) -> Q46  conf=0.527
+  Q977566 (sub-Roman Britain) -> Q46  conf=0.527
 Q183 not in the country set of this dump (pruning artifact); skipping Q183 checks
 wikidata->
 ```

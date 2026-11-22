@@ -16,6 +16,14 @@ incorporates, and start no session. Like the option above they are read ahead
 of a script's name only: behind the name both words are arguments of the
 script.
 
+The environment variable ``ZELPH_THREADS`` names the number of threads of the
+process, which an engine uses until ``.threads`` gives it a count of its own;
+without the variable the count is read from the CPUs the process may run on.
+The doctest suite pins what an engine does with its count. Only a real process
+can show where the count of a process comes from, since it is read once: the
+cases below start the binary with the variable set, unset and unusable, and
+with its affinity mask narrowed to one CPU.
+
 Every case starts the binary with its arguments, pipes the lines of the case
 into it unless the case names a script, and holds the status and the output to
 what the case says.
@@ -47,11 +55,17 @@ VERSION_REPORT = "zelph incorporates the following third-party software:"
 RAN = '%(zelph/out "the script ran")\n'
 ARGUMENTS = '%(zelph/out (string "arguments: " (string/join (dyn :args) " ")))\n'
 
-# Each case: a name, arguments positioned before a script, the lines of
-# the session (provided via piping or written into a script when
-# `as_script` is set), arguments located after the script, the anticipated
-# status, the phrases that must appear in the output, and the phrases that
-# must not appear in the output.
+THREADS = "Threads: "
+SHOW_THREADS = ".threads\n"
+
+# Each case: a name, arguments positioned before a script, the lines of the
+# session (provided via piping or written into a script when `as_script` is
+# set), arguments located after the script, the anticipated status, the phrases
+# that must appear in the output, and the phrases that must not appear in the
+# output. A case may set environment variables for its process (`env`;
+# ZELPH_THREADS remains unset otherwise) and narrow the affinity mask of its
+# process to that many CPUs (`cpus`; such a case is omitted when the platform
+# is unable to perform that).
 CASES = [
     {
         "name": "without the option the default is 0.8",
@@ -247,6 +261,75 @@ CASES = [
         "holds": ["arguments: --version"],
         "lacks": [VERSION_REPORT],
     },
+    {
+        "name": "ZELPH_THREADS names the count of the process",
+        "before": [],
+        "env": {"ZELPH_THREADS": "3"},
+        "lines": SHOW_THREADS,
+        "status": 0,
+        "holds": [THREADS + "3 (ZELPH_THREADS)"],
+    },
+    {
+        # The command gives the engine a count of its own, and `auto`
+        # restores the count to that of the process, which is the
+        # variable's.
+        "name": ".threads overrides ZELPH_THREADS, and auto returns to it",
+        "before": [],
+        "env": {"ZELPH_THREADS": "3"},
+        "lines": ".threads 5\n" + SHOW_THREADS + ".threads auto\n",
+        "status": 0,
+        "holds": [THREADS + "5\n", THREADS + "3 (ZELPH_THREADS)"],
+    },
+    {
+        "name": "a default line sets the count of every engine, over ZELPH_THREADS",
+        "before": [OPTION, ".threads 2"],
+        "env": {"ZELPH_THREADS": "6"},
+        "lines": SHOW_THREADS + ".new\n" + SHOW_THREADS,
+        "status": 0,
+        "count": (THREADS + "2\n", 2),
+        "lacks": ["ZELPH_THREADS"],
+    },
+    {
+        # A value that names no count remains unused, and the command
+        # displaying the count indicates this: otherwise, a typing
+        # error in the variable might be mistaken for the intended
+        # count.
+        "name": "a ZELPH_THREADS that names no count is not used, and .threads says so",
+        "before": [],
+        "env": {"ZELPH_THREADS": "many"},
+        "lines": SHOW_THREADS,
+        "status": 0,
+        "holds": ['(automatic; ZELPH_THREADS is "many", which is no number from 1 to 1024)'],
+    },
+    {
+        "name": "ZELPH_THREADS=0 names no count",
+        "before": [],
+        "env": {"ZELPH_THREADS": "0"},
+        "lines": SHOW_THREADS,
+        "status": 0,
+        "holds": ['(automatic; ZELPH_THREADS is "0", which is no number from 1 to 1024)'],
+    },
+    {
+        "name": "ZELPH_THREADS=auto is the automatic count",
+        "before": [],
+        "env": {"ZELPH_THREADS": "auto"},
+        "lines": SHOW_THREADS,
+        "status": 0,
+        "holds": ["(automatic)"],
+        "lacks": ["ZELPH_THREADS"],
+    },
+    {
+        # The pool took as many threads as the machine possesses CPUs, even
+        # in cases where the process was confined to a smaller number. With
+        # one CPU, the count remains 1 regardless of what a cgroup quota
+        # says, and a run names it.
+        "name": "without the variable the count is that of the affinity mask",
+        "before": [],
+        "cpus": 1,
+        "lines": SHOW_THREADS + ".run\n",
+        "status": 0,
+        "holds": [THREADS + "1 (automatic)", "Starting reasoning with 1 worker thread."],
+    },
 ]
 
 
@@ -255,11 +338,16 @@ def fail(message):
     sys.exit(2)
 
 
-def run(command, stdin_path):
+def run(command, stdin_path, env, cpus):
+    narrow = None
+    if cpus is not None:
+        allowed = sorted(os.sched_getaffinity(0))[:cpus]
+        narrow = lambda: os.sched_setaffinity(0, allowed)
     try:
         with open(stdin_path, "rb") as piped:
             done = subprocess.run(command, stdin=piped, capture_output=True, check=False,
-                                  encoding="utf-8", errors="replace", timeout=120)
+                                  encoding="utf-8", errors="replace", timeout=120,
+                                  env=env, preexec_fn=narrow)
     except (OSError, subprocess.TimeoutExpired) as exc:
         fail(f"cannot run {command[0]}: {exc}")
     return done.returncode, (done.stdout or "") + (done.stderr or "")
@@ -277,8 +365,10 @@ def main():
     # rlwrap would re-execute the process; a pipe prevents this action, and the
     # variable maintains this state when a test runner passes a terminal.
     os.environ["ZELPH_NO_RLWRAP"] = "1"
+    os.environ.pop("ZELPH_THREADS", None)
 
     violations = []
+    asked = 0
 
     with tempfile.TemporaryDirectory(prefix="zelph_options_") as directory:
         script = os.path.join(directory, "case.zph")
@@ -288,15 +378,20 @@ def main():
 
         for case in CASES:
             name = case["name"]
+            cpus = case.get("cpus")
+            if cpus is not None and not hasattr(os, "sched_setaffinity"):
+                continue
+            asked += 1
             with open(script, "w", encoding="utf-8") as handle:
                 handle.write(case["lines"])
+            env = dict(os.environ, **case.get("env", {}))
 
             command = [args.binary] + case["before"]
             if case.get("as_script"):
                 command += [script] + case.get("after", [])
-                status, output = run(command, nothing)
+                status, output = run(command, nothing, env, cpus)
             else:
-                status, output = run(command, script)
+                status, output = run(command, script, env, cpus)
             output = output.replace("\r\n", "\n")
 
             if status != case["status"]:
@@ -317,7 +412,7 @@ def main():
             print(f"error: {violation}", file=sys.stderr)
         return 1
 
-    print(f"{len(CASES)} cases: the binary reads its options as documented.")
+    print(f"{asked} cases: the binary reads its options as documented.")
     return 0
 
 

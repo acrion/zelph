@@ -602,6 +602,32 @@ fn a_rule_derives_what_forward_chaining_makes_of_it() {
     assert!(z.exists(plato, is_a, &[mortal]).unwrap());
 }
 
+// The number of threads corresponded to the number of the machine's CPUs
+// and nothing that a host could set: this is the binding of `.threads`.
+#[test]
+fn the_number_of_threads_is_read_and_set() {
+    let _guard = engine_lock();
+    let z = silent_engine();
+
+    let of_process = z.threads().unwrap();
+    assert!(of_process >= 1);
+
+    // What returns is what the engine had been supplied, `None` during its use
+    // of the count of the process, so that a caller can restore it.
+    let three = std::num::NonZeroUsize::new(3);
+    assert_eq!(z.set_threads(three).unwrap(), None);
+    assert_eq!(z.threads().unwrap(), 3);
+    assert_eq!(z.set_threads(None).unwrap(), three);
+    assert_eq!(z.threads().unwrap(), of_process);
+
+    // A value exceeding what the engine takes is rejected and results in no
+    // change.
+    z.set_threads(three).unwrap();
+    assert!(z.set_threads(std::num::NonZeroUsize::new(1025)).is_err());
+    assert!(z.set_threads(std::num::NonZeroUsize::new(usize::MAX)).is_err());
+    assert_eq!(z.threads().unwrap(), 3);
+}
+
 #[test]
 fn a_rules_condition_set_takes_no_further_condition() {
     let _guard = engine_lock();

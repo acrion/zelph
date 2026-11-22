@@ -171,10 +171,9 @@ namespace zelph::network
 
         static adjacency_set                         fact_objects_of(const adjacency_set& rel_left, const adjacency_set& rel_right);
         static bool                                  is_fact_subject(const Node rel, const Node predicate, const Node cand, const adjacency_set& rel_left, const adjacency_set& rel_right, const adjacency_set& objects);
-        static unsigned int                          index_build_threads();
-        std::vector<IndexPair>                       extract_predicate_pairs(const Node predicate, const adjacency_set* skip, const adjacency_set* skip_composite) const;
-        static std::shared_ptr<const PredicateIndex> index_from_pairs(std::vector<IndexPair>& fw);
-        std::shared_ptr<const PredicateIndex>        predicate_index(const Node predicate, const adjacency_set* skip, const adjacency_set* skip_composite) const;
+        std::vector<IndexPair>                       extract_predicate_pairs(const Node predicate, const adjacency_set* skip, const adjacency_set* skip_composite, unsigned threads) const;
+        static std::shared_ptr<const PredicateIndex> index_from_pairs(std::vector<IndexPair>& fw, unsigned threads);
+        std::shared_ptr<const PredicateIndex>        predicate_index(const Node predicate, const adjacency_set* skip, const adjacency_set* skip_composite, unsigned threads) const;
         bool                                         try_indexed_fact_lookup(Node predicate, Node node, bool forward, adjacency_set& out) const;
         void                                         invalidate_predicate_index() const noexcept;
         void                                         invalidate_relation_type_set() const;

@@ -378,7 +378,7 @@ TEST_CASE("defaults: only a setting command of the list can be a default")
         for (const std::string& line : lines)
         {
             CAPTURE(line);
-            CHECK_THROWS_WITH_AS(interactive.add_default(line), doctest::Contains("a default is one of the settings .lang, .parallel, .anchors,"), std::invalid_argument);
+            CHECK_THROWS_WITH_AS(interactive.add_default(line), doctest::Contains("a default is one of the settings .lang, .parallel, .threads, .anchors,"), std::invalid_argument);
         }
         CHECK_FALSE(fs::exists(unwritten));
         fs::remove(unwritten);
@@ -403,7 +403,7 @@ TEST_CASE("defaults: only a setting command of the list can be a default")
     // The list itself: each of its commands is accepted, either with the value
     // it sets or, when used as a toggle, alone, and the refusal of any other
     // line names each. Each line gets a session of its own, sequentially.
-    for (const char* line : {".lang de", ".parallel", ".anchors off", ".semi-naive off", ".fact-stores off", ".contradiction-records off", ".negation-records on", ".explain-budget 5", ".node-map-load-factor 0.9", ".log 1", ".log-janet", ".auto-run", ".deductions off", ".timer on"})
+    for (const char* line : {".lang de", ".parallel", ".threads 3", ".anchors off", ".semi-naive off", ".fact-stores off", ".contradiction-records off", ".negation-records on", ".explain-budget 5", ".node-map-load-factor 0.9", ".log 1", ".log-janet", ".auto-run", ".deductions off", ".timer on"})
     {
         CAPTURE(line);
         zelph::io::OutputCollector  own_collector;
