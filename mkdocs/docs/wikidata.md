@@ -27,6 +27,8 @@ This fundamental similarity enables zelph to:
 
 This structural compatibility makes zelph well suited to analysing and enriching Wikidata’s knowledge graph while maintaining its semantic integrity.
 
+The networks constructed by the importer today encompass merely a part of what Wikidata says about its properties. The importer preserves statements whose value is an item, and the value of a statement like "subproperty of" or "inverse property" is a property; consequently, the property hierarchy and inverse relations are absent from these networks. The [RDF term mapping](rdf-spec/wikidata-mapping.md) specifies their import.
+
 This extends to Wikidata’s **statement layer**: qualifiers may be imported as reified statement structures and queried natively or through [SPARQL](sparql.md) – refer to [Wikidata Qualifiers](qualifiers.md).
 
 If you came here for the class hierarchy specifically — disjointness violations, which `P279` statement to change, and doing it without a 210 GB machine — start at [Working on the Wikidata Class Hierarchy](class-hierarchy.md).
@@ -37,7 +39,7 @@ If you came here for the class hierarchy specifically — disjointness violation
 
 Wikidata is large: the compressed JSON dump `wikidata-20260309-all.json.bz2` is about 100 GB in size, and the fully serialised zelph network is about 88 GB on disk.
 
-zelph is capable of importing the **entire** Wikidata graph into memory, which enables non-iterative, whole-graph contradiction detection. After processing, the complete semantic network can be serialised to disk in a compact binary format for much faster future loading.
+zelph is capable of importing the **entire** graph of Wikidata’s item-valued statements into memory, which enables non-iterative, whole-graph contradiction detection. After processing, the complete semantic network can be serialised to disk in a compact binary format for much faster future loading.
 
 Loading the full graph for active reasoning still requires substantial memory. In practice, **256 GB of RAM is recommended** for smooth full-scale work with the complete Wikidata dump. Systems with **128 GB of RAM** may still process the graph by relying heavily on swap and ZRAM, but performance can degrade significantly.
 

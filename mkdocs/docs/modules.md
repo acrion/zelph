@@ -8,7 +8,7 @@ zelph allows nodes to have names in multiple languages. This feature is particul
 .lang zelph
 ```
 
-This capability is fully utilized in the Wikidata integration, where node names include both human-readable labels and Wikidata identifiers. An item in zelph can be assigned names in any number of languages, with Wikidata IDs being handled as a specific language ("wikidata").
+This capability is fully utilized in the Wikidata integration, where node names include both human-readable labels and Wikidata identifiers. An item in zelph can be assigned names in any number of languages, with Wikidata IDs being handled as a specific language ("wikidata"). The way RDF terms connect to names and naming languages is specified in [Labels, Names and Languages](rdf-spec/names.md): IRIs serving as names within their own language, labels accompanied by a language tag as names in that language, and the fallback behaviour of a lookup when a language lacks a name.
 
 A `.lang` placed within a module, a script brought in via `.import` or `zelph/import`, applies exclusively to the module’s own lines. Upon completion of the import, the importer’s language is restored, even if the module halted due to an error, and a nested import gives the surrounding module its own language back in the same way. A module can thus name its vocabulary in a fixed language without moving the session into it.
 

@@ -120,6 +120,27 @@ nav:
       - Tests and Quality Gates: ace-spec/tests.md
       - Design Decisions: ace-spec/decisions.md
       - Design Routes Taken and Not Taken: ace-spec/routes.md
+  - RDF Term Mapping (Specification):
+      - rdf-spec/index.md
+      - IRIs and the Namespace Table: rdf-spec/iris.md
+      - Literals as Value Nodes: rdf-spec/literals.md
+      - Blank Nodes: rdf-spec/blank-nodes.md
+      - Collections and Lists: rdf-spec/collections.md
+      - Writing and Displaying Terms: rdf-spec/notation.md
+      - Labels, Names and Languages: rdf-spec/names.md
+      - Expanding Values on Request: rdf-spec/expansion.md
+      - Numbers: rdf-spec/numbers.md
+      - Dates and Intervals: rdf-spec/dates.md
+      - Querying Terms: rdf-spec/querying.md
+      - Importing RDF: rdf-spec/import.md
+      - Wikidata under the Mapping: rdf-spec/wikidata-mapping.md
+      - Three Checks on Wikidata: rdf-spec/checks.md
+      - Costs: rdf-spec/costs.md
+      - Profile and Conformance: rdf-spec/conformance.md
+      - Storage and Programming Interfaces: rdf-spec/storage.md
+      - Engine Requirements: rdf-spec/engine.md
+      - Design Decisions: rdf-spec/decisions.md
+      - Open Decisions: rdf-spec/open-decisions.md
   - Video Introduction: presentation.md
   - Building zelph: building.md
   - About the Project: about.md

@@ -19,7 +19,7 @@ Statement nodes are named by their Wikidata statement ID (which always contains 
 
 Because statement nodes are ordinary named nodes, everything that works on zelph networks works on them too: native queries, rules and inference, [SPARQL](sparql.md), and [partial loading / sharding](sharding.md).
 
-Value handling: entity values attach to the existing Q/P nodes via their `wikidata` names; time, quantity, string, and monolingual text values become nodes named by their value. Time and quantity keep the dump's own spelling (`+2020-01-01T00:00:00Z`, `+42`), which leaves them open to later rule-based interpretation; string and monolingual text are decoded, so a value the dump writes as `Caf\u00e9` stands in the graph as `Café`. `novalue`/`somevalue` snaks and coordinates are skipped.
+Value handling: entity values attach to the existing Q/P nodes via their `wikidata` names; time, quantity, string, and monolingual text values become nodes named by their value. Time and quantity keep the dump's own spelling (`+2020-01-01T00:00:00Z`, `+42`), which leaves them open to later rule-based interpretation; string and monolingual text are decoded, so a value the dump writes as `Caf\u00e9` stands in the graph as `Café`. `novalue`/`somevalue` snaks and coordinates are skipped. A value named in this way is solely its text and nothing else: the precision and the calendar of a time, the unit and the bounds of a quantity, and the language of a monolingual text are not kept, and a string that is spelled like an entity identifier, `Q5` for instance, is the node corresponding to that entity. The [RDF term mapping](rdf-spec/wikidata-mapping.md) specifies value nodes that take the place of these names.
 
 ## The `.wikidata-qualifiers` Command
 

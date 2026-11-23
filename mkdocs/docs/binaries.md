@@ -14,7 +14,7 @@ Currently, I offer the following Wikidata variants:
 
 | File                                      | Variant                                                        |       Nodes | File Size | RAM Usage | Name Entries (`wikidata` / `en`) | Load Time |
 | ----------------------------------------- | -------------------------------------------------------------- | ----------: | --------: | --------: | -------------------------------: | --------: |
-| `wikidata-20260309-all.bin`               | Current full Wikidata dump: all statements between entities   | 983,424,620 |    82 GiB | 223.7 GiB |         119,231,266 / 83,261,799 |   23m 23s |
+| `wikidata-20260309-all.bin`               | Current full Wikidata dump: all statements having an item as value | 983,424,620 |    82 GiB | 223.7 GiB |         119,231,266 / 83,261,799 |   23m 23s |
 | `wikidata-20260309-all-P11260.bin`        | The same, plus the _list item_ qualifier layer                 | 983,435,690 |    82 GiB | 221.7 GiB |         119,232,787 / 83,261,799 |         — |
 | `wikidata-20260309-all-pruned-medium.bin` | Pruned, **keeps people**                                       | 114,477,445 |   9.0 GiB |  25.9 GiB |          21,015,182 / 14,668,496 |    2m 08s |
 | `wikidata-20260309-all-pruned-small.bin`  | Pruned further, no people — fits an ordinary laptop            |  26,533,048 |   2.2 GiB |   5.5 GiB |            7,106,526 / 4,316,673 |       25s |
@@ -39,11 +39,14 @@ The values above reflect observed loading statistics from zelph on my system. Ac
   [Working on the Wikidata Class Hierarchy](class-hierarchy.md) identically, on
   any machine, in two seconds. See
   [Publishing a Predicate Slice](publishing-slices.md) for how it was cut.
-* The **full** file holds every statement from the Wikidata dump that links
-  two entities; while dates, quantities, identifiers such as DOIs, and
-  qualifiers are excluded, labels are kept as node names. It needs a machine
-  built for it – 223.7 GiB in memory. It is the appropriate option when all of
-  these statements are required, and unsuitable for any other purpose.
+* The **full** file holds the statements from the Wikidata dump whose value
+  is an item, regardless of rank, including deprecated statements. Statements
+  with any other value are excluded: dates, quantities, strings, identifiers
+  such as DOIs, and also values that are properties or lexemes; qualifiers and
+  references are likewise excluded. Labels are kept as node names. It needs a
+  machine built for it – 223.7 GiB in memory. It is the appropriate option
+  when all of these statements are required, and unsuitable for any other
+  purpose.
 
 **What the pruned variants drop** – in the order they were removed, least
 missed first: the encyclopedia’s own plumbing (categories, templates, list and

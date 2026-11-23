@@ -275,8 +275,11 @@ Shared properties: 0 and 1 receive no verdict at all — neither prime nor
 composite, partiality by absence as everywhere in the stdlib. And the
 verdicts are ordinary relational facts (`N isprime N`, `N hasdivisor D`)
 plus a result bridge under `=`, so they compose with meta-rules and further
-computations like any declared knowledge — a computed `isprime` fact can,
-for instance, feed a rule that cross-checks Wikidata's prime-number claims.
+computations like any declared knowledge. A rule that cross-checks
+Wikidata’s prime-number claims against computed `isprime` facts needs a link
+between Wikidata’s number items and the numerals. No such link exists today;
+the [RDF term mapping](../rdf-spec/checks.md#primes-among-the-number-items)
+specifies it and writes out that check.
 
 ## Making It Fast
 

@@ -464,6 +464,8 @@ A replacing load takes the math stack with the graph while the Janet state survi
 
 **Milestone.** M1 (the refusal), M3 (strings), M5 (integers).
 
+**In the RDF term mapping.** The [RDF term mapping](../rdf-spec/expansion.md#strings) maintains this approach to strings: the character list is the expansion of a string value within it, and the empty string of the front end keeps its distinct node.
+
 ### DEC-RELOAD – what a replacing load takes along {#dec-reload}
 
 **Question.** A network-file load (`.load`, `zelph/load`, `zelph_load`, `.load-partial`, a manifest, a dump's cache) replaces the graph, while the Janet state of the front end survives. What does a load take along, and how does the front end stay correct across it?
