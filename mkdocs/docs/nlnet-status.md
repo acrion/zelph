@@ -19,7 +19,7 @@ From the project plan:
 
 ### 1. RDF and JSON-LD import
 
-The rule engine and its documentation have been prepared for the specification of 1a: a condition whose terms are all bound is probed instead of searched for, numeric comparisons are conditions the engine answers itself, and a set of conditions nested within another is read as a single flat set, even when a set holds itself. None of this constitutes the specification, so 1a remains open; the work is documented because the specification relies upon it.
+The rule engine and its documentation have been prepared for the specification of 1a: a condition whose terms are all bound is probed instead of searched for, numeric comparisons are conditions the engine answers itself, and a set of conditions nested within another is read as a single flat set, even when a set holds itself. Memory handling and the loading of large networks have also been prepared: both directions of a node are held within a single node map, a load reserves that map from a chunk directory carried by every saved network, the stores that accelerate matching remain armed across loads, imports, and merges, and the worker pool takes its size from the processors available to the process and merges its results in a fixed order. None of this constitutes the specification, so 1a remains open; the work is documented because the specification relies upon it.
 
 | Date | Commit | Change |
 |---|---|---|
@@ -32,7 +32,19 @@ The rule engine and its documentation have been prepared for the specification o
 | 2026-11-13 | [`cb94bd4`](https://github.com/acrion/zelph/commit/cb94bd43590774a9ac47dcd2acc700950f9e2e16) | Compare the containers within a rule’s terms as the reasoner reads them |
 | 2026-11-16 | [`1c846b0`](https://github.com/acrion/zelph/commit/1c846b011e9916ecbf29740a56d2720baebf1e5e) | Read containers via a single function within the reasoner and the identity |
 | 2026-11-16 | [`11b5bc2`](https://github.com/acrion/zelph/commit/11b5bc279b235d376e5cb5d1145876d29c392632) | Read a set under a variable predicate as the conditions of a rule |
+| 2026-11-17 | [`f91692d`](https://github.com/acrion/zelph/commit/f91692d0f2c7c6b4dca8676ded53b8ffe20f9c57) | Hold both directions for every node within a single node map |
+| 2026-11-17 | [`a737015`](https://github.com/acrion/zelph/commit/a737015bf990e0433091557cb4c8250cbbfcc4a6) | Reserve the node map at load time and add a load factor for large maps |
 | 2026-11-17 | [`a15573c`](https://github.com/acrion/zelph/commit/a15573c323b93ee79664946891c2fdbb24574aad) | Prune no fact that holds an object the pattern fails to name |
+| 2026-11-18 | [`6ac4c7a`](https://github.com/acrion/zelph/commit/6ac4c7a8520fd206d05b9b0a0427e5cfabd76fea) | Only reserve the node map from a chunk directory that fits the file |
+| 2026-11-18 | [`1ed8345`](https://github.com/acrion/zelph/commit/1ed83451467d179405dbcc48d51a988a355da0a4) | Seek the descriptor through which a manifest load reads a chunk |
+| 2026-11-18 | [`19f68bf`](https://github.com/acrion/zelph/commit/19f68bf5d0f0069b6b03cd0fe44173c78d76b8ec) | Set the load factor of the node map via Janet and via the command line |
+| 2026-11-19 | [`0209f44`](https://github.com/acrion/zelph/commit/0209f44c7239d12470de237dbb4c8e32aa5ffe3f) | Name the chunk that a load via a manifest failed to read |
+| 2026-11-20 | [`aa7c569`](https://github.com/acrion/zelph/commit/aa7c5694ac51a14b536450f433b61fb9378cb7c3) | Make a setting line a default of the process using --default |
+| 2026-11-20 | [`4ee736e`](https://github.com/acrion/zelph/commit/4ee736e7a4af196b07079a7f7017c07e72620a9a) | Name the copy that a manifest load read, refuse a save into an unread pipe |
+| 2026-11-22 | [`7a6fe51`](https://github.com/acrion/zelph/commit/7a6fe51beaa0090a86a0972c50217eae657dc268) | Keep the fact-path stores armed through loads, imports and merges |
+| 2026-11-22 | [`cdddac8`](https://github.com/acrion/zelph/commit/cdddac8b5a31abf8a4c4727b62e9954fe0b4f6fb) | Skip the variable store lookup for closure edges connecting plain atoms |
+| 2026-11-22 | [`a19abd7`](https://github.com/acrion/zelph/commit/a19abd7c6f68292e7a7e3bca811a88c1ae4d4d52) | Size the worker pool by the affinity mask, merge its results in order |
+| 2026-11-22 | [`0124979`](https://github.com/acrion/zelph/commit/0124979f1c69de94e329cd9394137333dbc2a185) | Print each progress step of a prune once for any thread count |
 
 - **1a** (open): A specification of the mapping between RDF terms and zelph nodes, published as a documentation page: IRIs, blank nodes, plain literals, language-tagged literals and datatype IRIs, with the round-trip properties each one has and the ones it does not.
 - **1b** (open): A streaming N-Triples and N-Quads reader, reading gzip and zstd input directly, with the memory behaviour of the existing Wikidata importer: constant memory over an input of arbitrary size.
