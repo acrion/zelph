@@ -791,6 +791,111 @@ TEST_CASE("fact_import_trusted_single_object: a triple whose node holds another 
         CHECK(z.end_bulk_import() == 1);
         CHECK(reports.size() == 4);
     }
+
+    SUBCASE("a triple whose predicate is its object is reported and counted apart from it")
+    {
+        // The two kinds of unwritten triple are tracked independently: a
+        // triple whose predicate equals its object is reported as the
+        // first of its kind although a collision occurred earlier, and the
+        // end of the import states each count in a distinct message.
+        // end_bulk_import() returns the number of collisions.
+        CHECK(z.fact_import_trusted_single_object(s, q, q) == 0);
+        REQUIRE(reports.size() == 2);
+        CHECK(reports[1].find("\"s q q\" was not stored, because its predicate is also its object") != std::string::npos);
+
+        CHECK(z.end_bulk_import() == 1);
+        REQUIRE(reports.size() == 4);
+        CHECK(reports[2].find("1 triple was left unwritten because its node holds a different statement") != std::string::npos);
+        CHECK(reports[3].find("1 triple was left unwritten because its predicate is also its object") != std::string::npos);
+    }
+}
+
+TEST_CASE("fact_import_trusted_single_object: a triple whose predicate is its object is left unwritten, and each import reports it")
+{
+    // fact() refuses a statement whose predicate is also one of its
+    // objects: a fact is identified by its predicate, so a single node
+    // cannot fulfil both roles simultaneously. Created via the bulk path,
+    // such a triple would result in a node that the queries `s X Y`,
+    // `X p Y`, and `X Y p` all miss, and a long import would lose the
+    // statement without indication. It is rejected there too, and the
+    // import continues: the first such triple in an import is reported
+    // alongside its statement, and the end of the import reports their
+    // total count, separately from the triples whose node holds a
+    // different statement (previous test).
+    std::vector<std::string> reports;
+    const auto               report_sink = [&](const zelph::io::OutputEvent& e)
+    {
+        if (e.channel == zelph::io::OutputChannel::Error || e.channel == zelph::io::OutputChannel::Diagnostic)
+            reports.push_back(e.text);
+    };
+
+    Zelph      z(report_sink);
+    const Node s = z.node("s");
+    const Node p = z.node("p");
+    const Node o = z.node("o");
+    z.begin_bulk_import();
+    z.fact_import_trusted_single_object(p, z.core.IsA, z.core.RelationTypeCategory);
+
+    const std::size_t nodes      = z.count();
+    const std::size_t s_outgoing = z.right_count(s);
+    const std::size_t s_incoming = z.left_count(s);
+    const std::size_t p_outgoing = z.right_count(p);
+    const std::size_t p_incoming = z.left_count(p);
+
+    CHECK(z.fact_import_trusted_single_object(s, p, p) == 0);
+    REQUIRE(reports.size() == 1);
+
+    SUBCASE("nothing of it is written, and the report names the statement")
+    {
+        // Neither a node nor an edge: the two nodes in the triple keep the
+        // edges they possessed before the call.
+        CHECK(z.count() == nodes);
+        CHECK(z.right_count(s) == s_outgoing);
+        CHECK(z.left_count(s) == s_incoming);
+        CHECK(z.right_count(p) == p_outgoing);
+        CHECK(z.left_count(p) == p_incoming);
+        CHECK_FALSE(z.check_fact(s, p, {p}).is_known());
+
+        INFO(reports[0]);
+        CHECK(reports[0].find("Import: \"s p p\" was not stored, because its predicate is also its object") != std::string::npos);
+    }
+
+    SUBCASE("the import goes on, a further case is only counted, and the end of the import reports the number")
+    {
+        // The triple following it is written in the standard manner. A
+        // damaged file could generate such a triple per line, hence the
+        // instances after the first are not reported individually; a
+        // triple whose three parts are one node is among them.
+        const Node next = z.fact_import_trusted_single_object(s, p, o);
+        CHECK(z.check_fact(s, p, {o}).relation() == next);
+        CHECK(z.check_fact(s, p, {o}).is_known());
+
+        CHECK(z.fact_import_trusted_single_object(p, p, p) == 0);
+        CHECK(reports.size() == 1);
+
+        z.end_bulk_import();
+        REQUIRE(reports.size() == 2);
+        CHECK(reports[1].find("Import: 2 triples were left unwritten because the predicate of each is also its object") != std::string::npos);
+    }
+
+    SUBCASE("the next import into the same engine reports its own first case and counts only its own")
+    {
+        // The qualifier import from Wikidata runs on the engine that the
+        // main import has populated, and a case in this setting is
+        // reported despite the main import having already encountered one.
+        z.end_bulk_import();
+        REQUIRE(reports.size() == 2);
+        CHECK(reports[1].find("Import: 1 triple was left unwritten because its predicate is also its object") != std::string::npos);
+
+        z.begin_bulk_import();
+        CHECK(z.fact_import_trusted_single_object(o, p, p) == 0);
+        REQUIRE(reports.size() == 3);
+        CHECK(reports[2].find("Import: \"o p p\" was not stored") != std::string::npos);
+
+        z.end_bulk_import();
+        REQUIRE(reports.size() == 4);
+        CHECK(reports[3].find("Import: 1 triple was left unwritten because its predicate is also its object") != std::string::npos);
+    }
 }
 
 namespace
@@ -800,6 +905,14 @@ namespace
     // import materializes only a statement that possesses one.
     const char* colliding_dump = R"json([
 {"type":"item","id":"Q1","labels":{},"claims":{"P1":[{"mainsnak":{"snaktype":"value","property":"P1","datavalue":{"value":{"entity-type":"item","numeric-id":2,"id":"Q2"},"type":"wikibase-entityid"},"datatype":"wikibase-item"},"type":"statement","qualifiers":{"P2":[{"snaktype":"value","property":"P2","hash":"h1","datavalue":{"value":{"entity-type":"item","numeric-id":4,"id":"Q4"},"type":"wikibase-entityid"},"datatype":"wikibase-item"}]},"qualifiers-order":["P2"],"id":"Q1$A","rank":"normal"},{"mainsnak":{"snaktype":"value","property":"P1","datavalue":{"value":{"entity-type":"item","numeric-id":3,"id":"Q3"},"type":"wikibase-entityid"},"datatype":"wikibase-item"},"type":"statement","qualifiers":{"P2":[{"snaktype":"value","property":"P2","hash":"h2","datavalue":{"value":{"entity-type":"item","numeric-id":4,"id":"Q4"},"type":"wikibase-entityid"},"datatype":"wikibase-item"}]},"qualifiers-order":["P2"],"id":"Q1$B","rank":"normal"}]},"sitelinks":{}}
+]
+)json";
+
+    // One item, Q1, includes a statement of type P1 having the value
+    // Q2; the statement carries two qualifiers in this order: P2 with the
+    // string "pq:P2", and P3 with the item Q4.
+    const char* predicate_object_dump = R"json([
+{"type":"item","id":"Q1","labels":{},"claims":{"P1":[{"mainsnak":{"snaktype":"value","property":"P1","datavalue":{"value":{"entity-type":"item","numeric-id":2,"id":"Q2"},"type":"wikibase-entityid"},"datatype":"wikibase-item"},"type":"statement","qualifiers":{"P2":[{"snaktype":"value","property":"P2","hash":"h1","datavalue":{"value":"pq:P2","type":"string"},"datatype":"string"}],"P3":[{"snaktype":"value","property":"P3","hash":"h2","datavalue":{"value":{"entity-type":"item","numeric-id":4,"id":"Q4"},"type":"wikibase-entityid"},"datatype":"wikibase-item"}]},"qualifiers-order":["P2","P3"],"id":"Q1$A","rank":"normal"}]},"sitelinks":{}}
 ]
 )json";
 
@@ -904,6 +1017,44 @@ TEST_CASE("wikidata import: each import reports the triples it left unwritten" *
     }
 
     std::filesystem::remove(cache);
+    std::filesystem::remove(dump);
+}
+
+TEST_CASE("wikidata import: a qualifier whose value names its own predicate is left unwritten, and the import goes on")
+{
+    // The library half remains pinned above. The qualifier import writes
+    // a string value as the node that its text names, and a string may
+    // hold any text: "pq:P2" as the value of a P2 qualifier names the
+    // qualifier's own predicate, so the triple `Q1$A pq:P2 pq:P2` has its
+    // predicate serving as its object. This is how a dump brings such a
+    // triple to the bulk path; the main import reads item values alone and
+    // never performs this action. The triple is reported and left
+    // unwritten, and the qualifier following it is written.
+    const std::filesystem::path dump = std::filesystem::temp_directory_path() / "zelph_import_predicate_object_test.json";
+    {
+        std::ofstream out(dump, std::ios::binary);
+        out << predicate_object_dump;
+    }
+
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+    interactive.process(".lang wikidata");
+    interactive.process(".wikidata-qualifiers \"" + dump.string() + "\"");
+
+    CHECK(events_containing(collector, "Import: \"Q1$A pq:P2 pq:P2\" was not stored, because its predicate is also its object") == 1);
+    CHECK(events_containing(collector, "Import: 1 triple was left unwritten because its predicate is also its object") == 1);
+
+    const Reasoning* const z         = interactive.graph();
+    const Node             statement = z->get_node("Q1$A", "wikidata");
+    const Node             predicate = z->get_node("pq:P2", "wikidata");
+    REQUIRE(statement != 0);
+    REQUIRE(predicate != 0);
+    CHECK_FALSE(z->check_fact(statement, predicate, {predicate}).is_known());
+
+    collector.clear();
+    interactive.process("Q1$A pq:P3 X");
+    CHECK(zelph::test::answers_contain(collector, "Q1$A pq:P3 Q4"));
+
     std::filesystem::remove(dump);
 }
 

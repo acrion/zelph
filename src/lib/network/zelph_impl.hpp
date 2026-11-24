@@ -261,14 +261,17 @@ namespace zelph::network
         // always done.
         std::atomic<bool> _names_loaded_partially{false};
 
-        // Bulk-import triples where the node was already present but
-        // contained a distinct statement (refer to
-        // Zelph::fact_import_trusted_single_object), counted throughout the
-        // engine's lifetime, and that count at the moment the current import
-        // began (Zelph::begin_bulk_import). Each engine maintains two
-        // counters; these do not grow with the size of the graph.
+        // Bulk-import triples left unwritten (refer to
+        // Zelph::fact_import_trusted_single_object), of two kinds: a triple
+        // whose node was already present but contained a distinct statement,
+        // and a triple whose predicate is also its object. Each kind is
+        // counted throughout the engine's lifetime, beside that count at the
+        // moment the current import began (Zelph::begin_bulk_import). These
+        // four counters do not grow with the size of the graph.
         mutable std::atomic<uint64_t> _import_conflicts{0};
         mutable std::atomic<uint64_t> _import_conflicts_at_begin{0};
+        mutable std::atomic<uint64_t> _import_predicate_objects{0};
+        mutable std::atomic<uint64_t> _import_predicate_objects_at_begin{0};
 
         mutable std::recursive_mutex _mtx_print;
 

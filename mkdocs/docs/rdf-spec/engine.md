@@ -43,7 +43,7 @@ The [conversion of collections](collections.md) replaces the head of a chain wit
 
 The conversion therefore uses an entry of its own. It needs no name and does not resolve any name conflict; it keeps the check that a node is not part of the term it becomes; it rebuilds the dependent statements in the manner a merge does; and it performs invalidations once per step, and only those that a rebuilt node requires. The statements it rebuilds are recorded for the next incremental run, which an ordinary merge does not perform today.
 
-Below the scale of a dump, readers write facts through the standard creation process; the bulk path is designated for dumps. The bulk path does not refuse a triple whose predicate equals its object today, unlike the ordinary path: every route in the mapping verifies this condition before writing ([Statements](iris.md#statements)).
+Below the scale of a dump, readers write facts via the standard creation process; the bulk path is designated for dumps. Today, both refuse a triple where the predicate equals its object: the standard creation process does so with an error, the bulk path by leaving the triple unwritten while the import continues, reporting the first such triple encountered during an import and their total count upon completion. Every route in the mapping verifies this condition before writing ([Statements](iris.md#statements)).
 
 ## The Reasoner
 

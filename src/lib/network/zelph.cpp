@@ -1469,6 +1469,27 @@ void Zelph::enter_template_vars(const Node relation, const Node subject, const N
 
 Node Zelph::fact_import_trusted_single_object(Node subject, Node predicate, Node object) const
 {
+    // A triple whose predicate is simultaneously its object is refused,
+    // just as fact() refuses it: a fact is identified by its predicate,
+    // hence a single node cannot fulfil both roles at once. No data is
+    // written, 0 is returned in place of the triple's node, and the import
+    // proceeds uninterrupted; similar to an occupied node described below,
+    // only the first such triple within an import is reported, and
+    // end_bulk_import() reports their number. A zero predicate is left to
+    // the insert, which raises an exception upon encountering it.
+    if (predicate == object && predicate != 0)
+    {
+        if (_pImpl->_import_predicate_objects.fetch_add(1, std::memory_order_relaxed)
+            == _pImpl->_import_predicate_objects_at_begin.load(std::memory_order_relaxed))
+        {
+            error("Import: \"" + render_statement(*this, subject, predicate, {object})
+                      + "\" was not stored, because its predicate is also its object. A fact is identified by its predicate, "
+                        "so one node cannot stand in both roles at once. Further cases are counted, not reported one by one.",
+                  true);
+        }
+        return 0;
+    }
+
     // The triple is written around fact(). The structure cache and the
     // predicate index are cleared, as occurs with every such write; the
     // stores stay armed, and the variable store records the triple
@@ -1519,6 +1540,7 @@ Node Zelph::fact_import_trusted_single_object(Node subject, Node predicate, Node
 void Zelph::begin_bulk_import()
 {
     _pImpl->_import_conflicts_at_begin.store(_pImpl->_import_conflicts.load(std::memory_order_relaxed), std::memory_order_relaxed);
+    _pImpl->_import_predicate_objects_at_begin.store(_pImpl->_import_predicate_objects.load(std::memory_order_relaxed), std::memory_order_relaxed);
 }
 
 uint64_t Zelph::end_bulk_import()
@@ -1532,6 +1554,14 @@ uint64_t Zelph::end_bulk_import()
         error("Import: 1 triple was left unwritten because its node holds a different statement; it is reported above.", true);
     else if (unwritten > 1)
         error("Import: " + std::to_string(unwritten) + " triples were left unwritten because their nodes hold different statements; the first of them is reported above.", true);
+
+    const uint64_t predicate_objects = _pImpl->_import_predicate_objects.load(std::memory_order_relaxed)
+                                     - _pImpl->_import_predicate_objects_at_begin.load(std::memory_order_relaxed);
+
+    if (predicate_objects == 1)
+        error("Import: 1 triple was left unwritten because its predicate is also its object; it is reported above.", true);
+    else if (predicate_objects > 1)
+        error("Import: " + std::to_string(predicate_objects) + " triples were left unwritten because the predicate of each is also its object; the first of them is reported above.", true);
 
     return unwritten;
 }

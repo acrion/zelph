@@ -434,13 +434,16 @@ namespace zelph::network
         // (literals_written_before_template_ids).
         bool is_older_rule_literal(Node membership) const;
 
-        // A bulk importer invokes these before its first triple and after
-        // its final one. During the intervening period,
-        // fact_import_trusted_single_object refrains from writing a triple if
-        // its node is already taken by another statement: the first such
-        // triple is reported at the moment it happens, and end_bulk_import()
-        // reports the total count and returns that number. A second import
-        // into the same engine counts its own occurrences.
+        // A bulk importer invokes these before its first triple and after its
+        // final one. Throughout the intervening period,
+        // fact_import_trusted_single_object refrains from writing two kinds
+        // of triple, and the import continues: a triple whose node is already
+        // taken by a different statement, and a triple whose predicate is its
+        // object, which fact() also refuses (for this kind it returns 0). The
+        // first triple of each kind is reported at the moment it happens, and
+        // end_bulk_import() reports the count of each kind and returns the
+        // count of the first kind. A second import into the same engine
+        // counts its own occurrences.
         void     begin_bulk_import();
         uint64_t end_bulk_import();
 
