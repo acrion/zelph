@@ -256,6 +256,17 @@ namespace
     // (Linux 4.0). Memory previously released by earlier work but retained
     // by the allocator is returned first: if reused, it would conceal the
     // actual increase.
+    //
+    // Not every part can be returned: free space on a page that also holds
+    // live data stays resident, with transparent huge pages even more, and
+    // `work` reuses it without the resident set increasing. The amount
+    // present depends on whatever ran before in the process. In a run of the
+    // whole suite, a session grew by 10 MB that grows by 27 MB when its test
+    // runs alone, and with huge pages one grew by 5 MB that grows by 35 MB.
+    // A test comparing two sessions therefore measures each after an
+    // identical one that is not measured (second_of_two): every measured
+    // session then starts from the state a session of its own kind leaves
+    // behind, whatever ran before it.
     template <typename Work>
     long peak_growth_kb(const Work& work)
     {
@@ -272,6 +283,18 @@ namespace
         return status_kb("VmHWM:") - before;
     }
 #endif
+
+    // What `session` returns when it runs a second time, the first run
+    // remaining unmeasured (see peak_growth_kb); in cases where memory is not
+    // measured, what a single run returns.
+    template <typename Session, typename... Arguments>
+    auto second_of_two(const Session& session, Arguments&&... arguments)
+    {
+#ifdef __linux__
+        session(arguments...);
+#endif
+        return session(arguments...);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -2822,7 +2845,10 @@ namespace
     // The time and memory usage of the depth-0 explanation are compared with
     // those from the same session where those facts possess a different
     // predicate: the hub's adjacency is read the same way there, for the same
-    // units, and nothing in it is tried.
+    // units, and nothing in it is tried. Where the join enumerates the
+    // condition, those facts, held at every open step, add at least 60 MB to
+    // the growth here, and the comparison allows for half of that. Under a
+    // negation, which holds nothing past its check, they add nothing.
     void check_hub_in_other_role(const std::string& rule, const std::string& matched, const std::string& predicate, const bool hub_is_subject)
     {
         const auto session = [&](const std::string& hub_predicate, long& grown)
@@ -2867,15 +2893,15 @@ namespace
         };
         long         grown_other = 0;
         long         grown_same  = 0;
-        const double other       = session("other", grown_other);
-        const double same        = session(predicate, grown_same);
+        const double other       = second_of_two(session, "other", grown_other);
+        const double same        = second_of_two(session, predicate, grown_same);
         CAPTURE(other);
         CAPTURE(same);
         CHECK(same < 3 * other);
         CAPTURE(grown_other);
         CAPTURE(grown_same);
         CHECK(grown_same < 64 * 1024);
-        CHECK(grown_same < grown_other + 16 * 1024);
+        CHECK(grown_same < grown_other + 30 * 1024);
     }
 }
 
@@ -2892,7 +2918,11 @@ namespace
 // measure.
 TEST_CASE("explain: the facts a hub is only the object of are neither tried nor held" * doctest::test_suite("slow"))
 {
-    SUBCASE("a negation") { check_hub_in_other_role("((X next Y), (Y ok yes), ¬(h bad X)) => (X ok yes)", "zz bad qq", "bad", false); }
+    // The negation leaves its object open, enabling it to be read at the
+    // hub: with the X of the join, it is ground at each step, and the exact
+    // probe answers it without reading the hub (as "explain: the adjacency a
+    // condition is read from counts against the budget" pins).
+    SUBCASE("a negation") { check_hub_in_other_role("((X next Y), (Y ok yes), ¬(h bad Z)) => (X ok yes)", "zz bad qq", "bad", false); }
     SUBCASE("a condition the join enumerates") { check_hub_in_other_role("((X next Y), (Y ok yes), (h tag T)) => (X ok yes)", "h tag t0", "tag", false); }
 }
 
@@ -2919,7 +2949,9 @@ TEST_CASE("explain: the facts a hub is only the subject of are neither tried nor
 // search that tried them all before securing a match, and kept the matches,
 // held 25 MB to 30 MB. A level keeps nothing it cannot match while a premise
 // is being searched now. The same facts under a different predicate are not
-// included among the candidates, so that session serves as the measure.
+// included among the candidates, so that session serves as the measure. Held
+// at every open step, those candidates add at least 50 MB to the growth here,
+// and the comparison allows for half of that.
 TEST_CASE("explain: the candidates a condition cannot match are not held while its premise is searched" * doctest::test_suite("slow"))
 {
     const auto check = [](const std::string& rule, const std::string& matched, const HubFacts& hub_facts)
@@ -2942,11 +2974,11 @@ TEST_CASE("explain: the candidates a condition cannot match are not held while i
             CHECK(explained(collector).rfind("n0 ok yes\n", 0) == 0);
             return kb;
         };
-        const long other = grown("other");
-        const long tried = grown("tag");
+        const long other = second_of_two(grown, "other");
+        const long tried = second_of_two(grown, "tag");
         CAPTURE(other);
         CAPTURE(tried);
-        CHECK(tried < other + 16 * 1024);
+        CHECK(tried < other + 25 * 1024);
     };
     SUBCASE("a nested object") { check("((X next Y), (Y ok yes), (h tag (a p T))) => (X ok yes)", "h tag (a p t0)", nested_objects); }
     SUBCASE("another number of objects") { check("((X next Y), (Y ok yes), (Z tag h k)) => (X ok yes)", "w tag h k", single_objects); }
@@ -4333,7 +4365,12 @@ TEST_CASE("explain: a join the search comes back to after every premise reads it
 // whether a level recognizes that its candidates give no match; the next one
 // does. A ground condition is confirmed via lookup and enumerates nothing,
 // thus serving as the measure: replacing (h tag T) with (h tag t0), whose
-// single match is (h tag t0), yields an identical proof.
+// single match is (h tag t0), yields an identical proof. Kept, the
+// enumerations make this session grow by at least 50 MB more than the
+// measure, whose levels of (X next Y) then keep theirs as well, and the
+// comparison allows for half of that. This session grows by 300 MB to
+// 350 MB, and by 490 MB to 530 MB when the enumerations are kept: the bound
+// lies in between.
 TEST_CASE("explain: a level of a join with no match left holds nothing while its premise is searched" * doctest::test_suite("slow"))
 {
     const auto grown = [](const std::string& condition)
@@ -4353,12 +4390,12 @@ TEST_CASE("explain: a level of a join with no match left holds nothing while its
         CHECK(graph->last_explain_counts().searches == 2 * length + 2);
         return kb;
     };
-    const long enumerated = grown("(h tag T)");
-    const long ground     = grown("(h tag t0)");
+    const long enumerated = second_of_two(grown, "(h tag T)");
+    const long ground     = second_of_two(grown, "(h tag t0)");
     CAPTURE(enumerated);
     CAPTURE(ground);
-    CHECK(enumerated < ground + 16 * 1024);
-    CHECK(enumerated < 370 * 1024);
+    CHECK(enumerated < ground + 25 * 1024);
+    CHECK(enumerated < 420 * 1024);
 }
 #endif
 
