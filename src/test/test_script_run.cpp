@@ -1316,6 +1316,15 @@ TEST_CASE("run-delta: falls back to a full pass after a pruned derived fact")
             interactive.process(".remove tim");
             run_delta();
             CHECK(any_output_contains(collector, "john=yes"));
+        }
+        // A predicate that .cleanup eliminates carries its declaration with it,
+        // and the declaration constitutes a fact. The run following the prune
+        // restores validity to the record, so what relinquishes it here is
+        // .cleanup.
+        SUBCASE(".cleanup of a predicate whose last fact was pruned")
+        {
+            process_lines(interactive, "x p y\n.prune-facts x p y\n.run\n.cleanup");
+            run_delta();
         } });
 }
 

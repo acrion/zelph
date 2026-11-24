@@ -1374,6 +1374,8 @@ void Reasoning::purge_unused_predicates(size_t& removed_facts, size_t& removed_p
 
     std::lock_guard<std::mutex> lock(_mtx_network);
 
+    adjacency_set unused; // the predicates left unused and their declarations
+
     for (size_t i = 0; i < all_predicates.size(); ++i)
     {
         Node pred = all_predicates[i];
@@ -1489,13 +1491,47 @@ void Reasoning::purge_unused_predicates(size_t& removed_facts, size_t& removed_p
 
         if (valid_usage_count == 0 && !is_held(pred))
         {
-            _pImpl->remove(pred);
-            removed_predicates++;
+            // A predicate follows the same path as any node that is removed,
+            // via remove_node's cascade, which takes its declaration along.
+            // Removed in isolation, it left `p ~ ->` behind without a
+            // subject: .list showed `?? ~ ->`, no query answered it, and no
+            // later .cleanup located it, because the scan reaches a
+            // declaration only through its subject. is_held passes over every
+            // declaration, though, and the cascade would also carry along one
+            // that is not the predicate's own (`q ~ -> p`) and whatever holds
+            // the declaration -- a statement such as `(p ~ ->) noted-by sue`,
+            // a rule whose condition is `p ~ ->`. Thus, the predicate stays
+            // unless the cascade takes nothing except its own declaration.
+            adjacency_set closure;
+            collect_doomed(pred, closure);
+
+            const Node declaration = create_hash(core.IsA, pred, {core.RelationTypeCategory});
+            bool       alone       = true;
+            for (const Node n : closure)
+                if (n != pred && n != declaration) alone = false;
+
+            if (alone)
+            {
+                for (const Node n : closure)
+                    unused.insert(n);
+                removed_predicates++;
+            }
         }
     }
 
-    // A removed predicate is no longer a relation type, whether or not its
-    // declaration fact was among the zombies: the memoized set holds the
-    // predicate NODE, and that node is gone.
-    if (removed_predicates > 0) invalidate_relation_type_set();
+    // Predicates are processed in a single removal following the scan. If each
+    // declaration were removed individually, it would invalidate the
+    // relation-type set, requiring collect_doomed to reconstruct it for the
+    // next predicate. None of the decisions above depends on the nodes
+    // collected here: a predicate that goes is an atom, and its declaration
+    // consists solely of the predicate, `~`, and `->`. A declaration is a
+    // fact, and just like the other removal commands, .cleanup cannot tell
+    // whether a run derived it (note_user_removal).
+    if (!unused.empty())
+    {
+        note_user_removal();
+        adjacency_set named;
+        remove_doomed(unused, &named);
+        remove_names_of(named);
+    }
 }

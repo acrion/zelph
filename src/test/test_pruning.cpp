@@ -1484,6 +1484,49 @@ TEST_CASE("cleanup: a predicate a statement still holds is not unused")
         CHECK(answers_contain(collector, "x says (r r c)"));
     }
 
+    // The statement holds the declaration of `p`, and the declaration holds
+    // `p`, so `p` is not unused: removing it takes its declaration along, and
+    // the statement with it. .cleanup formerly removed `p` independently, which
+    // left the declaration without a subject, and the statement lost its object
+    // `sue` in the same run.
+    SUBCASE("a statement about its declaration")
+    {
+        zelph::io::OutputCollector  collector;
+        zelph::console::Interactive interactive(collector.sink());
+        process_lines(interactive, "x p y\n(p ~ ->) noted-by sue\n.prune-facts x p y\n.cleanup\n");
+        collector.clear();
+        interactive.process("S noted-by O");
+        CHECK(answers_contain(collector, "(p ~ ->) noted-by sue"));
+    }
+
+    // The rule holds the declaration of `p` as its condition and names `p`
+    // nowhere else. Eliminating `p` takes the declaration along, and with it
+    // the rule, which .list-rules would then no longer show.
+    SUBCASE("a rule whose condition is its declaration")
+    {
+        zelph::io::OutputCollector  collector;
+        zelph::console::Interactive interactive(collector.sink());
+        process_lines(interactive, "x p y\n(p ~ ->) => (c q d)\n.prune-facts x p y\n.cleanup\n");
+        collector.clear();
+        interactive.process(".list-rules");
+        CHECK(any_output_contains(collector, "(p ~ ->) => (c q d)"));
+    }
+
+    // The `q ~ -> p` declaration names `q` as its subject and `p` as a class
+    // of it: a statement concerning `p`, and the sole declaration `q` has, yet
+    // not the declaration of `p`. Read as a declaration, it held neither, and
+    // .cleanup removed both `p` and `q` and left the statement without its
+    // subject and an object.
+    SUBCASE("a declaration that names it as a class")
+    {
+        zelph::io::OutputCollector  collector;
+        zelph::console::Interactive interactive(collector.sink());
+        process_lines(interactive, "x p y\nq ~ -> p\n.prune-facts x p y\n.cleanup\n");
+        collector.clear();
+        interactive.process("S ~ p");
+        CHECK(answers_contain(collector, "q ~ p"));
+    }
+
     // Purpose of the removal: a predicate that had its final fact disappear
     // and now is held solely by its own declaration.
     SUBCASE("a predicate nothing holds still goes")
@@ -1495,6 +1538,47 @@ TEST_CASE("cleanup: a predicate a statement still holds is not unused")
         interactive.process(".cleanup");
         CHECK(any_output_contains(collector, "Removed 1 unused predicates"));
     }
+}
+
+// The declaration goes with the predicate it declares. When removed
+// independently, the predicate left `p ~ ->` without its subject: .list
+// showed the node as `?? ~ ->`, no query answered it, and a second .cleanup
+// retained it, because the scan reaches a declaration via its subject. What
+// `x p y` contributed has been entirely eliminated, so the network now
+// matches the size of a newly initialized one.
+TEST_CASE("cleanup: an unused predicate takes its declaration with it")
+{
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+    const std::size_t           fresh = node_count(collector, interactive);
+
+    process_lines(interactive, "x p y\n.prune-facts x p y\n.cleanup\n");
+    CHECK(node_count(collector, interactive) == fresh);
+
+    collector.clear();
+    interactive.process(".cleanup");
+    CHECK(any_output_contains(collector, "Purged 0 zombie facts"));
+    CHECK(any_output_contains(collector, "Removed 0 unused predicates"));
+    CHECK(node_count(collector, interactive) == fresh);
+}
+
+// The scan gathers the predicates that go and removes all of them in a single
+// step upon completion. A solitary predicate cannot show that this step takes
+// every one of them: if it took only the nodes gathered for the last predicate
+// scanned, the other predicate and its declaration would persist, although the
+// report counts two. With both facts pruned, nothing either of them contributed
+// remains, and the network has as many nodes as a fresh one.
+TEST_CASE("cleanup: one run removes two unused predicates and their declarations")
+{
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+    const std::size_t           fresh = node_count(collector, interactive);
+
+    process_lines(interactive, "x p y\nx q y\n.prune-facts x p y\n.prune-facts x q y\n");
+    collector.clear();
+    interactive.process(".cleanup");
+    CHECK(any_output_contains(collector, "Removed 2 unused predicates"));
+    CHECK(node_count(collector, interactive) == fresh);
 }
 
 TEST_CASE("removal: a fact using a composite predicate is not part of it")
