@@ -129,6 +129,21 @@ namespace
         return std::stoull(text.substr(at + key.size() + 1));
     }
 
+    // One block from the .prof dump: the counters appearing on the line
+    // that `label` opens, as the dump prints them. When examined as a
+    // whole, the text shows a counter added to the block, which a lookup by
+    // name cannot detect.
+    std::string prof_block(const std::string& text, const std::string& label)
+    {
+        const std::string opening = "\n  " + label + " ";
+        const size_t      start   = text.find(opening);
+        if (start == std::string::npos)
+            throw std::runtime_error("performance guard: .prof block '" + label + "' not found");
+
+        const size_t from = start + opening.size();
+        return text.substr(from, text.find('\n', from) - from);
+    }
+
     // Stefan's choice of 3 August 2026: ten percent of headroom. Tight enough
     // that every cliff trips it, loose enough that ordinary work on the rules
     // does not.
@@ -248,6 +263,86 @@ TEST_CASE("performance guard: a dropped cluster leaves the math stack's stores a
     // Non-vacuity: the request managed to arrive at the stores.
     CHECK(prof_counter(prof, "genuine:", "hits") > 0);
     CHECK(prof_counter(prof, "genuine:", "walks") == 0);
+}
+
+// The first case holds the volume of the Jacobian workload to ceilings, with a
+// tenth of headroom. The counters named in
+// `mkdocs/docs/internals/measurement.md` as hard semantic invariants say what
+// the example derives and which decisions the engine takes on the way, and the
+// page requires them to stay bit-identical across any change that does not
+// alter semantics. Among these, only `facts_created` and `deduce_calls` have a
+// ceiling in the first case, and such a ceiling permits a downward move to
+// pass, as well as any upward move by less than a tenth. When a statement that
+// writes a rule stopped being evaluated as a query too, `evaluate calls` and
+// `leaf_conditions` each dropped by 426, one for each rule with a variable
+// among the 430 that the import types, and no case went red: the page went on
+// naming the old value. This case holds every counter in the set to the value
+// from the standalone sequential run described by the page, ensuring that any
+// such move fails the suite. With `.parallel` off, the counters repeat to the
+// digit across runs, and they do not depend on the directory in which the tree
+// is built. The default configuration does not spread a scan of this example
+// either, but a spread scan moves `template_rejects`, and the sequential run
+// keeps the values independent of the launch threshold. When the case goes
+// red, a change intended to alter what is derived or decided brings the new
+// values into this case and into the page together, accompanied by the
+// mechanism explaining them; for any other change, the red case serves as a
+// finding. The page names the values within a dedicated block, and the ctest
+// check `measurement_page_names_the_values_the_guard_holds` fails when that
+// block and this case diverge. Taken on 24 November 2026: three runs at the
+// prompt, this case alone and within the suite, and a tree built at a
+// different path yielded identical values.
+TEST_CASE("performance guard: the sequential Jacobian workload keeps every hard semantic invariant at its value" * doctest::test_suite("slow"))
+{
+    zelph::io::OutputCollector  collector;
+    zelph::console::Interactive interactive(collector.sink());
+
+    interactive.process(".parallel"); // a switch, activated by default
+    REQUIRE_FALSE(interactive.graph()->use_parallel());
+    interactive.process(".semi-naive on"); // as in the first case: the classic passes in check mode do not constitute the workload
+    interactive.process(".log -1");
+    interactive.process(".deductions off");
+    interactive.process(".import examples/math/jacobian");
+
+    collector.clear();
+    interactive.process(".prof");
+    const std::string prof = all_event_text(collector);
+
+    CHECK(prof_counter(prof, "rules_applied", "facts_created") == 15406);
+    CHECK(prof_counter(prof, "rules_applied", "deduce_calls") == 39869);
+    CHECK(prof_counter(prof, "rules_applied", "seminaive_seeds") == 352931);
+    CHECK(prof_counter(prof, "rules_applied", "seminaive_safety_extra") == 0);
+    CHECK(prof_counter(prof, "extract:", "ok") == 165298);
+    CHECK(prof_counter(prof, "extract:", "template_rejects") == 8532);
+
+    // The page takes these four blocks into the set whole, so any counter added
+    // to one of them becomes part of the set. Each block is held as the text
+    // the dump prints, and a new counter fails the case until the case also
+    // holds its value.
+    CHECK(prof_block(prof, "evaluate:") == "calls=135611 leaf_conditions=123425 conjunction_sets=520 optimize_order=58291");
+    CHECK(prof_block(prof, "negation:") == "cond=1379 ok=460 fail=919");
+    CHECK(prof_block(prof, "check_fact:") == "known=24463 new=15406 wrong=0");
+    CHECK(prof_block(prof, "termination_guard:") == "checks=0 skips=0 fresh_vars=0 fresh_nodes=0");
+
+    // The exact identities the page checks on each protocol, using the same
+    // dump. Every fs_cache miss is answered by either a genuine hit or a walk,
+    // and the workload performs no reads on any node that was written by a
+    // load, a trusted import, or a name merge, thus keeping the three walk
+    // counters at zero: a walk in this context indicates the disarm funnel
+    // fired during the run, and the page stops the measurement until the
+    // trigger is understood. Among these, the first case holds `genuine walks`
+    // alone. None of them constitutes a value within the set, and they are
+    // compared as named counters, since the ctest check reads every comparison
+    // between a counter or a block and a literal as one.
+    const uint64_t misses         = prof_counter(prof, "fs_cache:", "misses");
+    const uint64_t genuine_hits   = prof_counter(prof, "genuine:", "hits");
+    const uint64_t genuine_walks  = prof_counter(prof, "genuine:", "walks");
+    const uint64_t walk_fallbacks = prof_counter(prof, "var_closure:", "walk_fallbacks");
+    const uint64_t template_walks = prof_counter(prof, "template_vars:", "walks");
+    CHECK(misses > 0); // non-vacuity: without a miss, the identity would provide no information regarding what responds to one
+    CHECK(misses == genuine_hits + genuine_walks);
+    CHECK(genuine_walks == 0);
+    CHECK(walk_fallbacks == 0);
+    CHECK(template_walks == 0);
 }
 
 // The first case in this file runs a session that holds no fact with several

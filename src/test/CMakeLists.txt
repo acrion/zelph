@@ -441,6 +441,30 @@ if (Python3_Interpreter_FOUND)
     zelph_add_check_test(citation_names_the_project_version "${CMAKE_SOURCE_DIR}/tools/check_citation_version.py"
             "${CMAKE_SOURCE_DIR}/CITATION.cff ${PROJECT_VERSION}" 0)
 
+    # --- the values the measurement page names ---------------------------------
+    #
+    # The measurement page (mkdocs/docs/internals/measurement.md) names the
+    # values of the hard semantic invariants during the sequential run of the
+    # Jacobian example, and a case in test_performance_guard.cpp holds the run
+    # to them. Nothing else ties the two together: a change that moves the set
+    # must also adjust the case, which otherwise fails, while the page could
+    # continue listing the old values.
+    zelph_add_check_test(measurement_page_names_the_values_the_guard_holds "${CMAKE_SOURCE_DIR}/tools/check_invariant_values.py"
+            "${CMAKE_SOURCE_DIR}/mkdocs/docs/internals/measurement.md ${CMAKE_CURRENT_SOURCE_DIR}/test_performance_guard.cpp" 0)
+
+    # The real files demonstrate merely that the two agree. This test runs the
+    # check on pages and cases it writes itself: a value named solely by the
+    # page, a value held exclusively by the case, and a value that differs
+    # between the two each cause it to exit with code 1 and name the
+    # discrepancy, while a file it cannot read and a value named twice each
+    # lead to exit code 2, and a comparison found within a comment of the
+    # case, or within a later case of the file, does not count as a value the
+    # case holds. A check that missed one direction, or reported agreement on
+    # a file it could not read, would remain green even as the page went
+    # stale.
+    zelph_add_check_test(invariant_value_check_reports_differences_and_unreadable_files "${CMAKE_SOURCE_DIR}/tools/check_invariant_values.py"
+            "--self-test" 0)
+
     # --- a Janet program that makes Janet collect ----------------------------
     #
     # Janet 1.42.1 frees the table storing zelph's :err binding during its

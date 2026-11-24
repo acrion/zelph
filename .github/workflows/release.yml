@@ -105,6 +105,9 @@ jobs:
           require install_tier
           require install_tier_survives_undecodable_output
           require exit_status_of_the_binary
+          require citation_names_the_project_version
+          require string_literals_fit_visual_studio_2022
+          require measurement_page_names_the_values_the_guard_holds
           if [ "${{ runner.os }}" != "Windows" ] && [ "${{ matrix.arch }}" = "x86_64" ]; then
             require arch_baseline_of_the_library
           fi
