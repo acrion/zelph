@@ -25,10 +25,14 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #pragma once
 
+#include "platform/platform_utils.hpp"
+
 #include <cstddef>
 #include <map>
 #include <memory>
+#include <random>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace zelph::console
@@ -167,6 +171,46 @@ namespace zelph::console
         // within the CommandExecutor::import_file function.
         std::vector<std::string> modules_importing;
 
+        // The identity of the session as a document of blank nodes: a blank
+        // node written by its label, `_:b0`, on a line that is entered,
+        // transmitted via a pipe, or submitted through an interface
+        // corresponds to the node bearing that label within the session.
+        // Initially empty until something requests it (document_identity),
+        // then populated with 128 random bits, ensuring that blank nodes
+        // from two sessions never meet in a network that one of them saved
+        // and the other loads; `.identity` on a line of the session sets it
+        // instead, and on no other line: a script file sets its own. Kept
+        // by .new: the lines behind a .new belong to the same input.
+        std::string session_identity;
+
+        // The script files being read, the innermost last: a line within a
+        // script file belongs to the document that the file represents,
+        // identified by its file IRI, regardless of whether the file is a
+        // module or a session script. Empty during the reading of the
+        // session's lines. The identity of a file is made when its first
+        // blank node label requests it (document_identity), so a file
+        // without such a label costs no IRI, unless an `.identity` on one
+        // of the file's lines has set it, which then holds from that line
+        // onward until the end of the file. Managed strictly by RAII in
+        // CommandExecutor::import_file; `file` refers to a text that
+        // function owns, the path of the file, absolute from the moment
+        // its reading began: a line of the file may change the working
+        // directory before the first label asks.
+        struct ScriptDocument
+        {
+            std::string_view file;
+            std::string      identity;
+        };
+        std::vector<ScriptDocument> documents;
+
+        // The identity of a session script whose reading was
+        // interrupted by a `.new`, for the lines behind that `.new`,
+        // for which the same file is opened again
+        // (Interactive::process_file): an identity that `.identity` set
+        // in the file holds until the end of the file, persisting
+        // through the reset in between.
+        std::string resumed_identity;
+
         // Depth of quiet processing scopes (the '?' result-query pre-pass):
         // while > 0, the input echo is suppressed like inside imports.
         // Managed strictly by RAII in Interactive::process.
@@ -203,6 +247,33 @@ namespace zelph::console
         // `zelph/import` loads a module.
         bool quit_requested{false};
     };
+
+    // The identity of the document to which the line being read belongs:
+    // the innermost script file, otherwise the session. The identity of the
+    // session is drawn here, when it is first needed, so a session that
+    // writes no blank node label draws nothing.
+    inline const std::string& document_identity(ReplState& state)
+    {
+        if (!state.documents.empty())
+        {
+            ReplState::ScriptDocument& document = state.documents.back();
+            if (document.identity.empty()) document.identity = platform::file_iri(platform::path_from_utf8(std::string(document.file)));
+            return document.identity;
+        }
+
+        if (state.session_identity.empty())
+        {
+            static constexpr char digits[] = "0123456789abcdef";
+            std::random_device    random;
+            for (int byte = 0; byte < 16; ++byte)
+            {
+                const unsigned int value = random();
+                state.session_identity += digits[(value >> 4) & 0xF];
+                state.session_identity += digits[value & 0xF];
+            }
+        }
+        return state.session_identity;
+    }
 
     // Whether a run writes the notice accounting for what it withheld.
     //

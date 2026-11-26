@@ -171,6 +171,16 @@ namespace zelph
         using FullGraphGuard = std::function<void(const std::string& name)>;
         void set_full_graph_guard(FullGraphGuard guard);
 
+        // The identity of the document to which the statement being parsed
+        // belongs: a blank node written by its label, `_:b0`, represents the
+        // node of that label inside this document. Set by Interactive, which
+        // knows whether a line comes from a script file or from the session.
+        // Unset, a statement attempting to write such a label is refused; a
+        // reference by id, `_:@` and its digits, does not require a
+        // document.
+        using DocumentIdentity = std::function<std::string()>;
+        void set_document_identity(DocumentIdentity identity);
+
         void toggle_janet_logging();
 
         std::string get_janet_logging_status() const;

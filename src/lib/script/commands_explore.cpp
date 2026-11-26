@@ -565,19 +565,30 @@ namespace zelph::console
         {
             arg = cmd[1];
 
-            try
+            if (network::Node blank = 0; blank_argument(arg, 1, blank))
             {
-                // Try single resolve (non-destructive: ID last)
-                network::Node single = resolve_single_node(arg, false);
-                nodes.push_back(single);
+                // A blank token is not a name, thus the name-based search
+                // beneath is not consulted for it, and a token that is
+                // improperly formed is reported accordingly.
+                if (blank == 0) throw std::runtime_error("Unknown node '" + arg + "'");
+                nodes.push_back(blank);
             }
-            catch (...)
+            else
             {
-                // Not a single node/ID → try name search (multiple possible)
-                nodes = _n->resolve_nodes_by_name(arg);
-                if (nodes.empty())
+                try
                 {
-                    throw std::runtime_error("No node found with name '" + arg + "' in current language '" + _n->lang() + "'");
+                    // Try single resolve (non-destructive: ID last)
+                    network::Node single = resolve_single_node(arg, false);
+                    nodes.push_back(single);
+                }
+                catch (...)
+                {
+                    // Not a single node/ID → try name search (multiple possible)
+                    nodes = _n->resolve_nodes_by_name(arg);
+                    if (nodes.empty())
+                    {
+                        throw std::runtime_error("No node found with name '" + arg + "' in current language '" + _n->lang() + "'");
+                    }
                 }
             }
         }

@@ -26,7 +26,9 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include "script/command_executor_impl.hpp"
 
 #include "network/reasoning.hpp"
+#include "repl_state.hpp"
 #include "script/script_engine.hpp"
+#include "string/node_to_string.hpp"
 #include "string/string_utils.hpp"
 
 #include <algorithm>
@@ -71,8 +73,36 @@ static bool is_fully_parenthesized(const std::string& s)
 
 namespace zelph::console
 {
-    network::Node CommandExecutor::Impl::resolve_node(const std::string& arg, const std::string& lang) const
+    // A blank node as the argument of a command, in either of the two
+    // forms a statement writes one: `_:label`, the node of that label
+    // within the document containing the command, and `_:@` followed by
+    // the digits of an identifier. Determines whether `arg` is such a
+    // token written bare, which is then never read as a name or as a
+    // number; `node` is the blank node the graph holds for it, or 0: a
+    // command creates no node. Within quotation marks, the identical text
+    // functions as a name, just as it does in a statement, and the token
+    // at the argument's position, `index`, as originally entered
+    // indicates which of the two it was: when examining the tokens of the
+    // whole line, the quoted name of `.name _:b0 "_:b0"` was taken for
+    // the bare token preceding it. A caller that recorded no tokens means
+    // the bare form. Throws for a token that is neither form
+    // (string::read_blank_token).
+    bool CommandExecutor::Impl::blank_argument(const std::string& arg, const std::size_t index, network::Node& node) const
     {
+        node = 0;
+        if (!string::is_blank_token(arg)) return false;
+        if (index < _sources.size() && _sources[index] != arg) return false;
+
+        const string::BlankToken blank = string::read_blank_token(arg);
+        const network::Node      id    = blank.reference ? blank.id : network::Zelph::blank_id(document_identity(*_repl_state), blank.label);
+        if (_n->exists(id)) node = id;
+        return true;
+    }
+
+    network::Node CommandExecutor::Impl::resolve_node(const std::string& arg, const std::string& lang, const std::size_t index) const
+    {
+        if (network::Node blank = 0; blank_argument(arg, index, blank)) return blank;
+
         network::Node nd = _n->get_node(arg, lang);
         if (nd == 0)
         {
@@ -93,8 +123,14 @@ namespace zelph::console
         return nd;
     }
 
-    network::Node CommandExecutor::Impl::resolve_single_node(const std::string& arg, bool prioritize_id) const
+    network::Node CommandExecutor::Impl::resolve_single_node(const std::string& arg, bool prioritize_id, const std::size_t index) const
     {
+        if (network::Node blank = 0; blank_argument(arg, index, blank))
+        {
+            if (blank != 0) return blank;
+            throw std::runtime_error("Unknown node '" + arg + "'");
+        }
+
         bool is_numeric = std::all_of(arg.begin(), arg.end(), ::iswdigit);
 
         if (is_numeric && prioritize_id)

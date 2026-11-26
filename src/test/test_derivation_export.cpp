@@ -466,3 +466,97 @@ TEST_CASE("run-export: a refused deduction is marked as refused, a real contradi
         CHECK(any_contains(genuine_lines, "\"kind\":\"contradiction\""));
         CHECK_FALSE(any_contains(genuine_lines, "\"refused\"")); });
 }
+
+// A consequence that a firing leaves unwritten because a blank node would
+// function as its predicate is neither of the two: no derivation took place,
+// and no contradiction exists. Reported as a refusal, it was a "contradiction"
+// record in the file, among those a consumer must set apart via their "refused"
+// field.
+TEST_CASE("run-export: a consequence left unwritten for its blank predicate writes no record")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        (void)collector;
+        const std::filesystem::path out =
+            std::filesystem::temp_directory_path() / "zelph_test_export_unwritten.jsonl";
+        std::filesystem::remove(out);
+
+        interactive.process(".auto-run");
+        interactive.process(".identity http://example.org/doc");
+        interactive.process("(X p Y) => (a Y b) (X seen Y)");
+        interactive.process("x p _:b0");
+        interactive.process(".run-export " + out.string());
+
+        REQUIRE(std::filesystem::exists(out));
+        const auto lines = lines_of(out);
+        std::filesystem::remove(out);
+
+        // The sole record is the one belonging to the consequence that was
+        // written.
+        REQUIRE(lines.size() == 1);
+        CHECK(lines[0].find("\"kind\":\"deduction\"") != std::string::npos);
+        CHECK(lines[0].find("\"names\":{\"zelph\":\"seen\"}") != std::string::npos);
+        CHECK_FALSE(any_contains(lines, "\"kind\":\"contradiction\""));
+        CHECK_FALSE(any_contains(lines, "\"refused\"")); });
+}
+
+// A blank node appears as "_:@" followed by the digits of its id. That is
+// not a name and carries no marks, so the export treated it as part of the
+// rendering text and merged it with the brackets and blanks around it: "
+// _:@068f...)" became a single string, in which a converter could not see
+// that a node is present.
+TEST_CASE("run-export: a blank node is an object of its own")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        (void)collector;
+        const std::filesystem::path out =
+            std::filesystem::temp_directory_path() / "zelph_test_export_blank.jsonl";
+        std::filesystem::remove(out);
+
+        interactive.process(".auto-run");
+        interactive.process(".identity http://example.org/doc");
+        interactive.process("(X knows Y) => (Y knownby X)");
+        interactive.process("_:b0 knows bob");
+
+        // A name does not change how the node is written: it is printed
+        // by its id regardless of what it carries.
+        interactive.process(".name _:b0 Ada");
+        interactive.process(".run-export " + out.string());
+
+        REQUIRE(std::filesystem::exists(out));
+        const auto lines = lines_of(out);
+        std::filesystem::remove(out);
+
+        REQUIRE(lines.size() == 1);
+        CHECK(lines[0].find("\"conclusion\":[\"(\",{\"names\":{\"zelph\":\"bob\"}},\" \",{\"names\":{\"zelph\":\"knownby\"}},\" \",{\"blank\":\"068feb5243a0018d\"},\")\"]") != std::string::npos);
+        CHECK(lines[0].find("\"premises\":[[\"(\",{\"blank\":\"068feb5243a0018d\"},\" \",{\"names\":{\"zelph\":\"knows\"}}") != std::string::npos);
+        CHECK(lines[0].find("_:@") == std::string::npos);
+        CHECK(lines[0].find("Ada") == std::string::npos); });
+}
+
+// Reversed: a node whose NAME is spelled like the printed form of a blank
+// node is a named node, printed in quotes, and stays the reference to a
+// named node.
+TEST_CASE("run-export: a name spelled like a blank node stays a named node")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        (void)collector;
+        const std::filesystem::path out =
+            std::filesystem::temp_directory_path() / "zelph_test_export_blank_name.jsonl";
+        std::filesystem::remove(out);
+
+        interactive.process(".auto-run");
+        interactive.process("(X knows Y) => (Y knownby X)");
+        interactive.process("\"_:@068feb5243a0018d\" knows bob");
+        interactive.process(".run-export " + out.string());
+
+        REQUIRE(std::filesystem::exists(out));
+        const auto lines = lines_of(out);
+        std::filesystem::remove(out);
+
+        REQUIRE(lines.size() == 1);
+        CHECK(lines[0].find("{\"names\":{\"zelph\":\"_:@068feb5243a0018d\"}}") != std::string::npos);
+        CHECK(lines[0].find("\"blank\"") == std::string::npos); });
+}

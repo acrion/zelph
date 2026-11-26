@@ -260,7 +260,12 @@ namespace zelph::console
             }
         }
 
-        if (target == 0) target = resolve_explain_pattern(parts);
+        // A blank token standing alone denotes a node, just as a name
+        // standing alone does. The pattern reading interprets it as that
+        // node, which is not a fact, so it is passed down to the branch
+        // below that says what a node is not.
+        network::Node lone_blank = 0;
+        if (target == 0 && !(parts.size() == 1 && blank_argument(parts[0], 1, lone_blank))) target = resolve_explain_pattern(parts);
 
         if (target == 0)
         {

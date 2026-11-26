@@ -244,12 +244,15 @@ namespace zelph
     }
 
     // What a quiet run met, retrieved directly from the engine after it:
-    // {:contradictions C :naf-final N}. C contains a struct for each
-    // contradiction (Reasoning::met_contradictions), N holds a {:fact F
+    // {:contradictions C :naf-final N :unwritten U}. C contains a struct for
+    // each contradiction (Reasoning::met_contradictions), N holds a {:fact F
     // :rule R} for every fact the negation check identified as unsupported
-    // (defeated_negations), listed in the order the check lists them. Only
-    // Janet values are constructed at this stage, so nothing can panic
-    // while a C++ container remains alive.
+    // (defeated_negations), listed in the order the check lists them, and U
+    // holds a {:rule R :predicate B} for each pair of a rule and a blank
+    // node where the run left a consequence unwritten
+    // (Reasoning::unwritten), ordered according to that function's output:
+    // what a loud run says in its note. Only Janet values are constructed at
+    // this stage, so nothing can panic while a C++ container remains alive.
     Janet ScriptEngine::Impl::quiet_run_result(const bool derived)
     {
         network::Reasoning& n = *s_instance->_n;
@@ -295,6 +298,16 @@ namespace zelph
             naf_final[i] = janet_wrap_struct(janet_struct_end(entry));
         }
 
+        const std::vector<std::pair<network::Node, network::Node>> left      = n.unwritten();
+        Janet*                                                     unwritten = janet_tuple_begin(static_cast<int32_t>(left.size()));
+        for (std::size_t i = 0; i < left.size(); ++i)
+        {
+            JanetKV* entry = janet_struct_begin(2);
+            janet_struct_put(entry, janet_ckeywordv("rule"), zelph_wrap_node(left[i].first));
+            janet_struct_put(entry, janet_ckeywordv("predicate"), zelph_wrap_node(left[i].second));
+            unwritten[i] = janet_wrap_struct(janet_struct_end(entry));
+        }
+
         // Using :derived, {:derived D} likewise: a distinct struct for
         // every fact the run derived (Reasoning::DerivedFact), in the
         // sequence of derivation.
@@ -330,9 +343,10 @@ namespace zelph
             derivations = janet_wrap_tuple(janet_tuple_end(d));
         }
 
-        JanetKV* result = janet_struct_begin(derived ? 3 : 2);
+        JanetKV* result = janet_struct_begin(derived ? 4 : 3);
         janet_struct_put(result, janet_ckeywordv("contradictions"), janet_wrap_tuple(janet_tuple_end(contradictions)));
         janet_struct_put(result, janet_ckeywordv("naf-final"), janet_wrap_tuple(janet_tuple_end(naf_final)));
+        janet_struct_put(result, janet_ckeywordv("unwritten"), janet_wrap_tuple(janet_tuple_end(unwritten)));
         if (derived) janet_struct_put(result, janet_ckeywordv("derived"), derivations);
         return janet_wrap_struct(janet_struct_end(result));
     }

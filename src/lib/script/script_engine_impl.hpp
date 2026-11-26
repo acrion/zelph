@@ -396,6 +396,9 @@ namespace zelph
         // See ScriptEngine::set_full_graph_guard.
         FullGraphGuard _full_graph_guard;
 
+        // See ScriptEngine::set_document_identity.
+        DocumentIdentity _document_identity;
+
         // The thread that owns _janet_env. zelph/import must run here: the REPL
         // pipeline it delegates to executes Janet code in the main VM, which is
         // not usable from other Janet threads (each has its own VM).
@@ -464,6 +467,11 @@ namespace zelph
         static Janet janet_cfun_zelph_out(int32_t argc, Janet* argv);
         static Janet janet_cfun_zelph_var(int32_t argc, Janet* argv);
         static Janet janet_cfun_zelph_resolve(int32_t argc, Janet* argv);
+        static Janet blank_impl(int32_t argc, Janet* argv, const char* name, bool by_label);
+        static Janet janet_cfun_zelph_blank(int32_t argc, Janet* argv);
+        static Janet janet_cfun_zelph_blank_at(int32_t argc, Janet* argv);
+        static Janet janet_cfun_zelph_blank_id(int32_t argc, Janet* argv);
+        static Janet janet_cfun_zelph_node_kind(int32_t argc, Janet* argv);
 
         // --- Implemented in janet_api_facts.cpp ---
 
@@ -596,6 +604,7 @@ namespace zelph
         bool            reads_complete(const std::string& code) const;
         std::string     build_smart_call(const std::string& func_name, const std::vector<Janet>& args, const std::string& role = "", const bool with_fact = false, const std::string& focused_code = "") const;
         std::string     transform_arg(Janet arg_tuple) const;
+        std::string     blank_code(const std::string& token) const;
 
         // Set while the code for a QUERY is generated. A ground path within a
         // query functions as a reachability test, just as it does in a rule;

@@ -967,6 +967,11 @@ std::optional<Reasoning::ConsequenceParts> Reasoning::predict_consequence(const 
         if (t == 0) return std::nullopt;
         parts.targets.insert(t);
     }
+
+    // The predicate of the consequence itself, which deduce examines
+    // before instantiating anything, or that of a statement within it,
+    // which the walks above met.
+    parts.unwritable = Zelph::Impl::is_blank(parts.relation) ? parts.relation : recipe.unwritable;
     return parts;
 }
 
@@ -1171,10 +1176,14 @@ void Reasoning::deduce(const Variables& variables, const Node parent, const int 
     // still carrying the unbound pattern variables, a conclusion over nodes
     // no condition can ever bind. They stay variables; see rebuild_rule.
     std::unordered_set<Node> deduction_vars;
+    bool                     beyond_the_search = false; // a `!` or a rule within the consequences
     for (const Node deduction : ctx.rule_deductions)
     {
-        if (deduction == core.Contradiction) continue;
-        if (deduction_is_rule(deduction)) continue;
+        if (deduction == core.Contradiction || deduction_is_rule(deduction))
+        {
+            beyond_the_search = true;
+            continue;
+        }
         std::vector<Node> history;
         collect_variables(this, deduction, deduction_vars, depth, history);
     }
@@ -1225,6 +1234,7 @@ void Reasoning::deduce(const Variables& variables, const Node parent, const int 
     // deduce() alone. The lock ensures that check and creation remain
     // together should firings ever run in parallel.
     std::unique_lock<std::mutex> witness_lock;
+    bool                         ended = false;
     if (!fresh_vars.empty())
     {
         witness_lock = std::unique_lock<std::mutex>(fresh_witness_mutex);
@@ -1242,7 +1252,7 @@ void Reasoning::deduce(const Variables& variables, const Node parent, const int 
             }
         }
 
-        if (consequences_already_exist(variables, fresh_vars, ctx.rule_deductions, parent, depth))
+        if (consequences_already_exist(variables, fresh_vars, ctx.rule_deductions, parent, depth, ctx.rule))
         {
             if (logging_active())
             {
@@ -1252,9 +1262,20 @@ void Reasoning::deduce(const Variables& variables, const Node parent, const int 
                 if (should_log(depth))
                     log(depth, "deduce", "consequences_already_exist => SKIP (termination guard)");
             }
-            return;
+
+            // The search checks neither a `!` nor a rule within the
+            // consequences (consequences_already_exist), so a firing that
+            // it ends still owes both: it proceeds solely for them, creates
+            // no witness, and writes nothing additional. Concluding here
+            // outright, a rule adjacent to a fresh variable was never
+            // derived once a witness existed, and a `!` was never raised:
+            // following `m s knows` and `knows p y`, the rule
+            // `(X p Y) => ((A X B) => (A r B)) (W s X)` did not write
+            // `(A knows B) => (A r B)`.
+            if (!beyond_the_search) return;
+            ended = true;
         }
-        if (logging_active())
+        else if (logging_active())
         {
             _prof.termination_guard_checks.fetch_add(1, std::memory_order_relaxed);
 
@@ -1271,6 +1292,7 @@ void Reasoning::deduce(const Variables& variables, const Node parent, const int 
     Variables augmented = variables;
     for (Node var : fresh_vars)
     {
+        if (ended) break;
         Node fresh;
         {
             std::lock_guard<std::mutex> lock(_mtx_network);
@@ -1296,7 +1318,7 @@ void Reasoning::deduce(const Variables& variables, const Node parent, const int 
     // skipped.
     const auto release_unheld = [&]
     {
-        if (fresh_vars.empty()) return;
+        if (fresh_vars.empty() || ended) return;
         std::lock_guard<std::mutex> lock_network(_mtx_network);
         std::vector<Node>           unheld;
         for (const Node var : fresh_vars)
@@ -1321,6 +1343,19 @@ void Reasoning::deduce(const Variables& variables, const Node parent, const int 
             throw contradiction_error(ctx.current_condition, augmented, parent, ctx.rule, core.Contradiction);
         }
 
+        // A firing that the witness search ended treats the rules among
+        // its consequences and nothing else. A rule that holds a fresh
+        // variable of this firing is excluded as well: it is written with
+        // the witness that the firing makes, and this one makes none.
+        if (ended)
+        {
+            if (!deduction_is_rule(deduction)) continue;
+            const std::unordered_set<Node> held_by_rule = rule_variables(deduction, parent, depth);
+            if (std::any_of(held_by_rule.begin(), held_by_rule.end(), [&](const Node v)
+                            { return fresh_vars.count(v) != 0; }))
+                continue;
+        }
+
         adjacency_set relations = relation_types_of(deduction);
 
         if (relations.size() != 1)
@@ -1338,6 +1373,21 @@ void Reasoning::deduce(const Variables& variables, const Node parent, const int 
         {
             if (should_log(depth))
                 log(depth, "deduce", "Deduction " + format(deduction) + ": relation resolved to null or to a variable, skipping");
+            continue;
+        }
+
+        // A binding that assigns a blank node as the predicate in the
+        // consequence: the statement is not among those the graph can hold,
+        // and it is left unwritten before anything of it is built. The
+        // firing proceeds with its other consequences, and the run says at
+        // its conclusion what was omitted (note_unwritten). Only a variable
+        // may represent a blank node in this context, as no rule holds one
+        // as a predicate.
+        if (Zelph::Impl::is_blank(rel))
+        {
+            note_unwritten(ctx.rule, rel);
+            if (should_log(depth))
+                log(depth, "deduce", "SKIP: " + format(deduction) + " would have the blank node " + format(rel) + " as its predicate");
             continue;
         }
 
@@ -1361,6 +1411,7 @@ void Reasoning::deduce(const Variables& variables, const Node parent, const int 
         bool          holds      = false; // the instance was there already, as a fact that holds
         Node          conclusion = 0;
         Node          claimed    = 0; // the claimed fact a derived marking met
+        Node          unwritten  = 0; // the blank node that would have served as a predicate inside the consequence
         std::string   refusal;
         // A derived RULE is not a statement ABOUT anything, so the focus
         // filter has no subject to match it against -- and suppressing the
@@ -1379,9 +1430,19 @@ void Reasoning::deduce(const Variables& variables, const Node parent, const int 
             // scratch has taken back what it had built). A scratch that
             // cannot open does not constitute a refusal and stops the run
             // (ConstructionScratch).
+            //
+            // A rule where the binding makes a blank node a predicate is not
+            // refused but left unwritten, just as a statement of that shape
+            // is (note_unwritten).
             try
             {
                 d = rebuild_rule(deduction, augmented, depth, parent, created);
+            }
+            catch (const predicate_error& ex)
+            {
+                unwritten = ex.predicate();
+                d         = 0;
+                created   = false;
             }
             catch (const std::runtime_error& ex)
             {
@@ -1492,11 +1553,23 @@ void Reasoning::deduce(const Variables& variables, const Node parent, const int 
             // identically while the run continues. It escaped the run
             // before, and with auto-run every later input line failed with
             // it.
+            //
+            // A consequence containing a statement whose predicate is a
+            // blank node, as provided by the binding, does not constitute a
+            // refusal: the consequence remains unwritten, just like one
+            // whose own predicate is a blank node (above), and whatever the
+            // instantiation built before encountering the statement is
+            // discarded along with the scratch.
             const auto instantiate = [&](const Node pattern, const Place& place) -> Node
             {
                 try
                 {
                     return instantiate_fact(this, pattern, augmented, depth, history, &recipe, place);
+                }
+                catch (const predicate_error& ex)
+                {
+                    unwritten = ex.predicate();
+                    return 0;
                 }
                 catch (const std::exception& ex)
                 {
@@ -1521,13 +1594,13 @@ void Reasoning::deduce(const Variables& variables, const Node parent, const int 
                 // a template variable that no query can ever match.
                 const Node var_rel = rel;
                 history            = {deduction};
-                if (!wrong) rel = instantiate(rel, Place{});
+                if (!wrong && unwritten == 0) rel = instantiate(rel, Place{});
 
                 if (rel != var_rel && should_log(depth))
                     log(depth, "deduce", "Instantiated relation: " + (rel ? format(rel) : "NULL") + " (from pattern " + format(var_rel) + ")");
             }
 
-            if (!rel || Zelph::Impl::is_var(rel)) source = 0;
+            if (!rel || Zelph::Impl::is_var(rel) || unwritten != 0) source = 0;
 
             if (source)
             {
@@ -1845,6 +1918,14 @@ void Reasoning::deduce(const Variables& variables, const Node parent, const int 
         if (wrong)
             throw contradiction_error(ctx.current_condition, augmented, parent, ctx.rule, conclusion, refusal, claimed);
 
+        if (unwritten != 0)
+        {
+            note_unwritten(ctx.rule, unwritten);
+            if (should_log(depth))
+                log(depth, "deduce", "SKIP: " + format(deduction) + " would hold a statement with the blank node " + format(unwritten) + " as its predicate");
+            continue;
+        }
+
         if (created || holds) ++held;
 
         if (created)
@@ -1970,8 +2051,16 @@ bool Reasoning::consequences_already_exist(
     const std::unordered_set<Node>& fresh_vars,
     const adjacency_set&            deductions,
     Node                            parent,
-    const int                       depth)
+    const int                       depth,
+    const Node                      rule)
 {
+    // Whether the binding holds a blank node at all: only in that case can
+    // it make one the predicate of a statement nested within a
+    // consequence, and only then is a consequence that nests something
+    // predicted for it below.
+    const bool binds_blank = std::any_of(condition_bindings.begin(), condition_bindings.end(), [](const auto& binding)
+                                         { return Zelph::Impl::is_blank(binding.second); });
+
     std::vector<Node> consequences;
     for (Node deduction : deductions)
     {
@@ -1994,7 +2083,7 @@ bool Reasoning::consequences_already_exist(
             std::lock_guard<std::mutex> lock(_mtx_network);
             const ConsequenceText&      text = consequence_text(deduction, parent, depth);
             if (instance_keeps_variable(deduction, text, condition_bindings, fresh_vars, parent, depth)) continue;
-            predicted = !predicate_never_an_object(text, *relations.begin(), condition_bindings, parent);
+            predicted = !predicate_never_an_object(text, *relations.begin(), condition_bindings, parent) || (binds_blank && text.claims_nested);
         }
 
         // A consequence whose prediction has its predicate listed among its
@@ -2009,8 +2098,24 @@ bool Reasoning::consequences_already_exist(
         // A flat consequence is determined by the binding
         // (predicate_never_an_object), and the prediction is generated
         // exclusively in cases where the binding fails to provide an answer.
+        //
+        // A consequence where the binding makes a blank node a predicate is
+        // never written either, whether that predicate belongs to the
+        // consequence itself or to a statement within it: deduce leaves it
+        // unwritten, and it is regarded as present for the same reason. It is
+        // noted here as well as there, since a firing that this check ends
+        // does not reach the consequence: `(X p Y) => (Z Y X)` would
+        // otherwise convey nothing regarding a Y that is a blank node.
         if (predicted)
-            if (const auto parts = predict_consequence(deduction, condition_bindings, depth, parent); parts && parts->targets.count(parts->relation) != 0) continue;
+            if (const auto parts = predict_consequence(deduction, condition_bindings, depth, parent); parts)
+            {
+                if (parts->unwritable != 0)
+                {
+                    note_unwritten(rule, parts->unwritable);
+                    continue;
+                }
+                if (parts->targets.count(parts->relation) != 0) continue;
+            }
 
         consequences.push_back(deduction);
     }

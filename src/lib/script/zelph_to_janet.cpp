@@ -62,10 +62,10 @@ namespace zelph
     }
 
     // Whether a PEG-AST argument constitutes a single token identifying a
-    // node -- an atom or a variable, whether focused or not -- instead of
-    // a term that builds one. A Janet value counts as a term: the outcome
-    // of an island is delivered as such, and whatever the island produced
-    // is part of the term.
+    // node -- an atom, a blank node or a variable, whether focused or not
+    // -- instead of a term that builds one. A Janet value counts as a
+    // term: the outcome of an island is delivered as such, and whatever
+    // the island produced is part of the term.
     static bool is_plain_token(Janet node)
     {
         const Janet* data;
@@ -73,7 +73,7 @@ namespace zelph
         if (!janet_indexed_view(node, &data, &len) || len < 2 || !janet_checktype(data[0], JANET_KEYWORD)) return false;
         const std::string type = reinterpret_cast<const char*>(janet_unwrap_keyword(data[0]));
         if (type == "focused") return is_plain_token(data[1]);
-        return type == "atom" || type == "var";
+        return type == "atom" || type == "var" || type == "blank";
     }
 
     // Returns true when a PEG-AST node refers to the node `text`, whether
@@ -207,7 +207,8 @@ namespace zelph
     // reads the syntax: a `=>` that a statement holds asks which
     // implications exist when its condition is a bare variable, or when it
     // holds a variable and none of its consequences can be asserted, each
-    // being a variable, a name different from `!`, a set, or a collection.
+    // being a variable, a name different from `!`, a blank node, a set, or
+    // a collection.
     static bool asks_implications_ast(const Janet* const data, const int32_t len)
     {
         const auto peel = [](Janet value)
@@ -235,7 +236,7 @@ namespace zelph
         {
             const Janet       consequence = peel(data[i]);
             const std::string type        = type_of(consequence);
-            if (type == "var" || type == "set" || type == "collection" || (type == "atom" && !is_atom(consequence, "!"))) continue;
+            if (type == "var" || type == "blank" || type == "set" || type == "collection" || (type == "atom" && !is_atom(consequence, "!"))) continue;
             return false;
         }
         for (int32_t i = 1; i < len; ++i)
@@ -313,8 +314,9 @@ namespace zelph
     }
 
     // Whether a claimed statement builds a part before the fact it states:
-    // an argument that is not an atom or a variable -- specifically, a
-    // nested statement, a set, a collection, a list, a number -- or a comma
+    // an argument that is not an atom, a blank node or a variable --
+    // specifically, a nested statement, a set, a collection, a list, a
+    // number -- or a comma
     // list, whose members are asserted one after the other. The fact()
     // function might still refuse the statement after that part has been
     // written: `x says ((a p b) r (a p b) (c d e))` kept `a p b` and
@@ -333,7 +335,7 @@ namespace zelph
             int32_t      part_len;
             if (!janet_indexed_view(data[i], &part, &part_len) || part_len < 1 || !janet_checktype(part[0], JANET_KEYWORD)) continue;
             const std::string type = reinterpret_cast<const char*>(janet_unwrap_keyword(part[0]));
-            if (type != "atom" && type != "var") return true;
+            if (type != "atom" && type != "var" && type != "blank") return true;
         }
         return false;
     }
@@ -1453,7 +1455,8 @@ namespace zelph
     // complete: when it consists of three or more values, or when a single
     // value stands independently -- such as a set, a collection, a list, a
     // focus, or a value positioned after a prefix (`¬`, `≈net`, `:p`). A
-    // name remains pending until the rest of its statement is provided, and
+    // name remains pending until the rest of its statement is provided, as
+    // does a blank node, and
     // a group -- "(a p b)", or a comma-separated sequence "(a p b, c q d)"
     // -- functions as a term that also awaits completion, except in cases
     // where a statement may be a group: either as a condition within a comma
@@ -1472,7 +1475,7 @@ namespace zelph
 
         const std::string type = reinterpret_cast<const char*>(janet_unwrap_keyword(value[0]));
         if (type == "nested" || type == "conjunction") return group;
-        return type != "atom" && type != "var" && type != "unquote" && type != "number";
+        return type != "atom" && type != "var" && type != "blank" && type != "unquote" && type != "number";
     }
 
     // Asked of the text as the grammar reads it, before the islands are
@@ -2441,9 +2444,13 @@ namespace zelph
                                     + "(zelph/path (zelph/fact $sf \"" + string::escape_atom(base) + "\" $sf) \"" + mode + "\")"
                                     + (_query_code ? ")" : "))"));
 
-            const std::string pred_code = string::is_var(pred)
-                                            ? "'" + pred
-                                            : "\"" + string::replace_all_copy(pred, "\"", "\\\"") + "\"";
+            // A blank token in predicate position functions as the blank
+            // node it is in all other contexts, which fact() then refuses
+            // as a predicate. Read as a name, ":_:b0 x" built a predicate
+            // named "_:b0".
+            const std::string pred_code = string::is_blank_token(pred) ? blank_code(pred)
+                                        : string::is_var(pred)         ? "'" + pred
+                                                                       : "\"" + string::replace_all_copy(pred, "\"", "\\\"") + "\"";
 
             return "(let [$sf " + transform_arg(data[2]) + "] (zelph/fact $sf " + pred_code + " $sf))";
         }
@@ -2482,6 +2489,10 @@ namespace zelph
             // to evaluate 'A' as a bound variable and fails if it's not defined.
             return "'" + val_str;
         }
+        else if (type == "blank")
+        {
+            return blank_code(val_str);
+        }
         else if (type == "atom")
         {
             // Atoms are strings in Janet -- but the capture is zelph TEXT,
@@ -2512,6 +2523,32 @@ namespace zelph
             return "(zelph/number " + content + ")";
         }
 
-        return "nil";
+        // A term kind the grammar produces and this function remains
+        // unaware of. Written as `nil`, it made the statement surrounding
+        // it evaluate to nothing, without a single word.
+        throw std::runtime_error("The parser read a term of the kind \"" + type + "\", for which no code is generated: \"" + val_str + "\".");
+    }
+
+    // The call a blank token becomes. A label is the blank node associated
+    // with that label in the document to which the line belongs, whose
+    // identity is recorded in the call here, at the moment the line is
+    // read: the code might execute after the reader has proceeded to a
+    // different document. A reference by id searches for the node and
+    // creates none: zelph/blank-id answers nil for an id the graph does not
+    // hold, and a statement cannot be formed from nothing, so the call
+    // raises the error itself. A token that is neither form is refused with
+    // a message identifying it (string::read_blank_token).
+    std::string ScriptEngine::Impl::blank_code(const std::string& token) const
+    {
+        const string::BlankToken blank = string::read_blank_token(token);
+        if (blank.reference)
+        {
+            const std::string reference = string::blank_reference(blank.id);
+            return "(or (zelph/blank-id \"" + reference.substr(3) + "\") (error \"The graph holds no blank node " + reference
+                 + ". This form refers to a blank node by its id and creates none.\"))";
+        }
+
+        if (!_document_identity) throw std::runtime_error("\"" + token + "\" names a blank node of a document, and this engine has not been told which document its lines belong to.");
+        return "(zelph/blank \"" + string::escape_atom(_document_identity()) + "\" \"" + string::escape_atom(blank.label) + "\")";
     }
 }

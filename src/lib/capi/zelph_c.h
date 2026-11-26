@@ -38,8 +38,16 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
  *     values. Results are written through out-parameters. No exception ever
  *     crosses this boundary; a failure sets the thread's last error, which
  *     zelph_last_error() returns.
- *   - A node is a uint64_t and IS its hash, so it is stable across calls and
- *     across a save/load cycle. 0 is not a node.
+ *   - A node is a uint64_t, stable across calls and through a save/load
+ *     cycle. A named node takes the subsequent value from the engine's node
+ *     counter, and a file stores it alongside its names, so a graph loaded
+ *     from that file resolves the name back to the same number, whereas an
+ *     engine constructing the same graph independently might assign it a
+ *     different one. A fact, a list, or a set constant IS the hash of its
+ *     components, so it yields the same number across every engine when
+ *     based on identical nodes, and the number assigned to a blank node is
+ *     derived from a hash of its document and either its label or its
+ *     ordinal. 0 is not a node.
  *   - Strings are UTF-8. Strings passed IN are borrowed for the duration of
  *     the call. Strings handed OUT are owned by the caller and released with
  *     zelph_string_free(); the sole exception is zelph_last_error(), which
@@ -69,7 +77,9 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
  * "zelph_resolve: '<name>' has no node, and creating one is main thread
  * only". Reading the graph
  * (zelph_fact_parts, zelph_list_elements, zelph_name, zelph_sources,
- * zelph_targets, zelph_exists) is permitted. A compiled net can be evaluated
+ * zelph_targets, zelph_exists, zelph_node_kind) is permitted. On a different
+ * thread, zelph_blank and zelph_blank_at perform only a lookup of a blank
+ * node, just as zelph_resolve does for a name. A compiled net can be evaluated
  * concurrently from any number of threads, even while another thread trains
  * the same net -- this assurance is provided by NeuralNet itself -- and
  * zelph_nn_write_back is also permitted on any thread: it solely updates the
@@ -197,6 +207,44 @@ extern "C"
     /* Resolve a name to its node, creating the node if it does not exist.
        `lang` may be null for the engine's current language. */
     ZELPH_EXPORT int32_t zelph_resolve(zelph_engine* engine, const char* name, const char* lang, zelph_node* out_node);
+
+    /* The kind of a node, as zelph_node_kind answers it. The kind is derived
+       solely from the id: NAMED refers to a node that takes its id from the
+       node counter (a named node, a core node, and every other such node),
+       FACT denotes a node whose id is the hash of its parts (a statement, a
+       set constant), and the final three are the kinds of rule text. */
+    enum zelph_kind
+    {
+        ZELPH_KIND_NAMED       = 0,
+        ZELPH_KIND_BLANK       = 1,
+        ZELPH_KIND_FACT        = 2,
+        ZELPH_KIND_VARIABLE    = 3,
+        ZELPH_KIND_SET_PATTERN = 4,
+        ZELPH_KIND_RECIPE      = 5,
+        ZELPH_KIND_TEMPLATE    = 6
+    };
+
+    /* The blank node that the document of this identity names by `label`,
+       creating the node if the graph does not already contain it. The
+       identifier of the node is determined solely by the two strings and by
+       nothing else, ensuring that the same pair always produces the same
+       node across every engine, and two documents never share a blank node.
+       The label is taken as given and is not required to conform to the form
+       a script writes. On a thread distinct from the engine's, the node is
+       only looked up, and one the graph does not contain is refused, just as
+       zelph_resolve refuses a name in that context. */
+    ZELPH_EXPORT int32_t zelph_blank(zelph_engine* engine, const char* identity, const char* label, zelph_node* out_node);
+
+    /* The blank node that this identity's document writes without a label,
+       identified by its anonymous node number `ordinal`, counted starting
+       from 0. Created and looked up as zelph_blank does. No label gives the
+       same node. */
+    ZELPH_EXPORT int32_t zelph_blank_at(zelph_engine* engine, const char* identity, uint64_t ordinal, zelph_node* out_node);
+
+    /* The kind of `node`, one of the zelph_kind values. Reads the identifier
+       and nothing from the graph, so it is permitted on every thread, and the
+       node need not exist. */
+    ZELPH_EXPORT int32_t zelph_node_kind(zelph_engine* engine, zelph_node node, int32_t* out_kind);
 
     /* Create the fact (subject predicate object...) and return its node. At
        least one object is required. The call functions as an assertion, as

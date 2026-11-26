@@ -30,7 +30,7 @@ fn main() -> Result<()> {
     assert_ne!(socrates.0, 0, "a resolved name is never node 0");
     assert!(z.exists(socrates, is_a, &[human])?, "the fact just asserted is in the graph");
 
-    // A node is its hash: the same construction reaches the same node, which
+    // A fact is its hash: the same construction reaches the same node, which
     // is the property every consumer's own identity handling rests on.
     assert_eq!(fact, z.fact(socrates, is_a, &[human])?);
 

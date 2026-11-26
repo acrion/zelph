@@ -28,6 +28,8 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include <cstdlib>
 #include <cstring>
 #include <stdexcept>
+#include <string_view>
+#include <system_error>
 
 #ifdef __linux__
     #include <fstream>
@@ -243,6 +245,45 @@ std::filesystem::path zelph::platform::path_from_utf8(const std::string& utf8)
 std::string zelph::platform::to_utf8(const std::u8string& text)
 {
     return std::string(text.begin(), text.end());
+}
+
+std::string zelph::platform::file_iri(const std::filesystem::path& file)
+{
+    std::error_code       ec;
+    std::filesystem::path path = std::filesystem::canonical(file, ec);
+    if (ec)
+    {
+        ec.clear();
+        path = std::filesystem::absolute(file, ec).lexically_normal();
+        if (ec) path = file;
+    }
+
+    const std::string text = to_utf8(path.generic_u8string());
+
+    // The path "/home/x" directly follows the empty host. A Windows drive
+    // path, "C:/x", gets the slash that marks the start of an absolute
+    // path, and a network path, "//host/x", brings its host along with
+    // it.
+    std::string iri = "file:";
+    if (text.rfind("//", 0) != 0) iri += text.rfind('/', 0) == 0 ? "//" : "///";
+
+    static constexpr char             digits[] = "0123456789ABCDEF";
+    static constexpr std::string_view as_is    = "-._~!$&'()*+,;=:@/";
+    for (const char ch : text)
+    {
+        const unsigned char c = static_cast<unsigned char>(ch);
+        if (c >= 0x80 || (c >= '0' && c <= '9') || (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || as_is.find(ch) != std::string_view::npos)
+        {
+            iri += ch;
+        }
+        else
+        {
+            iri += '%';
+            iri += digits[c >> 4];
+            iri += digits[c & 0xF];
+        }
+    }
+    return iri;
 }
 
 #ifdef _WIN32

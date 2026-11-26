@@ -32,7 +32,12 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include "string/string_utils.hpp"
 
 #include <atomic>
+#include <cstddef>
 #include <mutex>
+#include <stdexcept>
+#include <string>
+#include <string_view>
+#include <utility>
 
 // #define DEBUG_FORMAT_FACT
 
@@ -65,7 +70,136 @@ bool zelph::string::is_var(std::string token)
     static const std::string variable_names("ABCDEFGHIJKLMNOPQRSTUVWXYZ_");
     if (token.empty()) return false;
     if (token.size() == 1) return variable_names.find(*token.begin()) != std::string::npos;
-    return *token.begin() == '_';
+    return *token.begin() == '_' && !is_blank_token(token);
+}
+
+bool zelph::string::is_blank_token(const std::string_view token)
+{
+    return token.size() >= 2 && token[0] == '_' && token[1] == ':';
+}
+
+namespace
+{
+    // The code point starting at `at`, which is shifted past it, or 0xFFFFFFFF
+    // if the bytes do not constitute the UTF-8 form of one.
+    char32_t next_code_point(const std::string_view text, std::size_t& at)
+    {
+        constexpr char32_t invalid = 0xFFFFFFFF;
+
+        const auto byte = [&](const std::size_t i)
+        { return static_cast<unsigned char>(text[i]); };
+
+        const unsigned char lead = byte(at);
+        if (lead < 0x80)
+        {
+            ++at;
+            return lead;
+        }
+
+        const std::size_t length = lead >= 0xF0 ? 4 : lead >= 0xE0 ? 3
+                                                : lead >= 0xC0     ? 2
+                                                                   : 0;
+        if (length == 0 || lead > 0xF4 || at + length > text.size()) return invalid;
+
+        char32_t code = lead & (0xFF >> (length + 1));
+        for (std::size_t i = 1; i < length; ++i)
+        {
+            if ((byte(at + i) & 0xC0) != 0x80) return invalid;
+            code = (code << 6) | (byte(at + i) & 0x3F);
+        }
+
+        static constexpr char32_t smallest[] = {0, 0, 0x80, 0x800, 0x10000};
+        if (code < smallest[length] || code > 0x10FFFF || (code >= 0xD800 && code <= 0xDFFF)) return invalid;
+
+        at += length;
+        return code;
+    }
+
+    // Turtle's productions PN_CHARS_U and PN_CHARS.
+    bool is_pn_chars_u(const char32_t c)
+    {
+        static constexpr std::pair<char32_t, char32_t> ranges[] = {
+            {'A', 'Z'}, {'_', '_'}, {'a', 'z'}, {0x00C0, 0x00D6}, {0x00D8, 0x00F6}, {0x00F8, 0x02FF}, {0x0370, 0x037D}, {0x037F, 0x1FFF}, {0x200C, 0x200D}, {0x2070, 0x218F}, {0x2C00, 0x2FEF}, {0x3001, 0xD7FF}, {0xF900, 0xFDCF}, {0xFDF0, 0xFFFD}, {0x10000, 0xEFFFF}};
+        for (const auto& [first, last] : ranges)
+            if (c >= first && c <= last) return true;
+        return false;
+    }
+
+    bool is_pn_chars(const char32_t c)
+    {
+        return is_pn_chars_u(c) || c == '-' || (c >= '0' && c <= '9') || c == 0x00B7 || (c >= 0x0300 && c <= 0x036F) || (c >= 0x203F && c <= 0x2040);
+    }
+}
+
+bool zelph::string::is_blank_label(const std::string_view label)
+{
+    if (label.empty()) return false;
+
+    std::size_t at    = 0;
+    char32_t    c     = next_code_point(label, at);
+    bool        first = true;
+    for (;;)
+    {
+        const bool digit = c >= '0' && c <= '9';
+        if (first ? !(is_pn_chars_u(c) || digit) : !(is_pn_chars(c) || c == '.')) return false;
+        if (at == label.size()) return c != '.';
+        c     = next_code_point(label, at);
+        first = false;
+    }
+}
+
+std::string zelph::string::blank_reference(const network::Node id)
+{
+    static constexpr char digits[] = "0123456789abcdef";
+
+    std::string text = "_:@";
+    for (int shift = 60; shift >= 0; shift -= 4)
+        text += digits[(id >> shift) & 0xF];
+    return text;
+}
+
+zelph::network::Node zelph::string::blank_id_of_digits(const std::string_view digits)
+{
+    if (digits.size() != 16) return 0;
+
+    network::Node id = 0;
+    for (const char c : digits)
+    {
+        const int value = c >= '0' && c <= '9' ? c - '0' : c >= 'a' && c <= 'f' ? c - 'a' + 10
+                                                     : c >= 'A' && c <= 'F'     ? c - 'A' + 10
+                                                                                : -1;
+        if (value < 0) return 0;
+        id = (id << 4) | static_cast<network::Node>(value);
+    }
+    return network::Zelph::is_blank(id) ? id : 0;
+}
+
+BlankToken zelph::string::read_blank_token(const std::string_view token)
+{
+    const std::string quoted = "\"" + std::string(token) + "\"";
+    if (!is_blank_token(token)) throw std::runtime_error(quoted + " is not a blank node: a blank node begins with \"_:\".");
+
+    const std::string_view rest = token.substr(2);
+    BlankToken             result;
+
+    if (!rest.empty() && rest.front() == '@')
+    {
+        result.reference = true;
+        result.id        = blank_id_of_digits(rest.substr(1));
+        if (result.id == 0)
+            throw std::runtime_error(quoted + " does not refer to a blank node: \"_:@\" is followed by the sixteen hexadecimal digits of a blank node's id, "
+                                              "as zelph prints it, for example \"_:@06c41f6e9a3b7d15\".");
+        return result;
+    }
+
+    if (rest.empty()) throw std::runtime_error(quoted + " is not a blank node: a label has to follow the \"_:\", as in \"_:b0\".");
+
+    if (!is_blank_label(rest))
+        throw std::runtime_error(quoted + " is not a blank node: the label behind \"_:\" has to be one that Turtle accepts. It begins with a letter, a digit "
+                                          "or \"_\", continues with letters, digits, \"_\", \"-\" and \".\", and does not end with \".\".");
+
+    result.label = std::string(rest);
+    return result;
 }
 
 // The self-fact sugar ":pred subject" is only used where it reads back
@@ -384,6 +518,17 @@ void zelph::string::node_to_string(const network::Zelph* const z, std::string& r
             if (o != pred && r.count(o) == 0) objects.insert(o);
         return !objects.empty() && network::Zelph::create_hash(pred, pred, objects) == nd;
     };
+
+    // A blank node prints using its identifier, before any name is
+    // considered and irrespective of what the node carries: its label is
+    // not stored, and the identifier is the form that reads back as this
+    // node. Neither a name nor a variable, it carries no identifier marks,
+    // under which the leading underscore would enclose it in quotes.
+    if (network::Zelph::is_blank(resolved))
+    {
+        result = blank_reference(resolved);
+        return;
+    }
 
     const bool resolved_is_stmt = is_statement_node(resolved);
 

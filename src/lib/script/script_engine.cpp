@@ -294,7 +294,14 @@ void ScriptEngine::process_janet(const std::string& code, bool is_zelph_ast)
             // built (zelph/query-text). Similarly, when the statement
             // evaluates to no node: a focus on "negation" returns the
             // name.
+            //
+            // A focus on a blank node returns the node itself, because
+            // no text names it, and the statement is treated as one that
+            // a focus on a name would produce: nothing is echoed,
+            // claimed, or asked for the node, where `x says *_:b0`
+            // printed its id and `x says *foo` printed nothing.
             network::Node n = zelph_unwrap_node(out);
+            if (network::Zelph::is_blank(n)) n = 0;
             if (!statement.query_created.empty()) _pImpl->_n->mark_query_operands(n, statement.query_created, statement.query_refutations);
 
             // How far the claim of a statement walks (below).
@@ -650,6 +657,11 @@ void ScriptEngine::set_auto_run_predicate(AutoRunPredicate predicate)
 void ScriptEngine::set_full_graph_guard(FullGraphGuard guard)
 {
     _pImpl->_full_graph_guard = std::move(guard);
+}
+
+void ScriptEngine::set_document_identity(DocumentIdentity identity)
+{
+    _pImpl->_document_identity = std::move(identity);
 }
 
 bool ScriptEngine::has_keyword(const std::string& keyword) const

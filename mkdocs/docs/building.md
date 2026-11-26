@@ -57,9 +57,12 @@ or
 ./build/bin/zelph stdlib/examples/english.zph
 ```
 
-A script named on the command line runs as a **session**: exactly as if its
-lines had been typed, so it echoes each statement and prints the derivations
-as they are found. That is the same output `./build/bin/zelph < stdlib/examples/english.zph`
-produces, minus the banner and the prompts. Loading the same file as a
+A script named on the command line runs as a **session**: as though its lines
+had been entered manually, so it echoes each statement and prints the
+derivations as they are found. That is the same output
+`./build/bin/zelph < stdlib/examples/english.zph` produces, minus the banner
+and the prompts. The sole exception is a blank node expressed as `_:label`,
+which belongs to the file rather than to the session
+([Blank Nodes](concepts.md#blank-nodes)). Loading the same file as a
 **module** with `.import examples/english` is the quiet form – see
 [Scripts and Modules](modules.md).

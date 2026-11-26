@@ -25,6 +25,8 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #pragma once
 
+#include <zelph_export.h>
+
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
@@ -70,6 +72,16 @@ namespace zelph::platform
     // its link did not lead to it.
     std::filesystem::path path_from_utf8(const std::string& utf8);
     std::string           to_utf8(const std::u8string& text);
+
+    // The file IRI of a file (RFC 8089), made from its canonical absolute
+    // path: "file://" with an empty host, the path with "/" separating its
+    // parts, and a percent escape applied to every ASCII character that the
+    // path of an IRI does not accept in its raw form. A character not within
+    // ASCII remains unaltered. A path that cannot be made canonical, such as
+    // that of a file that does not exist, is entered as the absolute path it
+    // currently holds. The blank nodes of a script file are identified via
+    // this text, so it must remain unchanged for the same file.
+    ZELPH_EXPORT std::string file_iri(const std::filesystem::path& file);
 
 #ifdef _WIN32
     // Starts the program identified by the first word of `command_line`, using

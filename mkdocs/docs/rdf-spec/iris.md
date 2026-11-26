@@ -1,6 +1,6 @@
 # IRIs and the Namespace Table
 
-RDF identifies a resource via an IRI. zelph identifies a node through a name within a naming language. This page specifies how the two meet: each IRI is a named node, within a naming language of its own unless a table maps its namespace onto names already used by zelph networks. Nothing on this page has been implemented yet; a sentence about the present engine says "today".
+RDF identifies a resource via an IRI. zelph identifies a node through a name within a naming language. This page specifies how the two meet: each IRI is a named node, within a naming language of its own unless a table maps its namespace onto names already used by zelph networks. Of this page, the positions a blank node takes in a statement are implemented for the statements written by a script, a rule, and a program; everything else is specified but not yet implemented. A sentence about the present engine says "today".
 
 ## An IRI Is a Named Node
 
@@ -118,10 +118,10 @@ What may occupy a position:
 | Position | IRI node | Blank node | Value node |
 |---|---|---|---|
 | subject | affirmative | affirmative | not derived from a reader (RDF 1.1 does not permit literal subjects) |
-| predicate | affirmative | refused | refused |
+| predicate | affirmative | refused; a firing results in the statement remaining unwritten | refused |
 | object | affirmative | affirmative | affirmative |
 
-A triple having a blank node as its predicate is not RDF 1.1; a reader encountering one in a generalized source counts it and refrains from writing it. A triple **whose predicate is also its object**, for instance `P1269 P1659 P1659`, cannot be written either: zelph refuses such a statement today, because a fact is identified by its predicate, making it impossible for one node to serve as both the predicate and an object within the same statement. Every route counts such triples and reports them at the end of the import rather than writing them ([Importing RDF](import.md#the-import-report)); Wikidata’s truthy data held twelve of them on 4 November 2026 (counted on the Wikidata Query Service).
+A triple having a blank node as its predicate is not RDF 1.1; a reader encountering one in a generalized source counts it and refrains from writing it. A typed statement with a blank node as its predicate is refused with an error, just as is a call to a Janet, C, or Rust function that would write one. A rule whose firing would write one, whether at the top level of a consequence or nested within it, causes that consequence to stay unwritten while its other consequences are written; this is not a contradiction, and the run names the rule and the blank node in a note at its end, once in a session ([Blank Nodes](blank-nodes.md#a-firing-that-would-make-one-a-predicate)). A triple **whose predicate is also its object**, for instance `P1269 P1659 P1659`, cannot be written either: zelph refuses such a statement today, because a fact is identified by its predicate, making it impossible for one node to serve as both the predicate and an object within the same statement. Every route counts such triples and reports them at the end of the import rather than writing them ([Importing RDF](import.md#the-import-report)); Wikidata’s truthy data held twelve of them on 4 November 2026 (counted on the Wikidata Query Service).
 
 ## Writing, Display and Interfaces
 

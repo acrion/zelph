@@ -166,6 +166,122 @@ TEST_CASE("capi: a name resolves to one stable node, and back to the name")
     CHECK(text == nullptr);
 }
 
+// A host program that reads RDF directly assigns to each blank node the id that
+// zelph's internal readers and a script assign to it: the id is determined
+// solely by the document's identity and the label, hence the two ids here are
+// those computed by Python's hashlib.blake2b for identical byte sequences (see
+// test_blank_nodes.cpp for the derivation).
+TEST_CASE("capi: zelph_blank and zelph_blank_at find or create a blank node")
+{
+    Engine engine;
+
+    zelph_node labelled = 0;
+    REQUIRE(zelph_blank(engine, "http://example.org/doc", "b0", &labelled) == ZELPH_OK);
+    CHECK(labelled == 0x068feb5243a0018dull);
+
+    zelph_node anonymous = 0;
+    REQUIRE(zelph_blank_at(engine, "http://example.org/doc", 0, &anonymous) == ZELPH_OK);
+    CHECK(anonymous == 0x0589e7ef2255771dull);
+    REQUIRE(zelph_blank_at(engine, "http://example.org/doc", ~uint64_t{0}, &anonymous) == ZELPH_OK);
+    CHECK(anonymous == 0x06fa329a4e3b097aull);
+
+    SUBCASE("the same document and label are the same node, another document is another")
+    {
+        zelph_node again = 0;
+        REQUIRE(zelph_blank(engine, "http://example.org/doc", "b0", &again) == ZELPH_OK);
+        CHECK(again == labelled);
+
+        zelph_node elsewhere = 0;
+        REQUIRE(zelph_blank(engine, "http://example.org/other", "b0", &elsewhere) == ZELPH_OK);
+        CHECK(elsewhere == 0x06447ae5244b6adaull);
+    }
+
+    SUBCASE("the node stands in a fact as a subject and as an object, and has no name")
+    {
+        const zelph_node knows = engine.node("knows");
+        const zelph_node bob   = engine.node("bob");
+        zelph_node       fact  = 0;
+        REQUIRE(zelph_fact(engine, labelled, knows, &bob, 1, &fact) == ZELPH_OK);
+        REQUIRE(zelph_fact(engine, bob, knows, &labelled, 1, &fact) == ZELPH_OK);
+
+        zelph_node subject   = 0;
+        zelph_node predicate = 0;
+        zelph_node object    = 0;
+        size_t     count     = 1;
+        REQUIRE(zelph_fact_parts(engine, fact, &subject, &predicate, &object, &count) == ZELPH_OK);
+        CHECK(subject == bob);
+        CHECK(object == labelled);
+        CHECK(name_of(engine, labelled).empty());
+    }
+
+    SUBCASE("as a predicate it is refused")
+    {
+        const zelph_node x    = engine.node("x");
+        zelph_node       fact = 0;
+        CHECK(zelph_fact(engine, x, labelled, &x, 1, &fact) == ZELPH_RUNTIME_ERROR);
+        CHECK(std::string(zelph_last_error()).find("a blank node cannot be the predicate of a statement") != std::string::npos);
+    }
+
+    SUBCASE("a null argument is the caller's error")
+    {
+        zelph_node node = 0;
+        CHECK(zelph_blank(nullptr, "d", "b0", &node) == ZELPH_INVALID_ARGUMENT);
+        CHECK(zelph_blank(engine, nullptr, "b0", &node) == ZELPH_INVALID_ARGUMENT);
+        CHECK(zelph_blank(engine, "d", nullptr, &node) == ZELPH_INVALID_ARGUMENT);
+        CHECK(zelph_blank(engine, "d", "b0", nullptr) == ZELPH_INVALID_ARGUMENT);
+        CHECK(zelph_blank_at(nullptr, "d", 0, &node) == ZELPH_INVALID_ARGUMENT);
+        CHECK(zelph_blank_at(engine, nullptr, 0, &node) == ZELPH_INVALID_ARGUMENT);
+        CHECK(zelph_blank_at(engine, "d", 0, nullptr) == ZELPH_INVALID_ARGUMENT);
+    }
+}
+
+// A caller traversing a graph must distinguish the nodes it encounters
+// without relying on a name: a blank node, a named node, a statement, and
+// a variable are four kinds that an id says by itself.
+TEST_CASE("capi: zelph_node_kind answers the kind of a node")
+{
+    Engine engine;
+
+    const auto kind_of = [&](const zelph_node node)
+    {
+        int32_t kind = -1;
+        REQUIRE(zelph_node_kind(engine, node, &kind) == ZELPH_OK);
+        return kind;
+    };
+
+    zelph_node blank = 0;
+    REQUIRE(zelph_blank(engine, "http://example.org/doc", "b0", &blank) == ZELPH_OK);
+    CHECK(kind_of(blank) == ZELPH_KIND_BLANK);
+
+    const zelph_node bob = engine.node("bob");
+    CHECK(kind_of(bob) == ZELPH_KIND_NAMED);
+
+    zelph_node fact = 0;
+    REQUIRE(zelph_fact(engine, blank, engine.node("knows"), &bob, 1, &fact) == ZELPH_OK);
+    CHECK(kind_of(fact) == ZELPH_KIND_FACT);
+
+    zelph_node variable = 0;
+    REQUIRE(zelph_variable(engine, "X", &variable) == ZELPH_OK);
+    CHECK(kind_of(variable) == ZELPH_KIND_VARIABLE);
+
+    SUBCASE("the kind is read from the id, so the node does not have to exist")
+    {
+        CHECK(kind_of(0x0400000000000000ull) == ZELPH_KIND_BLANK);
+        CHECK(kind_of(0x1000000000000001ull) == ZELPH_KIND_SET_PATTERN);
+        CHECK(kind_of(0x2000000000000001ull) == ZELPH_KIND_RECIPE);
+        CHECK(kind_of(0x3000000000000001ull) == ZELPH_KIND_TEMPLATE);
+    }
+
+    SUBCASE("0 is no node, and a null argument is the caller's error")
+    {
+        int32_t kind = -1;
+        CHECK(zelph_node_kind(engine, 0, &kind) == ZELPH_INVALID_ARGUMENT);
+        CHECK(zelph_node_kind(nullptr, bob, &kind) == ZELPH_INVALID_ARGUMENT);
+        CHECK(zelph_node_kind(engine, bob, nullptr) == ZELPH_INVALID_ARGUMENT);
+        CHECK(kind == -1);
+    }
+}
+
 TEST_CASE("capi: an out-parameter array reports the size it needs")
 {
     Engine engine;
@@ -2064,6 +2180,47 @@ TEST_CASE("capi: on another thread a name resolves only when it already has a no
         return status; });
     CHECK(read.status == ZELPH_OK);
     CHECK(name == "known");
+}
+
+// Creating a blank node writes to the graph, which is owned by the
+// engine's thread. A thread that performs only reads, such as one that
+// evaluates a net, can still request a blank node the graph holds, just
+// as it can request a name.
+TEST_CASE("capi: on another thread a blank node is found only when the graph holds it")
+{
+    Engine     engine;
+    zelph_node known = 0;
+    REQUIRE(zelph_blank(engine, "http://example.org/doc", "b0", &known) == ZELPH_OK);
+
+    REQUIRE(zelph_cluster(engine, "probe") == ZELPH_OK);
+
+    zelph_node      found  = 0;
+    const OffThread lookup = off_thread([&]
+                                        { return zelph_blank(engine, "http://example.org/doc", "b0", &found); });
+    CHECK(lookup.status == ZELPH_OK);
+    CHECK(found == known);
+
+    zelph_node      created = 0;
+    const OffThread refused = off_thread([&]
+                                         { return zelph_blank(engine, "http://example.org/doc", "b1", &created); });
+    CHECK(refused.status == ZELPH_RUNTIME_ERROR);
+    CHECK(refused.message == "zelph_blank: the graph does not hold the blank node _:@05a67d20418a1f7d, and creating one is main thread only.");
+    CHECK(created == 0);
+
+    const OffThread refused_at = off_thread([&]
+                                            { return zelph_blank_at(engine, "http://example.org/doc", 0, &created); });
+    CHECK(refused_at.status == ZELPH_RUNTIME_ERROR);
+    CHECK(refused_at.message == "zelph_blank_at: the graph does not hold the blank node _:@0589e7ef2255771d, and creating one is main thread only.");
+    CHECK(created == 0);
+    CHECK(cluster_size(engine, "probe") == 0);
+
+    // The kind of a node reads the identifier alone and is permitted on
+    // every thread.
+    int32_t         kind = -1;
+    const OffThread read = off_thread([&]
+                                      { return zelph_node_kind(engine, known, &kind); });
+    CHECK(read.status == ZELPH_OK);
+    CHECK(kind == ZELPH_KIND_BLANK);
 }
 
 TEST_CASE("capi: on another thread the empty name gets the error the engine's thread gives")

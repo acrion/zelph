@@ -272,6 +272,36 @@ FetchContent_Declare(
 
 FetchContent_MakeAvailable(unordered_dense)
 
+# BLAKE2b gives a blank node its identifier (Zelph::blank_id), so every build
+# carries it, including the WebAssembly one. The reference implementation
+# does not number versions, and the two tags in its repository predate its
+# most recent fixes, so the pin is a commit, which versions.cpp prints as
+# well.
+set(ZELPH_BLAKE2_COMMIT ed1974ea83433eba7b2d95c5dcd9ac33cb847913)
+FetchContent_Declare(
+    blake2
+    GIT_REPOSITORY https://github.com/BLAKE2/BLAKE2.git
+    GIT_TAG ${ZELPH_BLAKE2_COMMIT}
+    SYSTEM
+)
+
+FetchContent_GetProperties(blake2)
+if (NOT blake2_POPULATED)
+    FetchContent_Populate(blake2)
+    add_library(blake2b STATIC
+        ${blake2_SOURCE_DIR}/ref/blake2b-ref.c
+    )
+    target_include_directories(blake2b PUBLIC ${blake2_SOURCE_DIR}/ref)
+    # The reference implementation assigns function names without a prefix
+    # (blake2b, blake2b_init). Hidden, they remain excluded from the
+    # shared library's exports, where a host program linking its own
+    # BLAKE2 would otherwise encounter them.
+    set_target_properties(blake2b PROPERTIES
+        POSITION_INDEPENDENT_CODE ON
+        C_VISIBILITY_PRESET hidden
+    )
+endif ()
+
 if(NOT ZELPH_WASM)
     FetchContent_Declare(
     bzip2
@@ -548,7 +578,8 @@ endif ()
 
 target_compile_options(zelph_lib PRIVATE $<$<CONFIG:Release>:${ZELPH_OPT_FLAGS}>)
 
-target_link_libraries(zelph_lib PRIVATE unordered_dense::unordered_dense janet_lib)
+target_link_libraries(zelph_lib PRIVATE unordered_dense::unordered_dense janet_lib blake2b)
+target_compile_definitions(zelph_lib PRIVATE ZELPH_BLAKE2_COMMIT="${ZELPH_BLAKE2_COMMIT}")
 if(NOT ZELPH_WASM)
     target_link_libraries(zelph_lib PRIVATE CapnProto::capnp bz2)
 endif()

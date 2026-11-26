@@ -48,7 +48,9 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <system_error>
+#include <utility>
 #include <vector>
 
 using namespace zelph;
@@ -381,6 +383,52 @@ namespace zelph::console
                     state.imported_module_ids.erase(id);
             }
         } module_id_claim{*_repl_state, module_ids};
+
+        // A script file constitutes a standalone document: a blank node
+        // label appearing on one of its lines represents the node
+        // associated with that label inside the file, regardless of whether
+        // the file serves as a module or a session script, and of which
+        // file or session imports it. Its identity is the file IRI
+        // corresponding to its canonical path, ensuring that the same file
+        // produces identical nodes across every run, unless a line of the
+        // file sets another with `.identity`.
+        //
+        // The IRI is generated upon the first label requesting it, and by
+        // then, a line within the file may have already altered the working
+        // directory: a path specified relatively is converted to absolute
+        // at this point, while it still leads to the file being opened.
+        // Converted to absolute at the first label, a script that had
+        // changed the directory beforehand assigned its labels the identity
+        // of a file located elsewhere, resulting in nodes different from
+        // those of the same script named by its absolute path.
+        struct DocumentScope
+        {
+            ReplState&  state;
+            std::string absolute;
+            DocumentScope(ReplState& s, const std::string& file, const bool resumed)
+                : state(s)
+            {
+                const std::filesystem::path path = platform::path_from_utf8(file);
+                if (path.is_relative())
+                {
+                    std::error_code             ec;
+                    const std::filesystem::path made = std::filesystem::absolute(path, ec);
+                    if (!ec) absolute = platform::to_utf8(made.u8string());
+                }
+
+                // The lines behind a `.new` in a session script keep the
+                // identity the file possessed before it
+                // (ReplState::resumed_identity).
+                state.documents.push_back({absolute.empty() ? std::string_view(file) : std::string_view(absolute),
+                                           resumed ? std::move(state.resumed_identity) : std::string()});
+                state.resumed_identity.clear();
+            }
+            ~DocumentScope()
+            {
+                if (state.reset_requested) state.resumed_identity = std::move(state.documents.back().identity);
+                state.documents.pop_back();
+            }
+        } document_scope{*_repl_state, resolved, !as_module && lines_done != 0};
 
         // The three suppressions that make a module a LIBRARY LOAD, each held
         // by an optional guard so that a session script simply does not take
@@ -993,7 +1041,7 @@ namespace zelph::console
                 continue;
             }
 
-            const network::Node nd = resolve_node(cmd[i], _n->lang());
+            const network::Node nd = resolve_node(cmd[i], _n->lang(), i);
             if (nd == 0)
                 throw std::runtime_error("Command .save-predicates: unknown predicate '" + cmd[i]
                                          + "' in language '" + _n->lang() + "'");
@@ -1017,6 +1065,31 @@ namespace zelph::console
         if (cmd.size() < 2) throw std::runtime_error("Command .import: Missing script path");
         // Tokens after the script path are passed to the script as arguments.
         import_file(cmd[1], std::vector<std::string>(cmd.begin() + 2, cmd.end()));
+    }
+
+    // The identity of the document to which the line of the command
+    // belongs, considered as a document of blank nodes: within a script
+    // file, that of the file itself, from this line onward to the end,
+    // and otherwise that of the session (ReplState::documents,
+    // ReplState::session_identity). A module thus names its blank nodes
+    // independently of its storage location, and leaves the identity of
+    // the session that imports it as it was, just as its `.lang` leaves
+    // the language of that session. Without an argument, the command
+    // shows the identity currently in force for its line.
+    void CommandExecutor::Impl::cmd_identity(const std::vector<std::string>& cmd)
+    {
+        if (cmd.size() > 2) throw std::runtime_error("Command .identity: expected at most one argument. Usage: .identity [iri]");
+
+        if (cmd.size() < 2)
+        {
+            _n->out_stream() << "The current identity is '" << document_identity(*_repl_state) << "'" << std::endl;
+            return;
+        }
+
+        if (_repl_state->documents.empty())
+            _repl_state->session_identity = cmd[1];
+        else
+            _repl_state->documents.back().identity = cmd[1];
     }
 
     void CommandExecutor::Impl::cmd_provides(const std::vector<std::string>& cmd)

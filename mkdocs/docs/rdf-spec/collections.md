@@ -1,6 +1,6 @@
 # Collections and Lists
 
-RDF writes a list as a chain of cells: each cell is a resource featuring an `rdf:first`, its element, and an `rdf:rest`, pointing to the subsequent cell, and the chain ends at `rdf:nil`. zelph maintains its own lists: a list is a term built from `cons` facts and terminates at `nil`, and two lists sharing identical elements are a single node. This page specifies how the first form becomes the second. Nothing on this page has been implemented to date; a sentence regarding the present engine says "today".
+RDF writes a list as a chain of cells: each cell is a resource featuring an `rdf:first`, its element, and an `rdf:rest`, pointing to the subsequent cell, and the chain ends at `rdf:nil`. zelph maintains its own lists: a list is a term built from `cons` facts and terminates at `nil`, and two lists sharing identical elements are a single node. This page specifies how the first form becomes the second. The conversion has not been implemented yet. Since blank nodes are implemented, what the page says about a list that holds a blank node already holds today for what a script writes. A sentence regarding the present engine says "today".
 
 ## One Kind of List
 
@@ -78,7 +78,7 @@ The step reports, on the diagnostic channel: chains converted, cells removed, ch
 
 ### Labels That a Conversion Used Up
 
-In a script file, a blank-node label remains valid until the file ends ([Blank Nodes](blank-nodes.md#in-a-script)). If a `turtle` block converted the chain that `_:c` was a cell of, `_:c` ceases to exist, and any subsequent line writing `_:c` would silently create a new, unrelated node. Such a line is refused with a message that names the list the cell was incorporated into. A head keeps its meaning: its label now refers to the list.
+In a script file, a blank-node label stays valid up to the point the file ends or a line changes the identity of the file ([Blank Nodes](blank-nodes.md#in-a-script)). If a `turtle` block converted the chain that `_:c` was a cell of, `_:c` ceases to exist, and any subsequent line writing `_:c` would silently create a new, unrelated node. Such a line is refused with a message that names the list the cell was incorporated into. A head keeps its meaning: its label now refers to the list.
 
 ## What Follows from a List Being a Value
 

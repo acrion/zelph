@@ -30,7 +30,7 @@
 
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 
-use zelph::{Activation, Channel, Engine, ErrorKind, Node};
+use zelph::{Activation, Channel, Engine, ErrorKind, Kind, Node};
 
 fn engine_lock() -> MutexGuard<'static, ()> {
     static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
@@ -82,6 +82,89 @@ fn a_name_resolves_to_one_stable_node_and_back() {
     let fact = z.fact(socrates, is_a, &[mortal]).unwrap();
     assert!(!fact.is_null());
     assert_eq!(z.name(fact).unwrap(), None);
+}
+
+// The identifier of a blank node is derived from the identity of its document
+// and its label, and from nothing an engine counts. The values here are those
+// Python's hashlib.blake2b gives for the bytes the specification lists, so the
+// Rust layer must pass both strings through unchanged.
+#[test]
+fn a_blank_node_is_found_or_created_by_its_document_and_label() {
+    let _guard = engine_lock();
+    let z = silent_engine();
+
+    let b0 = z.blank("http://example.org/doc", "b0").unwrap();
+    assert_eq!(b0, Node(0x068f_eb52_43a0_018d));
+    assert_eq!(b0, z.blank("http://example.org/doc", "b0").unwrap());
+    assert_eq!(
+        z.blank("http://example.org/other", "b0").unwrap(),
+        Node(0x0644_7ae5_244b_6ada)
+    );
+
+    // An anonymous node is recognized through its ordinal, a full 64-bit
+    // number.
+    assert_eq!(
+        z.blank_at("http://example.org/doc", 0).unwrap(),
+        Node(0x0589_e7ef_2255_771d)
+    );
+    assert_eq!(
+        z.blank_at("http://example.org/doc", u64::MAX).unwrap(),
+        Node(0x06fa_329a_4e3b_097a)
+    );
+
+    // It possesses no name, and it acts as a subject and an object just as any
+    // atom does.
+    assert_eq!(z.name(b0).unwrap(), None);
+    let knows = z.resolve("knows").unwrap();
+    let bob = z.resolve("bob").unwrap();
+    let fact = z.fact(b0, knows, &[bob]).unwrap();
+    assert_eq!(z.fact_parts(fact).unwrap(), (b0, knows, vec![bob]));
+
+    // As a predicate, it is refused, and the refusal arrives as an error.
+    let err = z.fact(bob, b0, &[bob]).expect_err("a blank node as a predicate");
+    assert_eq!(err.kind(), ErrorKind::Runtime);
+    assert!(err
+        .message()
+        .contains("a blank node cannot be the predicate of a statement"));
+
+    assert_eq!(
+        z.blank("a\0b", "b0").expect_err("NUL").kind(),
+        ErrorKind::InvalidArgument
+    );
+    assert_eq!(
+        z.blank_at("a\0b", 0).expect_err("NUL").kind(),
+        ErrorKind::InvalidArgument
+    );
+}
+
+// A program that walks a graph tells a blank node from a named node, a
+// statement, and a variable by asking for the kind, which the id says
+// by itself: the last three ids listed below correspond to no node that
+// the graph holds.
+#[test]
+fn the_kind_of_a_node_is_read_from_its_id() {
+    let _guard = engine_lock();
+    let z = silent_engine();
+
+    let b0 = z.blank("http://example.org/doc", "b0").unwrap();
+    let knows = z.resolve("knows").unwrap();
+    let bob = z.resolve("bob").unwrap();
+    let fact = z.fact(b0, knows, &[bob]).unwrap();
+    let variable = z.variable("X").unwrap();
+
+    assert_eq!(z.kind(b0).unwrap(), Kind::Blank);
+    assert_eq!(z.kind(bob).unwrap(), Kind::Named);
+    assert_eq!(z.kind(fact).unwrap(), Kind::Fact);
+    assert_eq!(z.kind(variable).unwrap(), Kind::Variable);
+
+    assert_eq!(z.kind(Node(0x1000_0000_0000_0001)).unwrap(), Kind::SetPattern);
+    assert_eq!(z.kind(Node(0x2000_0000_0000_0001)).unwrap(), Kind::Recipe);
+    assert_eq!(z.kind(Node(0x3000_0000_0000_0001)).unwrap(), Kind::Template);
+
+    assert_eq!(
+        z.kind(Node(0)).expect_err("0 is no node").kind(),
+        ErrorKind::InvalidArgument
+    );
 }
 
 #[test]
@@ -388,8 +471,9 @@ fn weights_survive_save_and_load_and_nodes_keep_their_identity() {
         let z = silent_engine();
         z.load(&path).unwrap();
 
-        // A node is its hash, so a name resolved in a fresh engine IS the node
-        // the file talks about. Nothing has to be mapped or remembered.
+        // The file stores every name alongside its corresponding node, so a
+        // name resolved within a fresh engine after the load IS the node
+        // referenced by the file. Nothing has to be mapped or remembered.
         assert_eq!(z.resolve("o1").unwrap(), saved_output);
 
         let input = z.resolve("In").unwrap();

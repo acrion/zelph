@@ -150,6 +150,21 @@ namespace zelph
         janet_def(_janet_env, "zelph/resolve", wrap((JanetCFunction)&guarded<&janet_cfun_zelph_resolve>), "(zelph/resolve name &opt lang)\nResolve a string to its node, creating it if needed. "
                                                                                                           "lang defaults to the current language (as set by .lang). On a thread other than the main thread it only looks the name up, and a name that has no node yet is refused there.");
 
+        janet_def(_janet_env, "zelph/blank", wrap((JanetCFunction)&guarded<&janet_cfun_zelph_blank>), "(zelph/blank identity label)\nThe blank node that the document of this identity names by label, creating it if needed: what `_:label` is in a script, whose document is the script file or the session. "
+                                                                                                      "The id of the node is derived from the two strings and from nothing else, so the same pair gives the same node in every engine, and two documents never share a blank node. "
+                                                                                                      "The label is taken as given and not held to the form a script writes. On a thread other than the main thread it only looks the node up, and a node the graph does not hold is refused there.");
+
+        janet_def(_janet_env, "zelph/blank-at", wrap((JanetCFunction)&guarded<&janet_cfun_zelph_blank_at>), "(zelph/blank-at identity ordinal)\nThe blank node that the document of this identity writes without a label, as its anonymous node number ordinal, counted from 0, creating it if needed. "
+                                                                                                            "No label gives the same node. On a thread other than the main thread it only looks the node up, and a node the graph does not hold is refused there.");
+
+        janet_def(_janet_env, "zelph/blank-id", wrap((JanetCFunction)&guarded<&janet_cfun_zelph_blank_id>), "(zelph/blank-id hex)\nThe blank node the graph holds under the id that the sixteen hexadecimal digits spell: what `_:@` and the digits are in a script, the form a blank node is printed in. "
+                                                                                                            "It refers to a node and creates none: nil for an id the graph does not hold, as zelph/lookup answers for a name without a node. "
+                                                                                                            "Digits that are not the id of a blank node are an error. Allowed on every thread.");
+
+        janet_def(_janet_env, "zelph/node-kind", wrap((JanetCFunction)&guarded<&janet_cfun_zelph_node_kind>), "(zelph/node-kind node)\nThe kind of a node as a keyword, read from its id alone: :named for a node that takes its id from the node counter (a named node, a core node, and every other such node), "
+                                                                                                              ":blank for a blank node, :fact for a node whose id is the hash of its parts (a statement, a set constant), :variable for a variable, "
+                                                                                                              "and :set-pattern, :recipe or :template for the three kinds of rule text. nil for a value that is no node. Allowed on every thread.");
+
         janet_def(_janet_env, "zelph/lookup", wrap((JanetCFunction)&guarded<&janet_cfun_zelph_lookup>), "(zelph/lookup name &opt lang)\nThe node that already carries the name in lang (default: the current language), or nil. Unlike zelph/resolve it creates nothing. "
                                                                                                         "A variable carrying the name is not its node, and a core spelling (\"~\", \"=>\") gives the core node in every language. Allowed on every thread.");
 
@@ -189,10 +204,12 @@ namespace zelph
                                                                                                   "Needed when driving zelph as a library: facts and rules created from Janet only take effect once the engine has run, "
                                                                                                   "and outside the REPL neither .run nor auto-run is reachable. Returns nil. "
                                                                                                   "With :quiet the run prints nothing -- no banner, deduction, contradiction, note or finding -- and returns "
-                                                                                                  "{:contradictions C :naf-final N}: C a tuple with one struct {:rule :conditions :conclusion :record :bindings} per distinct "
+                                                                                                  "{:contradictions C :naf-final N :unwritten U}: C a tuple with one struct {:rule :conditions :conclusion :record :bindings} per distinct "
                                                                                                   "contradiction the run met, in the order first met (:record is :new, :existing or :none); N a tuple of {:fact F :rule R}, "
                                                                                                   "one per fact found no longer justified while negation records are kept (check mode or .negation-records), "
-                                                                                                  "which check mode then does not raise for. With :derived as well (in either order), the struct adds :derived D: a tuple, in the order derived, "
+                                                                                                  "which check mode then does not raise for; U a tuple of {:rule R :predicate B}, one per pair of a rule and a blank node "
+                                                                                                  "for which the run left a consequence unwritten because the blank node would have been a predicate in it, "
+                                                                                                  "ordered by the text of the rule and then by the id of the node. With :derived as well (in either order), the struct adds :derived D: a tuple, in the order derived, "
                                                                                                   "of {:fact :rule :premises :absent :bindings} per derived fact, :premises the facts its positive conditions matched (by node id), "
                                                                                                   ":absent the patterns of its negated conditions, found absent; :derived without :quiet is refused. "
                                                                                                   "Any other argument is refused. Main thread only, and refused while a rule is being built.");
@@ -623,6 +640,7 @@ namespace zelph
         // 7. :focused -> *Element (Returns the element instead of the container)
         // 8. :unquote -> ,identifier (Reference to a Janet variable)
         // 9. :selffact -> :pred X (self-fact sugar: desugars to (X pred X))
+        // 10. :blank -> _:label or _:@id (a blank node)
         // Returns tagged tuples like [:atom "val"], [:list-compact "val"] or [:nested sub-stmt...] for C++ processing
         //
         // The grammar is expressed through adjacent string literals, which
@@ -751,11 +769,20 @@ namespace zelph
 
                 # Identifiers
                 :symchars (if-not :reserved 1)
-                :var-underscore (* "_" (any :symchars))
+                # A variable must start with underscore or be a single uppercase letter
+                :var-underscore (* "_" (not ":") (any :symchars))
                 :var-uppercase  (* (range "AZ") (not :symchars))
 
-                # A variable must start with underscore or be a single uppercase letter
-                :var-token (choice :var-underscore :var-uppercase)
+                # A blank node consists of "_:" paired with a label, or
+                # "_:@" followed by the digits of an identifier. An
+                # underscore immediately followed by a colon begins such a
+                # node and never a variable. The token ends where a bare
+                # name would end, and the grammar takes whatever comes after
+                # the "_:": what it must be is checked where the token
+                # becomes a call, so that a malformed one is an error that
+                # names it and gets no second reading as a variable or a
+                # name.
+                :blank-token (* "_:" (any :symchars))
 
                 # Atoms
                 # A quoted atom knows exactly two escapes, \" and \\, so that
@@ -776,7 +803,16 @@ namespace zelph
                 :op-single (capture (choice ">" "<"))
 
                 # Structure Tags
-                :tag-var    (group (* (constant :var)  (capture :var-token)))
+
+                # A variable or a blank node. Each form is attempted only
+                # behind a test of the first character of the value, so a
+                # value of any other kind pays for that test and nothing
+                # further: most values are names, and every value within a
+                # statement passes here.
+                :tag-underscore (choice (group (* (constant :var) (capture :var-underscore)))
+                                        (group (* (constant :blank) (capture :blank-token))))
+                :tag-var    (choice (* (> 0 "_") :tag-underscore)
+                                    (* (> 0 (range "AZ")) (group (* (constant :var) (capture :var-uppercase)))))
 
                 # Unquote: ,identifier references a Janet variable
                 :tag-unquote (group (* (constant :unquote) "," (capture (some :symchars))))

@@ -1,6 +1,6 @@
 # Engine Requirements
 
-The mapping is built into an engine whose first application is mathematics: rules that derive arithmetic, polynomial identities, and the refutation of a conjecture, on workloads whose cost is measured down to the instruction. This page states what the mapping may presuppose about that engine, what its implementation must preserve unchanged, and through which tests its completion is checked. The requirements are specified; the section detailing what the engine provides describes today’s engine.
+The mapping is built into an engine whose first application is mathematics: rules that derive arithmetic, polynomial identities, and the refutation of a conjecture, on workloads whose cost is measured down to the instruction. This page states what the mapping may presuppose about that engine, what its implementation must preserve unchanged, and through which tests its completion is checked. The requirements are specified; the section detailing what the engine provides describes today’s engine. What they demand for blank nodes is implemented: the parser’s handling of blank nodes, the refusal of a blank node during a merge and as a predicate, and the test that holds the ids. One path does not refuse a blank node as a predicate yet: the bulk path of the importers, which only the Wikidata importer takes today, and which never receives a blank node from it.
 
 ## What the Engine Provides
 
@@ -54,10 +54,10 @@ Below the scale of a dump, readers write facts via the standard creation process
 
 ## The Parser
 
-- The new forms, the code that turns them into calls, and every walker of the syntax tree are introduced simultaneously; a kind of term that the emitter lacks knowledge of triggers an error and is never written as `nil`, which is what an unknown kind silently becomes today.
+- The new forms, the code that turns them into calls, and every walker of the syntax tree are introduced simultaneously; a kind of term that the emitter lacks knowledge of triggers an error and is never written as `nil`. For the blank node, this is accomplished: its form, the call it becomes, and the walkers were all introduced together, and the emitter reports a kind it does not recognize as an error.
 - The message of a syntax error names the text that failed.
-- `_:` leaves every test for a variable.
-- The commands that take a node as an argument (`.node`, `.name`, and the rest) gain understanding of the three forms and the `&` constants.
+- `_:` leaves every test for a variable (implemented).
+- The commands that take a node as an argument (`.node`, `.name`, and the rest) gain understanding of the three forms and the `&` constants. They already accept a blank node in either of its two forms, and they create none ([Blank Nodes](blank-nodes.md#in-a-script)).
 - A text enclosed in quotation marks is transmitted with its length across every layer ([Storage](storage.md#programming-interfaces)).
 
 ## Tests
@@ -72,7 +72,7 @@ The implementation is complete when these are satisfied, in addition to the exis
 | namespace table | for each namespace in the table: mapping a full IRI yields the same node that the split form gives |
 | constants | `&-0` and `&0.0` are `&0`; `(neg zint &0)` prints in full; display then read under decimal, binary, and the NAND substrate; `&1\x2e5` is an error |
 | value store | a lexical form with U+0000 through script, Janet, C, Rust, save and load; the content index after a load; a partial view excluding the section |
-| blank nodes | fixed inputs and their identifiers, ensuring the derivation cannot shift without notice |
+| blank nodes | fixed inputs and their identifiers, ensuring the derivation cannot shift without notice (implemented) |
 | names | core spellings first in every language; chains; the label rules, independent of input order; a regenerated fixture for `mul` |
 | requests | a pass per level of negation; a renamed node re-read; requests pending after a load and answered after the import |
 | substrate | a load under a different substrate withdraws the reader; nested default imports served by the record |

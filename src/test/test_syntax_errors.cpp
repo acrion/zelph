@@ -87,6 +87,22 @@ TEST_CASE("syntax errors: a statement of two parts is named, not reported as an 
                              doctest::Contains("the condition, \"A father\""),
                              std::runtime_error);
 
+        // A blank node functions as a leaf within the syntax tree, just as
+        // a name does, and the message spells it exactly as it was
+        // entered. Taken for structure, it would read "(...) father".
+        CHECK_THROWS_WITH_AS(interactive.process("(_:b0 father, B father C) => (A grandfather C)"),
+                             doctest::Contains("condition 1 of the comma list, \"_:b0 father\""),
+                             std::runtime_error);
+
+        // A variable of that spelling reads the same there, so the line
+        // preceding it does not say which of the two the token is. When a
+        // role is named by the NODE its fragment evaluates to, it does: a
+        // focus on the token is the blank node, which prints by its id,
+        // whereas a variable prints as it was typed, "_:b0".
+        CHECK_THROWS_WITH_AS(interactive.process("(*_:b0 father x, B father C) => (A grandfather C)"),
+                             doctest::Contains("condition 1 of the comma list is \"_:@"),
+                             std::runtime_error);
+
         // A term in subject or in object position has no role to name, so the
         // fragment stands on its own.
         CHECK_THROWS_WITH_AS(interactive.process("(x q) r y"),

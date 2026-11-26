@@ -31,6 +31,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #include <memory>
 #include <string>
+#include <string_view>
 #include <unordered_set>
 
 namespace zelph::network
@@ -120,7 +121,47 @@ namespace zelph::string
     void          set_last_node(network::Node node);
     void          node_to_string(const network::Zelph* const z, std::string& result, const std::string& lang, network::Node node, const int max_objects = default_display_max_neighbors, const network::Variables& variables = {}, network::Node parent = 0, std::shared_ptr<std::unordered_set<network::Node>> history = nullptr, SchemeContext* ctx = nullptr);
     bool          is_inside_node_to_wstring();
-    bool          is_var(std::string token);
+
+    ZELPH_EXPORT bool is_var(std::string token);
+
+    // A token starting with "_:" denotes a blank node within a script. It
+    // is not a variable, despite beginning with an underscore, nor is it a
+    // name: instead, it is either a label, representing the blank node
+    // associated with that label in the document the token stands in, or
+    // "@" followed by the sixteen hexadecimal digits of an id, which refers
+    // to the blank node the graph holds under that id.
+    ZELPH_EXPORT bool is_blank_token(std::string_view token);
+
+    struct BlankToken
+    {
+        bool          reference{false}; // "_:@" and an id, in contrast to a label
+        std::string   label;            // for a label
+        network::Node id{0};            // for a reference
+    };
+
+    // What a blank token says. Throws std::runtime_error, with a message
+    // that names the token, for one that is neither form: an empty label, a
+    // label that Turtle does not recognize (is_blank_label), or an "@" that
+    // is not followed by the sixteen digits of a blank node's id.
+    ZELPH_EXPORT BlankToken read_blank_token(std::string_view token);
+
+    // Whether `label` is a blank node label in Turtle, the segment following
+    // the "_:", consisting of a letter, a digit, or "_", followed by
+    // letters, digits, "_", "-", ".", and additional characters defined by
+    // Turtle's production PN_CHARS, with the final character not being a
+    // ".". A token of a script is held to this production, ensuring that
+    // every label a script writes corresponds to one that a Turtle document
+    // can write for the same node.
+    ZELPH_EXPORT bool is_blank_label(std::string_view label);
+
+    // The form a blank node is printed and referenced by: "_:@" and the sixteen
+    // lowercase hexadecimal digits of its identifier.
+    ZELPH_EXPORT std::string blank_reference(network::Node id);
+
+    // The identifier formed by sixteen hexadecimal digits, in either case,
+    // or 0 when `digits` is anything other than a valid sequence or the id
+    // is not that of a blank node.
+    ZELPH_EXPORT network::Node blank_id_of_digits(std::string_view digits);
 
     /// A query's condition, expressed exactly as entered: a negated
     /// condition appearing on its own line prints as `¬(P)`, just like in a

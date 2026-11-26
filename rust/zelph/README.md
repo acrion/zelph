@@ -15,12 +15,12 @@ fn main() -> Result<()> {
     let human = z.resolve("human")?;
 
     let fact = z.fact(socrates, is_a, &[human])?;
-    assert_eq!(fact, z.fact(socrates, is_a, &[human])?); // a node is its hash
+    assert_eq!(fact, z.fact(socrates, is_a, &[human])?); // a fact is its hash
     Ok(())
 }
 ```
 
-Two properties shape the API. **A node is its hash**: values remain constant across calls and through a save and load cycle, and two structurally identical constructions collapse into one node. **The engine is single-threaded, a compiled network is not**: `Engine` is neither `Send` nor `Sync` and there is one per process, while `Net` is both and may be evaluated from many threads while another one trains it.
+Two properties shape the API. **A node is a stable number**: values stay unchanged across calls and persist through a save and load cycle. A named node takes the subsequent value from the engine’s node counter, and a saved file stores it together with its names; a fact, a list, or a set constant *is* the hash of its parts, so two structurally identical constructions collapse into a single node within every engine; and the number of a blank node is determined by a hash of its document and either its label or ordinal. **The engine is single-threaded, a compiled network is not**: `Engine` is neither `Send` nor `Sync` and there is one per process, while `Net` is both and may be evaluated from many threads while another one trains it.
 
 ## Linking
 

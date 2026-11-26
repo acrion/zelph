@@ -142,7 +142,9 @@ TEST_CASE("zelph/run: an argument other than :quiet and :derived is refused")
 // contradiction, and the list generated in check mode. A quiet run outputs
 // nothing and instead returns the same results as data: {:contradictions C
 // :naf-final N}. Each case described below pins a specific component of
-// that return, or a line that is no longer printed.
+// that return, or a line that is no longer printed. The struct holds a third
+// part, :unwritten, which is pinned beside the blank nodes it refers to
+// (test_blank_nodes.cpp).
 // ---------------------------------------------------------------------------
 
 namespace
@@ -305,7 +307,7 @@ TEST_CASE("zelph/run: :quiet :derived returns each derived fact with its rule an
         {
             collector.clear();
             interactive.process(R"js(%(zelph/out (string/format "keys=%j" (sorted (keys (zelph/run :quiet))))))js");
-            CHECK(any_output_contains(collector, "keys=@[:contradictions :naf-final]"));
+            CHECK(any_output_contains(collector, "keys=@[:contradictions :naf-final :unwritten]"));
         } });
 }
 
@@ -3188,6 +3190,38 @@ TEST_CASE("zelph/resolve: a Janet thread looks a name up, and creating one is re
         collector.clear();
         interactive.process(on_janet_thread(R"js((zelph/resolve "unheard-of"))js"));
         CHECK(any_output_contains(collector, "refused: zelph/resolve: 'unheard-of' has no node, and creating one is main thread only."));
+
+        CHECK(node_count(collector, interactive) == before); });
+}
+
+// The two functions that find or create a blank node write the graph when
+// the node is new. On a Janet thread they consequently provide a response
+// for a node the graph holds and refuse to create a new one, just as
+// zelph/resolve does with a name. The kind of a node and the lookup via
+// id read the graph alone and are answered on every thread.
+TEST_CASE("zelph/blank: a Janet thread looks a blank node up, and creating one is refused")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        interactive.process(".identity http://example.org/doc");
+        interactive.process("_:b0 knows bob");
+        const std::size_t before = node_count(collector, interactive);
+
+        collector.clear();
+        interactive.process(on_janet_thread(R"js((zelph/node-kind (zelph/blank "http://example.org/doc" "b0")))js"));
+        CHECK(any_output_contains(collector, "returned: blank"));
+
+        collector.clear();
+        interactive.process(on_janet_thread(R"js((zelph/node-kind (zelph/blank-id "068feb5243a0018d")))js"));
+        CHECK(any_output_contains(collector, "returned: blank"));
+
+        collector.clear();
+        interactive.process(on_janet_thread(R"js((zelph/blank "http://example.org/doc" "b1"))js"));
+        CHECK(any_output_contains(collector, "refused: zelph/blank: the graph does not hold the blank node _:@05a67d20418a1f7d, and creating one is main thread only."));
+
+        collector.clear();
+        interactive.process(on_janet_thread(R"js((zelph/blank-at "http://example.org/doc" 0))js"));
+        CHECK(any_output_contains(collector, "refused: zelph/blank-at: the graph does not hold the blank node _:@0589e7ef2255771d, and creating one is main thread only."));
 
         CHECK(node_count(collector, interactive) == before); });
 }

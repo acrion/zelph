@@ -3930,6 +3930,158 @@ TEST_CASE("fresh variables: a consequence whose constant predicate the binding g
         CHECK(collect_answers(collector).empty()); });
 }
 
+// The check for a prior witness examines neither a rule within the
+// consequences nor a `!`, and a firing that the check ended delivered
+// neither: with a witness already present before the rule fired, or with the
+// consequence holding the fresh variable counting as present, the rule
+// adjacent to it was never derived and the contradiction never raised. The
+// firing now proceeds for these two alone, without making a witness. The
+// single passes come first: the rule is written by the first and what it
+// derives by the second at the latest, and a firing that made a witness on
+// each pass would not let a run to the fixpoint end.
+TEST_CASE("fresh variables: a firing that the search for a witness ends still derives its rules and raises its contradiction")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        SUBCASE("a rule, beside a witness that was there before")
+        {
+            const std::vector<std::size_t> counts = counts_over_passes(collector, interactive, "m s knows\nknows p y\n(X p Y) => ((A X B) => (A r B)) (W s X)\nu knows v\n");
+            REQUIRE(counts[2] == counts[1]);
+            REQUIRE(counts[3] == counts[1]);
+
+            interactive.process(".semi-naive check");
+            interactive.process(".run");
+            CHECK(node_count(collector, interactive) == counts[1]);
+            collector.clear();
+            interactive.process("S r O");
+            CHECK(collect_answers(collector) == std::vector<std::string>{"u r v"});
+
+            // The witness is the one that was there before.
+            collector.clear();
+            interactive.process("S s knows");
+            CHECK(collect_answers(collector) == std::vector<std::string>{"m s knows"});
+        }
+
+        SUBCASE("a rule, beside a consequence that the binding gives its predicate as an object")
+        {
+            const std::vector<std::size_t> counts = counts_over_passes(collector, interactive, "a p a\n(X p Y) => ((A X B) => (A r B)) (W Y X)\nu a v\n");
+            REQUIRE(counts[2] == counts[1]);
+            REQUIRE(counts[3] == counts[1]);
+
+            interactive.process(".semi-naive check");
+            interactive.process(".run");
+            CHECK(node_count(collector, interactive) == counts[1]);
+            collector.clear();
+            interactive.process("S r O");
+            CHECK(collect_answers(collector) == std::vector<std::string>{"u r v"});
+        }
+
+        // The initial pass issues a report on a contradiction, and a
+        // subsequent one refrains from reporting it again after the
+        // network has recorded it.
+        const auto first_pass = [&](const std::string& lines)
+        {
+            interactive.process(".semi-naive off");
+            interactive.process(".auto-run"); // a toggle: off
+            process_lines(interactive, lines);
+            collector.clear();
+            interactive.process(".run-once");
+            const bool contradiction = has_contradiction(collector);
+
+            // No witness is present with it, in this pass or in any subsequent
+            // one.
+            const std::size_t nodes = node_count(collector, interactive);
+            interactive.process(".run-once");
+            interactive.process(".run");
+            CHECK(node_count(collector, interactive) == nodes);
+            return contradiction;
+        };
+
+        SUBCASE("a contradiction, beside a witness that was there before")
+        {
+            CHECK(first_pass("m s knows\nknows p y\n(X p Y) => ! (W s X)\n"));
+            collector.clear();
+            interactive.process("S s knows");
+            CHECK(collect_answers(collector) == std::vector<std::string>{"m s knows"});
+        }
+
+        SUBCASE("a contradiction, beside a consequence that the binding gives its predicate as an object")
+        {
+            CHECK(first_pass("knows p knows\n(X p Y) => ! (W Y X)\n"));
+        } });
+}
+
+// A rule among the consequences that names a fresh variable is written
+// using the witness of its firing, so whether it is written rests on the
+// search for a witness. A generator intended to give every binding a rule
+// over a node of that binding writes a set made from the binding where the
+// fresh variable would stand: under a binding, `{hub X}` is a set constant,
+// which is its members, so the rule the generator writes and the statement
+// beside it name one node, no witness is sought, and a later firing under
+// the same binding lands on the same set, statement, and rule. In both
+// subcases a search for a witness would succeed: a fact matching the
+// statement before the generator fires, and a statement naming the binding
+// inside the set only, which the first firing would fulfil for the second.
+// The single passes come first: the generator writes in the first, its
+// rules derive in the second at the latest, and a firing that built a new
+// set on each pass would not let a run to the fixpoint end.
+TEST_CASE("fresh variables: a set made from the binding in place of a fresh variable gives each binding its rule")
+{
+    run_both_modes([](auto& collector, auto& interactive)
+                   {
+        std::string statement; // the consequence located next to the rule
+        std::string found;     // the condition that finds that statement
+        std::string earlier;   // a fact that exists at the moment the generator fires for the first time
+        SUBCASE("beside a statement that an earlier fact matches")
+        {
+            statement = "({hub X} s X)";
+            found     = "H s X";
+            earlier   = "m s knows\n";
+        }
+        SUBCASE("beside a statement that names the binding inside the set only")
+        {
+            statement = "({hub X} likes c)";
+            found     = "H likes c";
+        }
+
+        // The generator is typed first, and nothing fires before the first
+        // pass: `hub` then becomes the oldest member of every set, and a set
+        // prints its members according to their age.
+        CAPTURE(statement);
+        const std::vector<std::size_t> counts = counts_over_passes(collector, interactive, "(X p Y) => ((A X B) => (A r {hub X})) " + statement + "\n" + earlier + "knows p y\nfoo p z\nu knows v\nw foo x\n");
+
+        // Checked without ending the case, so that the subcases behind this
+        // one run when it fails. What comes after proceeds to the fixpoint,
+        // which a count that still grows would not reach.
+        const bool settled = counts[2] == counts[1] && counts[3] == counts[1];
+        CHECK(settled);
+        if (!settled) return;
+
+        for (const char* mode : {".semi-naive on", ".semi-naive off", ".semi-naive check"})
+        {
+            CAPTURE(mode);
+            interactive.process(mode);
+            interactive.process(".run");
+            CHECK(node_count(collector, interactive) == counts[1]);
+        }
+
+        // One rule for each binding, in addition to the generator.
+        const std::vector<std::string> rules = listed_rule_texts(collector, interactive);
+        CHECK(rules.size() == 3);
+        CHECK(listed(rules, "(A knows B) => (A r {hub knows})"));
+        CHECK(listed(rules, "(A foo B) => (A r {hub foo})"));
+
+        // One node shared across both consequences: the join binds H once, to
+        // the object that the generated rule writes and to the subject of the
+        // statement.
+        interactive.process("(S r H, " + found + ") => (S through H)");
+        collector.clear();
+        interactive.process("S through O");
+        std::vector<std::string> through = collect_answers(collector);
+        std::ranges::sort(through);
+        CHECK(through == std::vector<std::string>{"u through {hub knows}", "w through {hub foo}"}); });
+}
+
 TEST_CASE("fresh variables: a fact that mentions a rule with variables in its conditions gets no witness")
 {
     // A firing keeps the condition set of a rule its consequence refers to,

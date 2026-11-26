@@ -107,6 +107,7 @@ namespace zelph::console
 #endif
         void cmd_import(const std::vector<std::string>& cmd) const;
         void cmd_provides(const std::vector<std::string>& cmd);
+        void cmd_identity(const std::vector<std::string>& cmd);
 
         // --- Implemented in commands_explore.cpp ---
 
@@ -125,8 +126,13 @@ namespace zelph::console
 
         // --- Implemented in command_patterns.cpp ---
 
-        network::Node resolve_node(const std::string& arg, const std::string& lang) const;
-        network::Node resolve_single_node(const std::string& arg, bool prioritize_id) const;
+        // `index` denotes the place of the argument within the command's
+        // token sequence, indicating whether it was entered without
+        // quotes or enclosed in them (blank_argument). The majority of
+        // commands take their node immediately following their name.
+        bool          blank_argument(const std::string& arg, std::size_t index, network::Node& node) const;
+        network::Node resolve_node(const std::string& arg, const std::string& lang, std::size_t index = 1) const;
+        network::Node resolve_single_node(const std::string& arg, bool prioritize_id, std::size_t index = 1) const;
         std::string   try_parse_pattern(const std::string& pattern, std::string* why = nullptr) const;
         network::Node evaluate_pattern_read_only(const std::string& code);
         std::string   pattern_code(const std::vector<std::string>& parts, const std::size_t first, bool* has_collection = nullptr, std::string* why = nullptr) const;

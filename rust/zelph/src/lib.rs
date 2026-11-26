@@ -45,9 +45,16 @@
 //!
 //! Two properties shape the API and are worth knowing before reading it:
 //!
-//! - **A node is its hash.** [`Node`] values are stable across calls and
-//!   across a save/load cycle, and structurally identical constructions
-//!   collapse to one node. Identity is derived, never assigned.
+//! - **A node is a stable number.** [`Node`] values remain consistent across
+//!   function calls and throughout a save/load cycle. A named node takes the
+//!   subsequent value from the engine's node counter, and a saved file
+//!   preserves it alongside its names, ensuring the number remains valid for
+//!   a graph loaded from that file, rather than for an engine constructing
+//!   the same graph independently. A fact, a list, or a set constant
+//!   *is* the hash of its parts, so structurally identical constructs
+//!   converge to a single node in every engine, and the number assigned to a
+//!   blank node is derived from a hash of its document and either its label
+//!   or ordinal.
 //! - **The engine is single-threaded, a compiled net is not.** [`Engine`] is
 //!   neither `Send` nor `Sync`; [`Net`] is both, and may be evaluated from
 //!   many threads while another trains it.
@@ -56,14 +63,17 @@ mod engine;
 mod error;
 mod net;
 
-pub use engine::{Activation, Channel, Engine};
+pub use engine::{Activation, Channel, Engine, Kind};
 pub use error::{Error, ErrorKind, Result};
 pub use net::{Net, Snapshot};
 
 /// A node of the graph.
 ///
-/// The value *is* the structure's hash, which is why it can be compared,
-/// stored and written to disk without a table mapping it to anything.
+/// The value corresponds to the node's id: the hash of its parts for a fact,
+/// a list, or a set constant; a hash derived from its document and either
+/// its label or ordinal for a blank node; and a value from the engine's node
+/// counter for a named node, which a saved file records alongside its names
+/// (see [`Engine::resolve`]).
 #[repr(transparent)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
 pub struct Node(pub u64);

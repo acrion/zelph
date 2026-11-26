@@ -10,7 +10,7 @@ zelph allows nodes to have names in multiple languages. This feature is particul
 
 This capability is fully utilized in the Wikidata integration, where node names include both human-readable labels and Wikidata identifiers. An item in zelph can be assigned names in any number of languages, with Wikidata IDs being handled as a specific language ("wikidata"). The way RDF terms connect to names and naming languages is specified in [Labels, Names and Languages](rdf-spec/names.md): IRIs serving as names within their own language, labels accompanied by a language tag as names in that language, and the fallback behaviour of a lookup when a language lacks a name.
 
-A `.lang` placed within a module, a script brought in via `.import` or `zelph/import`, applies exclusively to the module’s own lines. Upon completion of the import, the importer’s language is restored, even if the module halted due to an error, and a nested import gives the surrounding module its own language back in the same way. A module can thus name its vocabulary in a fixed language without moving the session into it.
+A `.lang` placed within a module, a script brought in via `.import` or `zelph/import`, applies exclusively to the module’s own lines. Upon completion of the import, the importer’s language is restored, even if the module halted due to an error, and a nested import gives the surrounding module its own language back in the same way. A module can thus name its vocabulary in a fixed language without moving the session into it. An `.identity` within a module functions as the module’s own, in the same way: it sets the identity of the module’s file, within which the file’s [blank nodes](concepts.md#blank-nodes) are named, from its line onward to the file’s end, and leaves the identity of the importer unchanged.
 
 The arithmetic modules use this method to name everything in `zelph`. When imported under `.lang en`, they leave the session in `en`, and their digits and rules are the nodes they would be under `.lang zelph`. An `&`-literal refers to the identical node across every language; operators are found by name just like any other node, hence a computation is written under `.lang zelph`:
 
@@ -24,7 +24,7 @@ zelph+> ? &3 + &4
 Answer: (&3 + &4) = &7
 ```
 
-When a script is executed as a session (`zelph script.zph`, as detailed below), it maintains its `.lang`: each line functions as though it had been manually typed.
+When a script is executed as a session (`zelph script.zph`, as detailed below), it maintains its `.lang`: each line functions as though it had been manually typed. The sole exception is a blank node written as `_:label`, which belongs to the file rather than to the session (see below).
 
 ## Two ways to run a script
 
@@ -40,8 +40,12 @@ resolves first against the working directory and then the standard library
 (the `.zph` extension is optional), and it accepts `.zph` and `.janet` only.
 
 `zelph <script> [args...]` from the shell runs a **session**: the file behaves
-exactly as if its lines had been typed, which is what the shebang
-`#!/usr/bin/env zelph` promises. Statements are echoed, they anchor the
+as though its lines were entered directly, fulfilling the promise made by the
+shebang `#!/usr/bin/env zelph`, with one exception: a
+[blank node](concepts.md#blank-nodes) written `_:label` belongs to the file
+rather than to the session, meaning the file consistently names the same blank
+nodes across every run, and an `.identity` within the file establishes the
+file’s identity. Statements are echoed, they anchor the
 deduction filter, and inference runs after each of them — so a line can read
 what the line before it derived. Everything about finding and preparing the
 file is shared with `.import`: the same resolution order, the same `.janet`

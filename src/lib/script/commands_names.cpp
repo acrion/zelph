@@ -95,8 +95,21 @@ namespace zelph::console
         std::string        current_lang         = _n->get_lang();
         std::string        target_lang          = cmd.size() == 3 ? _n->lang() : cmd[2];
 
+        // The node might be a blank node, represented in the same way a
+        // statement writes one. The new name cannot be: a token starting
+        // with "_:" denotes a blank node wherever it stands bare, and a
+        // name with that spelling must be enclosed in quotes. Without these
+        // two refusals, the subsequent branches would create a name or a
+        // named node from a blank token for which the graph holds no
+        // corresponding node.
+        const std::size_t new_name = cmd.size() - 1;
+        if (network::Node blank = 0; blank_argument(name_in_current_lang, 1, blank) && blank == 0)
+            throw std::runtime_error("Unknown node '" + name_in_current_lang + "'");
+        if (network::Node blank = 0; blank_argument(name_in_target_lang, new_name, blank))
+            throw std::runtime_error("Command .name: '" + name_in_target_lang + "' is a blank node and not a name. A name of this spelling is written in quotes.");
+
         network::Node node_in_current_lang = resolve_node(name_in_current_lang, current_lang);
-        network::Node node_in_target_lang  = resolve_node(name_in_target_lang, target_lang);
+        network::Node node_in_target_lang  = resolve_node(name_in_target_lang, target_lang, new_name);
 
         if (current_lang == target_lang)
         {

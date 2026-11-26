@@ -525,14 +525,16 @@ namespace zelph::network
             while (find_left(++_last) != nullptr)
                 ;
 
-            // The identifiers from value_set_pattern_class onward are set
-            // patterns (see is_value_set_pattern) or, starting from
-            // recipe_floor upward, parts of rule-built collections (see
-            // is_recipe); a counter positioned there would be read as one of
-            // these. In practice, 2^60 creates are unattainable.
-            if (_last >= value_set_pattern_class)
+            // The identifiers from blank_class onward are blank nodes (see
+            // is_blank), above them the range kept for the nodes of literal
+            // values, then set patterns (see is_value_set_pattern) and,
+            // starting from recipe_floor upward, parts of rule-built
+            // collections (see is_recipe); a counter positioned there would
+            // be read as one of these. In practice, 2^58 creates are
+            // unattainable.
+            if (_last >= counter_limit)
             {
-                throw std::logic_error("Network::create: the node counter reached the ids reserved for set patterns and rule-built collections");
+                throw std::logic_error("Network::create: the node counter reached the ids reserved for blank nodes, literal values, set patterns and rule-built collections");
             }
 
             if (is_var(_last))
@@ -566,10 +568,11 @@ namespace zelph::network
                 while (find_left(++_last) != nullptr)
                     ;
 
-                // The payload contains the 59 bits below construction_bit,
-                // which would make the id a construction's recipe. As with
-                // the guard in create(), 2^59 creates are out of reach.
-                if (_last >= construction_bit)
+                // The payload represents a value from the node counter,
+                // which ends at counter_limit for each node it numbers (see
+                // create()), far beneath construction_bit, which would make
+                // the id a construction's recipe.
+                if (_last >= counter_limit)
                 {
                     throw std::logic_error("Network::create_written_template: the node counter outgrew the payload of a written template");
                 }
@@ -601,7 +604,7 @@ namespace zelph::network
                 while (find_left(++_last) != nullptr)
                     ;
 
-                if (_last >= value_set_pattern_class)
+                if (_last >= counter_limit)
                 {
                     throw std::logic_error("Network::create_value_set_pattern: the node counter outgrew the payload of a set pattern");
                 }
@@ -697,8 +700,13 @@ namespace zelph::network
 
         // The classes associated with a node id, determined by
         // extracting bits 63..60:
-        //   0000  a counter (create): atoms, witnesses, the core nodes, and
-        //         every collection that is in no class below
+        //   0000  the class of atoms, which three ranges share: below
+        //         counter_limit a counter (create): named nodes, witnesses,
+        //         the core nodes, and every collection that is in no class
+        //         below; with bits 63..58 equal to 000001 a blank node
+        //         (is_blank), whose 58 payload bits come from a hash and
+        //         from no counter; with bits 63..59 equal to 00001 the range
+        //         kept for the nodes of literal values
         //   0001  a set pattern that set() built outside the template scope
         //         (create_value_set_pattern)
         //   0010  a value recipe: the term a firing builds for a template
@@ -716,10 +724,25 @@ namespace zelph::network
         }
 
         // Class 0000: a counter identifier, which is neither a variable
-        // nor a hash nor any of the recipe classes.
+        // nor a hash nor any of the recipe classes. A blank node is also
+        // one of these: it is an atom to every reader of a statement.
         static bool is_counter_id(Node a)
         {
             return (a & 0xF000000000000000ull) == 0;
+        }
+
+        // A blank node: bits 63..58 equal 000001. The identifier conveys
+        // this directly, without reference to any name, fact, or counter.
+        static bool is_blank(Node a)
+        {
+            return (a & blank_class_mask) == blank_class;
+        }
+
+        // The identifier for the blank node having this digest: the class
+        // together with the low 58 bits of the digest.
+        static Node blank_id(const std::uint64_t digest)
+        {
+            return blank_class | (digest & blank_payload);
         }
 
         // Whether the subject of a statement and each of its objects is a
@@ -824,6 +847,26 @@ namespace zelph::network
 
             create_entry(a);
             if (record == Record::yes) note_created(a);
+        }
+
+        // The node `a`, given an entry when the node map contains no entry
+        // for it: for a node whose identifier says by itself which node it
+        // is (a blank node), so whoever arrives at the identifier means the
+        // node present in the graph. An entry of which a partial load read
+        // one side remains unchanged, and a write requiring the other side
+        // is rejected, just as it is for every node within such a view (see
+        // connect).
+        Node find_or_create(const Node a)
+        {
+            std::unique_lock<std::shared_mutex> lock_left(_smtx_left);
+            std::unique_lock<std::shared_mutex> lock_right(_smtx_right);
+
+            if (_nodes.find(a) == _nodes.end())
+            {
+                create_entry(a);
+                note_created(a);
+            }
+            return a;
         }
 
         static inline Node mix_bits(Node seed, Node value)
@@ -2302,6 +2345,13 @@ namespace zelph::network
         static constexpr Node recipe_id_seed    = 0x7265636970653a31ull;
 
         static constexpr Node value_set_pattern_class = 0x1000000000000000ull; // bit 60 by itself: a set pattern built as a value
+
+        // The ranges within class 0000 (see is_recipe). The node counter
+        // assigns numbers to ids beneath counter_limit and is refused there.
+        static constexpr Node blank_class      = 0x0400000000000000ull; // bit 58 by itself: a blank node
+        static constexpr Node blank_class_mask = 0xFC00000000000000ull; // bits 63..58
+        static constexpr Node blank_payload    = 0x03FFFFFFFFFFFFFFull; // the 58 hash bits that identify a blank node
+        static constexpr Node counter_limit    = blank_class;
 
         // Called from all three node-materialization paths. Lock order is
         // always adjacency locks -> _mtx_clusters, never the reverse.

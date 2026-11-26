@@ -69,6 +69,7 @@ namespace zelph::script
 
             if (kind == "atom") return text;
             if (kind == "var") return text;
+            if (kind == "blank") return text;
             if (kind == "number") return "&" + text;
             if (kind == "unquote") return "," + text;
             if (kind == "list-compact") return "<" + text + ">";
@@ -108,8 +109,40 @@ namespace zelph::script
         return len - 1;
     }
 
+    namespace
+    {
+        // Throws for the first blank token within `arg` that does not
+        // represent a blank node, with the message a complete statement
+        // gets for it (string::read_blank_token).
+        void refuse_malformed_blank(Janet arg)
+        {
+            const Janet* data;
+            int32_t      len;
+            if (!janet_indexed_view(arg, &data, &len) || len < 1) return;
+            if (!janet_checktype(data[0], JANET_KEYWORD)) return;
+
+            if (len >= 2 && janet_checktype(data[1], JANET_STRING)
+                && std::string(reinterpret_cast<const char*>(janet_unwrap_keyword(data[0]))) == "blank")
+            {
+                zelph::string::read_blank_token(reinterpret_cast<const char*>(janet_unwrap_string(data[1])));
+                return;
+            }
+
+            for (int32_t i = 1; i < len; ++i)
+                refuse_malformed_blank(data[i]);
+        }
+    }
+
     void refuse_short_statement(const std::string& role, const std::vector<Janet>& args)
     {
+        // A token that is not a blank node is reported before the shape of
+        // the statement containing it. The messages below repeat the
+        // tokens exactly as they were typed, and `(_:a:b father, x likes
+        // y)` was advised to write the self-fact ":father _:a:b", using a
+        // token that no line accepts.
+        for (const Janet& a : args)
+            refuse_malformed_blank(a);
+
         std::string written;
         for (const Janet& a : args)
         {

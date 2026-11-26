@@ -34,9 +34,12 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include <zelph_export.h>
 
 #include <atomic>
+#include <cstdint>
 #include <functional>
 #include <optional>
+#include <stdexcept>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -96,6 +99,27 @@ namespace zelph::network
     {
         std::vector<DisplayScheme>                schemes;
         std::unordered_map<Node, OperatorDisplay> operators;
+    };
+
+    // What Zelph::fact throws when it refuses a statement due to the kind of
+    // node its predicate represents: a blank node. Every caller that reports
+    // a refusal takes it as the std::runtime_error it constitutes. The
+    // firing of a rule tells it apart from the other refusals, as a
+    // consequence that a binding gives such a predicate remains unwritten
+    // and does not constitute a contradiction (Reasoning::deduce).
+    class predicate_error final : public std::runtime_error
+    {
+    public:
+        predicate_error(const std::string& message, const Node predicate)
+            : std::runtime_error(message)
+            , _predicate(predicate)
+        {
+        }
+
+        Node predicate() const { return _predicate; }
+
+    private:
+        Node _predicate;
     };
 
     // The core semantic network engine. It manages the in-memory graph structure (nodes, edges),
@@ -214,8 +238,69 @@ namespace zelph::network
         static bool          is_recipe(Node a);
         static bool          is_value_recipe(Node a);
         static bool          is_template_id(Node a);
+        static bool          is_blank(Node a);
         static Node          bucket_term_id(Node bucket);
-        Answer               check_fact(Node subject, Node predicate, const adjacency_set& objects) const;
+
+        // The three methods by which a document refers to a blank node:
+        // through a label, via the position of an anonymous node within the
+        // document's anonymous nodes, or through the position of a
+        // collection cell among the document's collection cells. The value
+        // corresponds to the tag byte within the bytes from which the id is
+        // hashed (blank_id), thus it must never be altered.
+        enum class BlankSource : std::uint8_t
+        {
+            label           = 0x00,
+            anonymous       = 0x01,
+            collection_cell = 0x02
+        };
+
+        // The identifier of a blank node: its class and 58 bits derived from
+        // a BLAKE2b digest of 8 bytes, personalized with "zelph:blank:v1",
+        // based on the document's identity and what refers to the node
+        // within it. The bytes, each length and each ordinal represented as
+        // a 64-bit little-endian number: the length of the identity and the
+        // identity itself; the tag byte of the source; for a label, its
+        // length and the label, otherwise the ordinal. The digest is read as
+        // a little-endian number, and its least significant 58 bits
+        // constitute the payload. The id depends on nothing beyond this,
+        // hence two engines give the same id for the same document and the
+        // same label. The overload accepting an ordinal takes the two
+        // sources that provide one and throws std::invalid_argument when
+        // BlankSource::label is encountered.
+        static Node blank_id(std::string_view identity, std::string_view label);
+        static Node blank_id(std::string_view identity, BlankSource source, std::uint64_t ordinal);
+
+        // The blank node whose id blank_id gives for the same arguments,
+        // created when the graph does not yet contain it. Like node(), it
+        // writes to the graph and belongs to the thread that performs the
+        // writing.
+        Node blank(std::string_view identity, std::string_view label);
+        Node blank(std::string_view identity, BlankSource source, std::uint64_t ordinal);
+
+        // The same applies to an id that blank_id has given. Throws
+        // std::invalid_argument for an id that is not one of a blank node.
+        Node blank(Node id);
+
+        // The kind of node an id represents is determined solely by the
+        // class containing the id, and by nothing else, hence any thread
+        // can query it without requiring the node to exist. `named` is the
+        // range of ids that the node counter numbers: named nodes, the core
+        // nodes, and every other node that takes its id from the counter.
+        // `fact` is the class whose id is the hash of its parts, which
+        // holds statements and set constants. The last three classes are
+        // those of rule text.
+        enum class NodeKind
+        {
+            named,
+            blank,
+            fact,
+            variable,
+            set_pattern,
+            recipe,
+            rule_template
+        };
+        static NodeKind node_kind(Node a);
+        Answer          check_fact(Node subject, Node predicate, const adjacency_set& objects) const;
 
         // The predicates of a statement a rule writes, as a firing reads
         // them: filter(fact, IsA, RelationTypeCategory), which excludes the

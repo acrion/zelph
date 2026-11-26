@@ -386,6 +386,8 @@ namespace zelph::console
         { cmd_import(c); };
         _command_map[".provides"] = [this](auto& c)
         { cmd_provides(c); };
+        _command_map[".identity"] = [this](auto& c)
+        { cmd_identity(c); };
         _command_map[".auto-run"] = [this](auto& c)
         { cmd_auto_run(c); };
         _command_map[".deductions"] = [this](auto& c)

@@ -49,6 +49,23 @@ using namespace zelph::test;
 // tools/check_version_banner.py asks the app for this information.
 // ---------------------------------------------------------------------------
 
+// BLAKE2b derives the id of every blank node, so the specific
+// implementation a binary contains is integral to the composition of its
+// networks. The reference implementation carries no version number, and
+// the list names the commit that the build pins instead.
+TEST_CASE("versions: the list names BLAKE2 by the commit the build pins")
+{
+    const std::string description = zelph::get_version_description();
+    const std::string line        = "BLAKE2 (reference implementation, commit ";
+    const auto        at          = description.find(line);
+    REQUIRE(at != std::string::npos);
+
+    const std::string commit = description.substr(at + line.size(), 40);
+    CHECK(commit.size() == 40);
+    CHECK(commit.find_first_not_of("0123456789abcdef") == std::string::npos);
+    CHECK(description.compare(at + line.size() + 40, 1, ")") == 0);
+}
+
 TEST_CASE("versions: an allocator this process does not run on is not named")
 {
     const std::string description = zelph::get_version_description();

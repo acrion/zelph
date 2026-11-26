@@ -380,10 +380,13 @@ and spacing — or one of
 ```json
 {"names":{"wikidata":"Q5","en":"human"}}
 {"core":"!"}
+{"blank":"068feb5243a0018d"}
 ```
 
 the first naming one node in every language it is known by, the second one
 of zelph's own vocabulary (`!`, `~`, `=>`, …).
+The third is a [blank node](concepts.md#blank-nodes), given by the sixteen
+hexadecimal digits of its identifier, regardless of the names it may carry.
 
 Two properties are worth spelling out, because they are the point of the
 format:
@@ -418,6 +421,10 @@ here for reading):
 
 The field is absent on a contradiction of the data, so counting those means
 counting the records that do **not** have it.
+A statement that a firing leaves unwritten because a blank node would serve
+as its predicate is neither: it constitutes no contradiction, and the file
+retains nothing regarding it
+([Blank Nodes](rdf-spec/blank-nodes.md#a-firing-that-would-make-one-a-predicate)).
 
 Deduction printing is off during the run: rendering large derived terms
 dominates the wall-clock time, and the file is the point.

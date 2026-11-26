@@ -142,6 +142,13 @@ public:
             [this](const std::string& name)
             { _command_executor->require_full_graph_mode(name); });
 
+        // A label for a blank node in a statement is tied to the document from
+        // which its line originates: the script file being read, otherwise the
+        // session.
+        _script_engine->set_document_identity(
+            [this]
+            { return document_identity(*_repl_state); });
+
         _n->set_deduction_filter(filters_deductions(_repl_state->deduction_mode));
         _n->set_deduction_notice(announces_withheld(*_repl_state));
 

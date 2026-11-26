@@ -122,6 +122,14 @@ namespace zelph::network
         const LookedUpFacts*      refuted{nullptr}; // Firing: the refuted facts the consequence holds where it claims nothing, each in its specific place (Reasoning::refuted_consequence); instantiate_fact takes each one exactly as it is, at that precise place
 
         mutable std::optional<Node> key;
+
+        // Set by ground_instance when a statement the instantiation
+        // would write features a blank node as its predicate, to that
+        // node: Zelph::fact refuses such a statement, so the
+        // instantiation it predicts builds no instance. When multiple
+        // statements would be refused, it is the node that the
+        // instantiation meets first, and there the process terminates.
+        mutable Node unwritable{0};
     };
 
     // Where an instantiation meets a node within the statement. `Into` is the
@@ -530,6 +538,15 @@ namespace zelph::network
         };
         const std::vector<MetContradiction>& met_contradictions() const { return _met_contradictions; }
 
+        // The pairs consisting of a rule and a blank node, for which the
+        // most recent run left a consequence unwritten because the blank
+        // node would have served as a predicate within it
+        // (note_unwritten), each pair exactly once. Arranged in order by
+        // the rule's text and then by the blank node's id, ensuring the
+        // order depends on nothing that one run does differently from
+        // another run over the same input.
+        std::vector<std::pair<Node, Node>> unwritten() const;
+
         // A fact derived by a run started with `derived`, following the
         // sequence in which the run derived them. The premises consist of
         // the facts that its positive conditions matched, ordered by node id,
@@ -905,7 +922,28 @@ namespace zelph::network
                                         const std::unordered_set<Node>& fresh_vars,
                                         const adjacency_set&            deductions,
                                         Node                            parent,
-                                        const int                       depth);
+                                        const int                       depth,
+                                        Node                            rule);
+
+        // A firing of `rule` resulted in a consequence remaining unwritten,
+        // as the binding made the blank node `predicate` a predicate within
+        // it: either as the predicate of the consequence itself, of a
+        // statement contained within it, or of a statement in the rule that
+        // the consequence derives. Such a statement is none that the graph
+        // can hold (Zelph::fact refuses it), and in contrast to a refusal,
+        // it is not a contradiction: the firing proceeds to write its other
+        // consequences, the run continues, and nothing of it stays in the
+        // graph. The run keeps the pair instead and says at its conclusion
+        // what was omitted, each pair once per session
+        // (_unwritten_reported).
+        //
+        // Each pair is preserved only once, no matter how frequently the
+        // run meets it: the seeded firing and a classic pass both reach the
+        // same application, and one rule reaches the same blank node via
+        // every fact that binds it. The number a run reports therefore
+        // depends on neither the evaluation strategy nor the number of
+        // threads.
+        void note_unwritten(Node rule, Node predicate);
 
         // Does this node reach the input focus -- as itself, or, when the
         // deduction CONSTRUCTED it, through what it was constructed of?
@@ -989,11 +1027,21 @@ namespace zelph::network
         // instantiates for the consequence `deduction` under `variables`, as
         // predicted by ground_instance; a variable lacking a binding remains
         // unchanged. nullopt if any component cannot be predicted.
+        //
+        // `unwritable` is the blank node that the binding assigns as the
+        // predicate of the consequence, or of a statement that the
+        // instantiation would construct inside it, or 0: a firing leaves
+        // such a consequence unwritten (note_unwritten). Among several, it
+        // is the one the firing meets first: the predicate of the
+        // consequence itself, which deduce tests before building anything,
+        // and otherwise that of the first statement whose refusal the
+        // instantiation would meet.
         struct ConsequenceParts
         {
             Node          source{0};
             Node          relation{0};
             adjacency_set targets;
+            Node          unwritable{0};
         };
         std::optional<ConsequenceParts> predict_consequence(Node deduction, const Variables& variables, int depth, Node parent) const;
 
@@ -1531,6 +1579,33 @@ namespace zelph::network
         bool                                 _quiet{false};
         std::vector<MetContradiction>        _met_contradictions;
         std::set<std::pair<Node, Variables>> _met_keys;
+
+        // What note_unwritten keeps, as (rule, predicate), under
+        // _mtx_output: kept until the next run begins and stored in no
+        // other location, so a saved network holds nothing of it. One
+        // entry comprising two ids for each pair of a rule and a blank
+        // node that the rule would have written as a predicate, which a
+        // graph holds only when its rules bind predicates from positions
+        // where a blank node stands.
+        std::set<std::pair<Node, Node>> _unwritten;
+        // The pairs for which a run of this session has written its note.
+        // Shared in lifetime with _nn_reported and for the same reason: a
+        // pair is met anew with each traversal of the graph, an auto-run
+        // following every input line among them, and a line that returns
+        // each time says nothing after its initial occurrence. A run names
+        // the pairs not present here and enters them once the line has
+        // been written; a quiet run writes none and enters none, so the
+        // next run that prints names them. Cleared upon a load that
+        // supersedes the graph (forget_graph_state), and not stored
+        // anywhere.
+        std::set<std::pair<Node, Node>> _unwritten_reported;
+        // `pairs` in the order that unwritten() gives.
+        std::vector<std::pair<Node, Node>> by_rule_text(const std::set<std::pair<Node, Node>>& pairs) const;
+        // The line a run writes at its end for the pairs it names: the
+        // count, the rationale, and the first ten of them in the order
+        // given, each rule once and behind it the blank nodes of its
+        // pairs.
+        std::string unwritten_note(const std::vector<std::pair<Node, Node>>& pairs) const;
 
         // Set for the duration of a run started with `derived`; what it
         // collects remains stored, under _mtx_output, until either

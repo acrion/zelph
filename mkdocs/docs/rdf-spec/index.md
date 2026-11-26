@@ -2,7 +2,7 @@
 
 RDF identifies a resource through an IRI. It sets blank nodes apart from all other terms and IRIs apart from literals, and it distinguishes literals based on their datatype and language tag. zelph identifies a node via a name within a naming language. The two models do not align with one another inherently. This section specifies how they are reconciled: for each type of RDF term, which zelph node it becomes.
 
-Nothing of this has been implemented as of yet. The readers for the RDF syntaxes will be constructed based on these pages, and the engine will be enhanced with literal values and blank nodes as described. The pages are written so that anyone can derive what an import produces, and so that the developers constructing it can locate every name, form, and rule they need.
+Of this, blank nodes are implemented within the engine: their id class, the derivation of their ids, the forms `_:b0` and `_:@` with the digits of an id, the identity of a script file and that of a session, the action a firing performs when a blank node would serve as a predicate, and the associated functions ([Blank Nodes](blank-nodes.md)). Likewise implemented are the function that answers the kind of a node and the cap on the node counter set at 2^58 ([Storage](storage.md)). Everything else has not been implemented yet. The readers for the RDF syntaxes will be constructed based on these pages, and the engine will be enhanced with literal values as described. The pages are written so that anyone can derive what an import produces, and so that the developers constructing it can locate every name, form, and rule they need.
 
 ## The Mapping at a Glance
 
@@ -107,9 +107,9 @@ On a large scale, the same procedures enable validations on Wikidata that zelph 
 
 ## How to Read These Pages
 
-**Two kinds of transcripts.** A code block enclosed in a box titled "Specified – not yet implemented" shows behaviour that this specification requires and that no implementation currently fulfils. A code block featuring zelph prompts, situated outside such a box, is a real run of the present zelph: it shows what the engine does today, either a capability that the mapping builds on or the behaviour it supersedes. Both follow the convention outlined in the [Quick Start Guide](../quickstart.md#basic-usage): whatever comes after a prompt is input, and a line of `...` denotes omitted lines. The wording of a message within a specified session serves as an example; its content is binding.
+**Two kinds of transcripts.** A code block enclosed in a box titled "Specified – not yet implemented" shows behaviour that this specification requires and that no implementation currently fulfils. A code block featuring zelph prompts, situated outside such a box, is a real run of the present zelph: it shows what the engine does today – a capability that the mapping builds on, the behaviour it supersedes, or a part of the mapping that is implemented. Both follow the convention outlined in the [Quick Start Guide](../quickstart.md#basic-usage): whatever comes after a prompt is input, and a line of `...` denotes omitted lines. The wording of a message within a specified session serves as an example; its content is binding.
 
-**Today and specified.** Running text marks the current engine using "today". All other content on these pages represents specified behaviour.
+**Today, implemented, and specified.** Running text marks the current engine using "today". A part of the mapping that the engine already implements indicates "implemented", either in the opening paragraph of its page or at its current location. All other content on these pages represents specified behaviour.
 
 **Figures.** A number on these pages is accompanied by its basis and says whether it is computed or measured; a tally retrieved from Wikidata names its source and its date.
 

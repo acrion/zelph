@@ -1,6 +1,6 @@
 # Writing and Displaying Terms
 
-An RDF term needs to be writable in a zelph script and must be printed in a form that reads back as the identical node. This page specifies both: the forms a script uses for literals, IRIs, and blank nodes, the meaning these forms mean today and therefore what changes, how each type of node is displayed, the two number constants included with the mapping, and the `turtle` block for whole documents. Nothing on this page has been implemented yet; a sentence about the present engine says "today", and a transcript outside a box is a genuine execution of the present engine.
+An RDF term needs to be writable in a zelph script and must be printed in a form that reads back as the identical node. This page specifies both: the forms a script uses for literals, IRIs, and blank nodes, the meaning these forms mean today and therefore what changes, how each type of node is displayed, the two number constants included with the mapping, and the `turtle` block for whole documents. Of this page, the two forms of a blank node are implemented, in a script, on display, and in the export of derivations; all other elements are specified but not yet implemented. A sentence about the present engine says "today", and a transcript outside a box is a genuine execution of the present engine.
 
 ## The Forms at a Glance
 
@@ -13,7 +13,7 @@ The forms of literals, IRIs, and blank-node labels are taken from Turtle: each i
 | plain string | `"Berlin"^^xsd:string` | a syntax error; a quoted `"Berlin"` alone is a name, and continues to be one |
 | IRI | `<http://example.org/alice>` | a list of the characters enclosed within the brackets |
 | IRI through a prefix | `rdfs:label`, and `ex:alice` after `.prefix ex: …` | a name |
-| blank node | `_:b0`; on display `_:@` and sixteen hexadecimal digits | a variable |
+| blank node | `_:b0`; on display `_:@` and sixteen hexadecimal digits | a blank node: this form is implemented |
 | list | `<a b c>` | unchanged |
 | negative and decimal number | `&-5`, `&13.05` | errors |
 
@@ -97,20 +97,16 @@ An engine-answered condition checks the kind of the input it receives. `L zelph:
 
 `_:b0` refers to the blank node labelled `b0` within the document containing the line, and `_:@` followed by sixteen hexadecimal digits identifies an existing blank node by its unique identifier; both are specified on [Blank Nodes](blank-nodes.md#in-a-script). The Turtle constructs `[]` and `[ … ]` exist exclusively within a `turtle` block.
 
-Today, any token commencing with an underscore is a variable, meaning a line that holds `_:b0` is a query:
+Both forms are implemented. An underscore immediately followed by a colon begins a blank node, while every other token beginning with an underscore continues to function as a variable. Among the two lines containing an underscore below, the first asserts and the second asks:
 
 ```
+zelph> .identity http://example.org/doc
 zelph> alice knows bob
-zelph> carol knows dave
 zelph> _:b0 knows bob
+zelph> _b0 knows bob
+Answer: _:@068feb5243a0018d knows bob
 Answer: alice knows bob
-zelph> _:b0 knows _:b1
-Answer: alice knows bob
-Answer: carol knows dave
-...
 ```
-
-Within the mapping, an underscore immediately followed by a colon begins a blank node; all other tokens starting with an underscore remain variables.
 
 ## Lists
 
@@ -152,7 +148,7 @@ The new forms take spellings that zelph accepts today. Each alteration, and the 
 | `{"v"@en}`, `@{"v"@en}`, `< "v"@en >` | two members or elements: `v` and `@en` | a single literal |
 | `{"1"^^xsd:integer}` | two members: `1` and `^^xsd:integer` | a single literal |
 | `<http://example.org/a>` | a compact character list | an IRI |
-| `_:b0` | a variable | a blank node |
+| `_:b0` | a blank node, as this form is implemented | a blank node |
 | `rdf:…`, `rdfs:…`, `xsd:…`, `zelph:…` when interpreted under a session language other than `zelph` | a name in the session language | the IRI node or the engine’s node |
 | `&-5`, `&13.05` | errors | numbers |
 | `&1\x30` | read as `&10`, via an escape from the host language | an error |
@@ -193,12 +189,12 @@ Each node that the mapping brings into existence is printed in the form a script
 | negative integer, decimal number | `&-5`, `&13.05` within a term ([Numbers](numbers.md#constants)) |
 
 - **Escapes.** Within the quotation marks of a printed literal, `\\`, `\"`, `\n`, `\r`, and `\t` appear as these escape sequences, and every other control character, including U+0000, as `\u` followed by four digits. The two guillemets `«` and `»`, which the engine internally employs to mark names in its output, are written as `\u00AB` and `\u00BB`.
-- **Class before name.** A value node and a blank node are identified by their id class before any other consideration. Therefore, they never print as `??`, as an unnamed node does today, nor as the class they are an instance of, which is the manner in which today’s display shows an unnamed subject in a `~` statement.
+- **Class before name.** A value node and a blank node are identified by their id class before any other consideration. Therefore, they never print as `??`, as an unnamed node does today, nor as the class they are an instance of, which is the manner in which today’s display shows an unnamed subject in a `~` statement. For a blank node this is implemented.
 - **In every language.** The forms remain independent of the session language: a node named solely in the IRI language is rendered as `<IRI>` under `.lang en` just as it is under any other.
 - **Lists whose elements begin with `<`.** A list is rendered with a space inside its brackets whenever the initial element begins with `<` or the final element ends with `>`, ensuring that `< <http://example.org/a> x >` reads back; an element that would otherwise print as one of `<`, `>`, `<=`, `>=`, or `<=>` is enclosed in quotes. Today, a list composed of two one-element lists is output as `<<a> <b>>`, which is a syntax error if re-typed.
 - **Statements with themselves as an object.** A statement where the subject is its object is today displayed using the self-fact prefix, `:p o` for `o p o`. When the predicate is a node that prints as `<IRI>` or with a prefix, the statement is printed in full.
-- **A lone term waits.** A line that holds only a literal, an IRI, or a blank node serves as the start of a statement and awaits the remainder, just as a line consisting solely of a name does today.
-- **Exports.** `.run-export` writes a value node as an object of its own, `{"literal": {"lexical": …, "datatype": …, "lang": …}}`.
+- **A lone term waits.** A line that holds only a literal, an IRI, or a blank node serves as the start of a statement and awaits the remainder, just as a line consisting solely of a name does today. A line that holds only a blank node does so already.
+- **Exports.** `.run-export` writes a value node as an object of its own, `{"literal": {"lexical": …, "datatype": …, "lang": …}}`. It also outputs a blank node as a standalone object, `{"blank":"068feb5243a0018d"}` using the sixteen digits of its identifier, regardless of any names associated with the node; this behaviour is implemented.
 
 ### Registered Displays
 

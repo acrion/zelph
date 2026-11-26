@@ -8,7 +8,7 @@ Queries are statements that contain variables (single uppercase letters) but no 
 
 ## Key Features
 
-- **Variables**: Single uppercase letters (A-Z) or words starting with an underscore `_`, scoped to the query.
+- **Variables**: Single uppercase letters (A-Z) or words starting with an underscore `_`, scoped to the query. An underscore immediately followed by a colon, such as `_:b0`, begins a [blank node](concepts.md#blank-nodes) and does not denote a variable.
 - **Multi-Conditions (Conjunctions)**: Write the conditions as a comma list, e.g. `cond1, cond2`, or use the explicit form `*{(cond1) (cond2)} ~ conjunction`. Note that neither carries outer parentheses: `(cond1, cond2)` on a line by itself is a *term*, i.e. the beginning of a statement, and awaits the rest of it – see [Basic Usage](quickstart.md#basic-usage).
 - **Wildcards**: Use variables for subjects, relations, or objects (e.g., `X R Y` matches any triple).
 - **Inference Integration**: Automatically performed after each command (also see command `.auto-run`).

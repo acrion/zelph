@@ -67,6 +67,57 @@ pub enum Activation {
     LeakyRelu = 1,
 }
 
+/// The kind of node an id refers to, as [`Engine::kind`] answers it.
+///
+/// The kind is read from the id alone. A kind that this version of the crate
+/// does not know yet is reported as an error, never as one of these.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum Kind {
+    /// A node that takes its id from the node counter: a named node, a core
+    /// node, and any other node numbered by the counter, such as a collection
+    /// built as data or a node that a rule creates for a fresh variable.
+    Named,
+
+    /// A blank node, as provided by [`blank`](Engine::blank) and
+    /// [`blank_at`](Engine::blank_at).
+    Blank,
+
+    /// A node whose identifier corresponds to the hash of its parts:
+    /// a statement or a set constant.
+    Fact,
+
+    /// A variable.
+    Variable,
+
+    /// Rule text: a set pattern written beyond the scope of a rule.
+    SetPattern,
+
+    /// Rule text: the term a firing rule builds for a collection within its
+    /// text.
+    Recipe,
+
+    /// Rule text: a collection belonging to a rule, either written within the
+    /// rule's text or built for the rule by a rule that writes rules.
+    Template,
+}
+
+impl Kind {
+    fn from_raw(value: i32) -> Option<Kind> {
+        use zelph_sys::zelph_kind as raw;
+        Some(match value {
+            v if v == raw::ZELPH_KIND_NAMED as i32 => Kind::Named,
+            v if v == raw::ZELPH_KIND_BLANK as i32 => Kind::Blank,
+            v if v == raw::ZELPH_KIND_FACT as i32 => Kind::Fact,
+            v if v == raw::ZELPH_KIND_VARIABLE as i32 => Kind::Variable,
+            v if v == raw::ZELPH_KIND_SET_PATTERN as i32 => Kind::SetPattern,
+            v if v == raw::ZELPH_KIND_RECIPE as i32 => Kind::Recipe,
+            v if v == raw::ZELPH_KIND_TEMPLATE as i32 => Kind::Template,
+            _ => return None,
+        })
+    }
+}
+
 type OutputCallback = Box<dyn FnMut(Channel, &str, bool)>;
 
 /// A zelph instance: the graph, and the networks compiled out of it.
@@ -126,12 +177,18 @@ impl Engine {
         })
     }
 
-    /// Resolve a name to its node in the engine's current language, creating
-    /// the node if it does not exist yet.
+    /// Resolve a name to its corresponding node within the engine's current
+    /// language, creating the node if it has not yet been created.
     ///
-    /// A node *is* its hash, so the answer is stable: the same name yields
-    /// the same number in this engine, in the next one, and after a
-    /// [`load`](Engine::load) of a graph saved elsewhere.
+    /// A named node at creation acquires the next id from the engine's node
+    /// counter, making its number independent of the name. The same name
+    /// yields the same number for as long as this engine remains active, and
+    /// once more after a [`load`](Engine::load) of the file a graph was saved
+    /// to, because the file preserves names alongside their nodes. A
+    /// different engine constructing the same graph independently might
+    /// assign the name a different number: what identifies the node across
+    /// engines is its name, not its id. A statement is the hash of its parts,
+    /// so over the same nodes it is the same node in every engine.
     pub fn resolve(&self, name: &str) -> Result<Node> {
         self.resolve_impl(name, None)
     }
@@ -157,6 +214,56 @@ impl Engine {
         })?;
 
         Ok(Node(node))
+    }
+
+    /// The blank node that the document of this `identity` names by `label`,
+    /// created if the graph does not already contain it.
+    ///
+    /// The identifier of a blank node is derived solely from the two strings
+    /// and from nothing else: the same pair gives the same node within this
+    /// engine and across every other, and two documents never share a blank
+    /// node, even if both use the same label. The label is taken as given
+    /// and not held to the form a script writes.
+    pub fn blank(&self, identity: &str, label: &str) -> Result<Node> {
+        let identity = cstring(identity)?;
+        let label = cstring(label)?;
+        let mut node: zelph_sys::zelph_node = 0;
+
+        check(unsafe {
+            zelph_sys::zelph_blank(self.raw, identity.as_ptr(), label.as_ptr(), &mut node)
+        })?;
+
+        Ok(Node(node))
+    }
+
+    /// The blank node that the document of this `identity` writes without a
+    /// label, as its anonymous node number `ordinal`, counted starting from
+    /// 0. Created as [`blank`](Engine::blank) creates one; no label gives the
+    /// same node.
+    pub fn blank_at(&self, identity: &str, ordinal: u64) -> Result<Node> {
+        let identity = cstring(identity)?;
+        let mut node: zelph_sys::zelph_node = 0;
+
+        check(unsafe {
+            zelph_sys::zelph_blank_at(self.raw, identity.as_ptr(), ordinal, &mut node)
+        })?;
+
+        Ok(Node(node))
+    }
+
+    /// The kind of node that `node` is. The answer is read from the id
+    /// alone, so the node need not be present in the graph.
+    pub fn kind(&self, node: Node) -> Result<Kind> {
+        let mut kind: i32 = 0;
+
+        check(unsafe { zelph_sys::zelph_node_kind(self.raw, node.0, &mut kind) })?;
+
+        Kind::from_raw(kind).ok_or_else(|| {
+            Error::new(
+                ErrorKind::Runtime,
+                format!("zelph_node_kind answered {kind}, a kind this version of the crate does not know"),
+            )
+        })
     }
 
     /// Assert the fact `(subject predicate object...)` and return its node.

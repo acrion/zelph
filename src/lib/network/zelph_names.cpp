@@ -82,6 +82,22 @@ namespace
         return s.str();
     }
 
+    // A blank node is recognized by its document and its label, and by
+    // nothing a name conveys: if merged with another node, it would become
+    // that node, or the other node would take an identifier tied to a
+    // document. A name that another node holds therefore cannot be given to
+    // a blank node, and the name a blank node holds cannot be given to
+    // another node.
+    std::string blank_merge_refusal(const std::string& name, const zelph::network::Node holder, const std::string& lang, const zelph::network::Node blank)
+    {
+        std::stringstream s;
+        s << "Requested name '" << name << "' is already used by node " << holder
+          << " in language '" << lang
+          << "'. Merging the two nodes is impossible because node " << blank
+          << " is a blank node, and a blank node merges with no other.";
+        return s.str();
+    }
+
     // A core node's spelling ("~", "in", "=>", ...) is not a name within any
     // single language: the parser reads it as the core node across all
     // languages unless the language gives it to a node of its own. Handing it
@@ -258,6 +274,11 @@ bool Zelph::resolve_name_conflict_locked(const Node         node,
     if (is_rule_template(from) || is_rule_template(into))
     {
         throw std::runtime_error(template_merge_refusal(name, conflict_node, lang, is_rule_template(from) ? from : into));
+    }
+
+    if (Impl::is_blank(from) || Impl::is_blank(into))
+    {
+        throw std::runtime_error(blank_merge_refusal(name, conflict_node, lang, Impl::is_blank(from) ? from : into));
     }
 
     // In whichever language the two have a common name, a node in the
@@ -723,9 +744,9 @@ Node Zelph::set_name(const std::string& name_in_current_lang,
         }
 
         // A merge is rejected before any modification, including the names, if
-        // a collection of a rule's text is involved, if the name matches the
-        // spelling of a core node, or if both nodes are core nodes -- the
-        // refusals of resolve_name_conflict_locked.
+        // a collection of a rule's text or a blank node is involved, if the
+        // name matches the spelling of a core node, or if both nodes are core
+        // nodes -- the refusals of resolve_name_conflict_locked.
         {
             Node other         = 0;
             bool core_spelling = false;
@@ -744,6 +765,8 @@ Node Zelph::set_name(const std::string& name_in_current_lang,
                     throw std::runtime_error(core_merge_refusal(name_in_current_lang, other, _lang));
                 if (is_rule_template(other) || is_rule_template(result_node))
                     throw std::runtime_error(template_merge_refusal(name_in_current_lang, other, _lang, is_rule_template(result_node) ? result_node : other));
+                if (Impl::is_blank(other) || Impl::is_blank(result_node))
+                    throw std::runtime_error(blank_merge_refusal(name_in_current_lang, other, _lang, Impl::is_blank(result_node) ? result_node : other));
             }
 
             refuse_vocabulary_locked(result_node, name_in_current_lang, _lang);

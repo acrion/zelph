@@ -17,7 +17,7 @@ The same line as the C ABI: the part a host application needs – resolve names 
 
 Two properties shape everything else:
 
-- **A node is its hash.** `Node` values are stable across calls and across a save and load cycle, and two structurally identical constructions collapse into one node. Identity is derived, never handed out.
+- **A node is a stable number.** `Node` values remain consistent across function calls and throughout a save and load cycle. A named node takes the subsequent value from the engine’s node counter, and a saved file stores this number together with its associated names, ensuring the number holds for a graph loaded from that file, rather than for an engine constructing the same graph independently. A fact, a list, or a set constant *is* the hash of its parts, so two structurally identical constructions collapse into a single node within every engine, and the number assigned to a blank node is derived from a hash of its document and either its label or its ordinal.
 - **The engine is single-threaded, a compiled network is not.** `Engine` is neither `Send` nor `Sync`, and there is one per process. `Net` is both, and may be evaluated from many threads while another one trains it.
 
 ## Depending on it
@@ -66,7 +66,7 @@ fn main() -> Result<()> {
 
     let fact = z.fact(socrates, is_a, &[human])?;
     assert!(z.exists(socrates, is_a, &[human])?);
-    assert_eq!(fact, z.fact(socrates, is_a, &[human])?); // a node is its hash
+    assert_eq!(fact, z.fact(socrates, is_a, &[human])?); // a fact is its hash
 
     assert_eq!(z.name(socrates)?.as_deref(), Some("Socrates"));
     Ok(())

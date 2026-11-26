@@ -67,6 +67,7 @@ During the build process, the following external dependencies are compiled into 
 | --- | --- | --- | --- | --- |
 | [Janet](https://janet-lang.org) | 1.42.1 | MIT | the embedded scripting layer | all builds |
 | [unordered_dense](https://github.com/martinus/unordered_dense) | 4.8.1 | MIT | hash maps | all builds |
+| [BLAKE2](https://www.blake2.net) | reference implementation, commit `ed1974e` | CC0 1.0, OpenSSL licence or Apache 2.0 | the identifiers for blank nodes | all builds |
 | [Cap'n Proto](https://capnproto.org) | 1.4.0 | MIT | the `.bin` network format | native builds, not WebAssembly |
 | [bzip2](https://sourceware.org/bzip2/) | 1.0.8 | bzip2 licence (BSD-style) | reading compressed dumps | native builds, not WebAssembly |
 | [mimalloc](https://github.com/microsoft/mimalloc) | 3.4.5 | MIT | memory allocation | standalone Linux builds |

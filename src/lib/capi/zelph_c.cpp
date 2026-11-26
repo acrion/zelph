@@ -34,6 +34,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include "network/neural.hpp"
 #include "network/reasoning.hpp"
 #include "network/rule_identity.hpp"
+#include "string/node_to_string.hpp"
 
 #include <algorithm>
 #include <atomic>
@@ -280,6 +281,73 @@ int32_t zelph_resolve(zelph_engine* engine, const char* name, const char* lang, 
 
         *out_node = engine->interactive.graph()->node(name, language(engine, lang));
         return succeed(); });
+}
+
+namespace
+{
+    // zelph_blank and zelph_blank_at: the node for `id`, created on the
+    // engine's own thread, and only looked up on any other thread, where
+    // its creation would count as a write.
+    int32_t blank_node(zelph_engine* const engine, const char* const function, const zelph::network::Node id, zelph_node* const out_node)
+    {
+        if (std::this_thread::get_id() == engine->owner)
+            engine->interactive.graph()->blank(id);
+        else if (!engine->interactive.graph()->exists(id))
+            return fail(ZELPH_RUNTIME_ERROR,
+                        std::string(function) + ": the graph does not hold the blank node " + zelph::string::blank_reference(id) + ", and creating one is main thread only.");
+
+        *out_node = id;
+        return succeed();
+    }
+}
+
+int32_t zelph_blank(zelph_engine* engine, const char* identity, const char* label, zelph_node* out_node)
+{
+    if (!engine || !identity || !label || !out_node) return fail(ZELPH_INVALID_ARGUMENT, "engine, identity, label and out_node are required");
+
+    return guarded([&]
+                   { return blank_node(engine, "zelph_blank", zelph::network::Zelph::blank_id(identity, label), out_node); });
+}
+
+int32_t zelph_blank_at(zelph_engine* engine, const char* identity, const uint64_t ordinal, zelph_node* out_node)
+{
+    if (!engine || !identity || !out_node) return fail(ZELPH_INVALID_ARGUMENT, "engine, identity and out_node are required");
+
+    return guarded([&]
+                   { return blank_node(engine, "zelph_blank_at", zelph::network::Zelph::blank_id(identity, zelph::network::Zelph::BlankSource::anonymous, ordinal), out_node); });
+}
+
+int32_t zelph_node_kind(zelph_engine* engine, const zelph_node node, int32_t* out_kind)
+{
+    if (!engine || !out_kind) return fail(ZELPH_INVALID_ARGUMENT, "engine and out_kind are required");
+    if (!node) return fail(ZELPH_INVALID_ARGUMENT, "node is 0");
+
+    using Kind = zelph::network::Zelph::NodeKind;
+    switch (zelph::network::Zelph::node_kind(node))
+    {
+    case Kind::named:
+        *out_kind = ZELPH_KIND_NAMED;
+        break;
+    case Kind::blank:
+        *out_kind = ZELPH_KIND_BLANK;
+        break;
+    case Kind::fact:
+        *out_kind = ZELPH_KIND_FACT;
+        break;
+    case Kind::variable:
+        *out_kind = ZELPH_KIND_VARIABLE;
+        break;
+    case Kind::set_pattern:
+        *out_kind = ZELPH_KIND_SET_PATTERN;
+        break;
+    case Kind::recipe:
+        *out_kind = ZELPH_KIND_RECIPE;
+        break;
+    case Kind::rule_template:
+        *out_kind = ZELPH_KIND_TEMPLATE;
+        break;
+    }
+    return succeed();
 }
 
 int32_t zelph_fact(zelph_engine*     engine,

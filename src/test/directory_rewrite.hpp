@@ -43,6 +43,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <iterator>
 #include <optional>
 #include <vector>
@@ -161,8 +162,10 @@ namespace zelph::test
     // the chunks immediately following it. With `without_records`, the
     // header also lacks what those engines did not record either: the
     // template-variable store and the kinds of pattern the network might
-    // hold.
-    inline void write_without_directory(const std::filesystem::path& from, const std::filesystem::path& to, const bool without_records = false)
+    // hold. `change` rewrites the header as `rewrite_header` does, and here
+    // it may alter the length of the packed header, since no directory
+    // follows to specify the place of the chunks.
+    inline void write_without_directory(const std::filesystem::path& from, const std::filesystem::path& to, const bool without_records = false, const std::function<void(zelph::network::ZelphImpl::Builder)>& change = {})
     {
         std::vector<kj::byte> bytes;
         {
@@ -181,6 +184,7 @@ namespace zelph::test
             header.getRoot<zelph::network::ZelphImpl>().disownVariableRecord();
             header.getRoot<zelph::network::ZelphImpl>().disownPatternKinds();
         }
+        if (change) change(header.getRoot<zelph::network::ZelphImpl>());
         const auto behind_header = input.tryGetReadBuffer();
 
         // The size of the directory stems from the segment table that begins

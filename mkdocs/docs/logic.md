@@ -201,7 +201,7 @@ The idiomatic syntax uses commas to separate conditions:
 (cond1, cond2, cond3) => consequence
 ```
 
-Variables are single uppercase letters (`A`–`Z`) or identifiers starting with `_` (e.g. `_Var`).
+Variables are single uppercase letters (`A`–`Z`) or identifiers starting with `_` (e.g. `_Var`); an underscore followed by a colon begins a [blank node](concepts.md#blank-nodes) instead.
 They are scoped to the current rule and universally quantified: the rule fires for **all** bindings that satisfy the conditions.
 
 Everything else is a **name**, and that includes multi-letter uppercase tokens
@@ -292,6 +292,7 @@ It can be a **rule** — and then the outer rule is a rule _schema_: firing it w
 
 The inner rule's variables belong to the inner rule.
 Only what the outer rule's conditions bind is substituted; everything else comes through as a variable, so what arrives is a rule and not one instance of one.
+A variable that a statement within the outer rule's consequences also holds outside a [set or collection literal](concepts.md#a-literal-a-rule-derives) is the exception: it is a [fresh variable](#fresh-variables-generative-rules) of the outer rule, and the inner rule arrives with the witness of the firing in its place, or fails to arrive when the firing makes no witness (see "No duplicate witnesses" in that section).
 
 **Example — transitivity as a schema:**
 
@@ -1556,7 +1557,28 @@ without a name. Bind W in a condition, or write the predicate as a name.
 
 A rule expressed one fact at a time – using `zelph/fact` in Janet, or with `zelph_fact` in the C ABI – undergoes verification later than a typed rule, because the `=>`-writing call cannot know whether a generator or a statement will hold it: at the conclusion of the outermost Janet evaluation that wrote it, and before the next run or save. A rule that remains in force at that moment is removed and rejected, whereas an inner rule and a rule a statement holds are permitted to pass (refer to [`zelph/rule`](janet.md#zelphrule) and [`zelph_fact`](capi.md#the-graph)). A rule authored by `zelph/mention` or `zelph_mention` constitutes a mention, and a call claiming it brings it into force: that call undergoes verification in the same way, and its rejection retracts the claim alone, leaving the rule as a mention.
 
-**No duplicate witnesses:** Before producing a new node, zelph checks whether any assignment of the fresh variables already makes every consequence of the rule into a fact; if such an assignment exists, the rule creates nothing for this match. This verification operates as a join akin to the one applied across a rule’s conditions, meaning that any node can function as a witness, including the subject itself – `a q a` satisfies `(A q B)` for `a` – whereas a pattern that a rule merely records, among them its own consequence, never qualifies. A consequence is considered present even though it is not a fact when its instance would keep a variable from a rule it mentions, such as `k about ((C r D, C s D) => (c q d))`: a firing keeps the conditions of a mentioned rule exactly as written, meaning the instance would be rule text, no firing derives it (see [Mentioning a Rule Is Not Asserting It](#mentioning-a-rule-is-not-asserting-it)), and the check concentrates exclusively on the remaining consequences. A consequence is likewise considered present when a rule inside a value constructed by the firing would keep a variable: within a value, the firing keeps every variable it leaves unbound, including a fresh variable for which only a consequence that is not derived would make a witness. A consequence that no firing writes, since the binding makes its predicate one of its objects, is regarded as present in the same way: given `a p a`, the rule `(X p Y) => (Z Y X) (Z r X)` makes one witness for `Z r a` and no additional witness. A witness that has already been made stays, even if a subsequent fact alone would have satisfied the consequence.
+**No duplicate witnesses:** Before producing a new node, zelph checks whether any assignment of the fresh variables already makes every consequence of the rule into a fact; if such an assignment exists, the rule creates nothing for this match. This verification operates as a join akin to the one applied across a rule’s conditions, meaning that any node can function as a witness, including the subject itself – `a q a` satisfies `(A q B)` for `a` – whereas a pattern that a rule merely records, among them its own consequence, never qualifies. A consequence is considered present even though it is not a fact when its instance would keep a variable from a rule it mentions, such as `k about ((C r D, C s D) => (c q d))`: a firing keeps the conditions of a mentioned rule exactly as written, meaning the instance would be rule text, no firing derives it (see [Mentioning a Rule Is Not Asserting It](#mentioning-a-rule-is-not-asserting-it)), and the check concentrates exclusively on the remaining consequences. A consequence is likewise considered present when a rule inside a value constructed by the firing would keep a variable: within a value, the firing keeps every variable it leaves unbound, including a fresh variable for which only a consequence that is not derived would make a witness. A consequence that no firing writes, since the binding makes its predicate one of its objects, is regarded as present in the same way: given `a p a`, the rule `(X p Y) => (Z Y X) (Z r X)` makes one witness for `Z r a` and no additional witness. The same applies to a consequence that no firing writes because the binding makes a [blank node](concepts.md#blank-nodes) its predicate or the predicate of a statement it nests: given `a p _:b0`, the identical rule again makes one witness for `Z r a`, regardless of how frequently it runs. A witness that has already been made stays, even if a subsequent fact alone would have satisfied the consequence. The check covers the consequences that are statements. A rule within the consequences and a `!` are excluded from it, and a firing that discovers a witness still derives the one and raises the other, while it makes no witness and writes no other consequence: after `m s knows` and `knows p y`, the rule `(X p Y) => ((A X B) => (A r B)) (W s X)` derives `(A knows B) => (A r B)`, even though `m` serves as its witness and nothing else is written. A rule among the consequences that holds the fresh variable itself is written with the witness, by the firing that makes the witness, and by no other.
+
+A firing for which the check finds a witness thus writes no such rule. That is the case when a witness already existed before the rule fired: following `m s knows` and `knows p y`, the rule `(X p Y) => ((A X B) => (A r W)) (W s X)` writes no rule for `knows`. It is also the case during a later firing of the same rule when the statement holding the fresh variable is independent of the binding: under `(X p Y) => ((A X B) => (A r W)) (W likes c)`, `knows p y` makes a witness and gets the rule `(A knows B) => (A r ??)`, whereas `foo p z` acquires none, as the witness made for `knows` also satisfies `W likes c` for `foo`. When each firing must yield its rule, write a set made from the binding in place of the fresh variable. Under a binding, `{hub X}` is a set constant, which is its members (refer to [A literal a rule derives](concepts.md#a-literal-a-rule-derives)): the same node in both consequences and a different one for each `X`, and since the rule contains no fresh variable, no witness is sought. The member `hub` is an ordinary name that keeps this set apart from other sets that hold `X`:
+
+```
+zelph> .deductions all
+Deduction printing mode: all
+  Every derivation is printed.
+zelph> (X p Y) => ((A X B) => (A r {hub X})) ({hub X} s X)
+zelph> knows p y
+((A knows B) => (A r {hub knows})) ⇐ (knows p y)
+({hub knows} s knows) ⇐ (knows p y)
+zelph> foo p z
+((A foo B) => (A r {hub foo})) ⇐ (foo p z)
+({hub foo} s foo) ⇐ (foo p z)
+zelph> a knows b
+(a r {hub knows}) ⇐ (a knows b)
+zelph> a r H, H s X
+Answer: a r {hub knows}, {hub knows} s knows
+```
+
+Each binding gets its rule and its set, and the query joins what the rule for `knows` derives with the statement of the same firing via that single node.
 
 The arithmetic that follows requires no such thing: a rule builds a result list like `(D cons T)` using variables its conditions bound, and a fact node built from those identical components is the same node.
 
@@ -2051,6 +2073,8 @@ Found one or more contradictions!
 When a contradiction is detected during fact assertion, the contradictory fact is _not_ entered into the graph.
 Instead, a record of the contradiction is stored, making it visible in reports.
 This mechanism is central to zelph's [Wikidata ontology work](wikidata.md), where thousands of constraint violations in the knowledge graph are detected automatically.
+
+A statement that a firing leaves unwritten because a [blank node](concepts.md#blank-nodes) would serve as its predicate constitutes no contradiction: the run prints no `!` line for it, records nothing, and excludes it from its count of contradictions, yet names the rule and the blank node in a note at its end, once in a session ([Blank Nodes](rdf-spec/blank-nodes.md#a-firing-that-would-make-one-a-predicate)).
 
 The record is a fact in the graph, and it says what a contradiction says: the set of the statements that matched, entered as **refuted** – these do not hold together. None of them is retracted; each stays asserted and keeps answering queries, and the set is the only node created.
 

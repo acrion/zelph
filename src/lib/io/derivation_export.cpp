@@ -26,10 +26,13 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include "derivation_export.hpp"
 
 #include "network/zelph.hpp"
+#include "string/node_to_string.hpp"
 
+#include <cstddef>
 #include <fstream>
 #include <mutex>
 #include <stdexcept>
+#include <string>
 
 namespace zelph::io
 {
@@ -135,9 +138,31 @@ namespace zelph::io
                 first = false;
             };
 
+            // A blank node appears as "_:@" followed by the sixteen digits
+            // of its id, devoid of any marks (node_to_string), thus
+            // arriving directly within the literal text. It remains a node
+            // nonetheless and is written as a distinct object,
+            // {"blank":"<the digits>"}, which a converter can tell from the
+            // surrounding text. No other entity reads in this manner
+            // outside of marks and quotes: a name with that exact spelling
+            // is printed in quotes.
             const auto emit_literal = [&](const std::string& text)
             {
-                if (!text.empty()) emit(json_string(text));
+                constexpr std::size_t prefix = 3;
+                constexpr std::size_t digits = 16;
+
+                std::size_t from = 0;
+                for (std::size_t at = text.find("_:@"); at != std::string::npos && text.size() - at >= prefix + digits; at = text.find("_:@", at + 1))
+                {
+                    const std::string id = text.substr(at + prefix, digits);
+                    if (string::blank_id_of_digits(id) == 0) continue;
+
+                    if (at > from) emit(json_string(text.substr(from, at - from)));
+                    emit("{\"blank\":" + json_string(id) + "}");
+                    from = at + prefix + digits;
+                    at   = from - 1;
+                }
+                if (from < text.size()) emit(json_string(text.substr(from)));
             };
 
             std::size_t pos = 0;

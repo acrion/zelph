@@ -1,6 +1,6 @@
 # Storage and Programming Interfaces
 
-This page defines the location of the nodes of the mapping: the id classes they take, what a `.bin` stores of them, what a network records about itself, and the functions via which Janet, the C interface, and the Rust layer create and read them. Nothing on this page has been implemented yet; a sentence about the present engine says "today".
+This page defines the location of the nodes of the mapping: the id classes they take, what a `.bin` stores of them, what a network records about itself, and the functions via which Janet, the C interface, and the Rust layer create and read them. Of this page, the class of blank nodes, the limit of the node counter at 2^58, the functions for blank nodes and for the kind of a node, and how a partial view handles a blank node are implemented; all other elements are specified but not yet implemented. A sentence about the present engine says "today".
 
 ## Id Classes
 
@@ -21,7 +21,7 @@ The counter class is the sole one with room: the counter for the full Wikidata n
 |---|---|---|
 | `0000 1…` (bits 63..59 equal `00001`) | **literal** | a 59-bit sequence number drawn from an independent counter |
 | `0000 01…` (bits 63..58 equal `000001`) | **blank** | 58 bits derived from the document and label ([Blank Nodes](blank-nodes.md#ids)) |
-| under 2^58 | counter, as today | the node counter, which is specified to be refused at 2^58, whereas it is refused at 2^60 today |
+| under 2^58 | counter, as today | the node counter, which is refused at 2^58, also where its next value serves as the payload of a set pattern or a template |
 
 The decision emerges from how the engine already handles the classes:
 
@@ -77,6 +77,7 @@ A network may be partially loaded: specific chunks within certain sections. For 
 - A view missing the value section holds value nodes without their texts. The load counts them; they are displayed with a mark that does not read back, and no expander is run for them.
 - The conditions that the engine answers from the value store answer nothing for such a node.
 - An RDF import into a partial view is refused unless the names it maps into are loaded completely ([Importing RDF](import.md#how-an-import-proceeds)), and neither the list conversion nor the request pass runs on one.
+- A blank node requires nothing specific there. `zelph/blank` finds the node associated with an entry of which the view holds one side, and leaves the entry unchanged; a statement written over the node then fails, just as it fails for every node within such a view.
 
 ### Older Files
 
@@ -96,9 +97,9 @@ The functions below are specified; the last column says what is available today.
 | the lexical form, datatype, and tag of a value node | `(zelph/literal-parts node)` | `zelph_literal_parts` | `Engine::literal_parts` | – |
 | find or create the node associated with an IRI | `(zelph/iri iri)` | `zelph_iri` | `Engine::iri` | names only: `zelph/resolve`, `zelph_resolve`, `Engine::resolve` |
 | the canonical IRI of a node | `(zelph/iri-of node)` | `zelph_iri_of` | `Engine::iri_of` | – |
-| find or create a blank node | `(zelph/blank identity label)`, `(zelph/blank-at identity ordinal)` | `zelph_blank`, `zelph_blank_at` | `Engine::blank`, `Engine::blank_at` | – |
-| an existing blank node by its identifier | `(zelph/blank-id hex)` | – | – | – |
-| the kind of a node | `(zelph/node-kind node)` | `zelph_node_kind` | `Engine::kind` | – |
+| find or create a blank node | `(zelph/blank identity label)`, `(zelph/blank-at identity ordinal)` | `zelph_blank`, `zelph_blank_at` | `Engine::blank`, `Engine::blank_at` | exists |
+| an existing blank node by its identifier | `(zelph/blank-id hex)` | – | – | exists |
+| the kind of a node | `(zelph/node-kind node)` | `zelph_node_kind` | `Engine::kind` | exists, excluding the kind of a literal |
 | build a list, read its elements | `(zelph/list …)`, `(zelph/car l)`, `(zelph/cdr l)` | `zelph_list`, `zelph_list_elements` | `Engine::list`, `Engine::elements` | exists |
 | declare a prefix, register a namespace row | `(zelph/prefix p iri)`, `(zelph/namespace …)` | – | – | – |
 | import an RDF document | `(zelph/import-rdf source options)`, `(zelph/read-turtle text options)` | `zelph_import_rdf` | `Engine::import_rdf` | – |
@@ -108,10 +109,10 @@ The functions below are specified; the last column says what is available today.
 | convert lists | `(zelph/lists)` | `zelph_lists` | `Engine::lists` | – |
 | names, languages, and fallback chains | see [Names](names.md#interfaces) | | | |
 
-`zelph/node-kind` answers one of `:named`, `:literal`, `:blank`, `:fact`, `:variable`, or the kinds of rule text that exist today.
+`zelph/node-kind` answers one of `:named`, `:literal`, `:blank`, `:fact`, `:variable`, or the kinds of rule text that exist today. The function is implemented and answers `:set-pattern`, `:recipe` and `:template` for the three kinds of rule text; `:literal` follows with the value nodes. The answer is read from the id alone, so the node does not need to be present. `:named` covers every id provided by the node counter: a named node, a core node, and every other such node, including a collection written as data. `:fact` covers every id belonging to the hash class, a statement or a set constant, and a value that is not a node gives `nil`.
 
 **From C and Rust.** A host program can perform every action listed above that does not involve Janet code: create and read terms, import documents and modules, expand, convert lists. It is unable to register an expander, a name reader, or a display, as these are functions of a module; it imports the module that carries out those duties. Today a C or Rust host cannot import a module at all, because the C interface leaves `.import` to scripts ([The C ABI](../capi.md)); `zelph_import` closes this gap, as `zelph_load` wraps `.load`.
 
-**Threads.** The rule of the C interface remains unchanged: the graph is tied to the thread that created the engine. Every function responsible for creating a node, registering an entry, or performing an import operates exclusively on that thread. The functions that only read (`zelph_literal_parts`, `zelph_node_kind`, `zelph_iri_of`, `zelph_name_in`, `zelph_lookup`) may be called from any thread, as reading functions may be today.
+**Threads.** The rule of the C interface remains unchanged: the graph is tied to the thread that created the engine. Every function responsible for creating a node, registering an entry, or performing an import operates exclusively on that thread. The functions that only read (`zelph_literal_parts`, `zelph_node_kind`, `zelph_iri_of`, `zelph_name_in`, `zelph_lookup`) may be called from any thread, as reading functions may be today. On a thread other than the engine’s, `zelph/blank`, `zelph/blank-at`, `zelph_blank`, and `zelph_blank_at` only execute a lookup of a blank node and refuse one that the graph does not contain, exactly as `zelph/resolve` and `zelph_resolve` do for a name, whereas `zelph/blank-id` and `zelph/node-kind` are permissible from any thread; this behaviour is implemented.
 
 **Text.** Today, multiple layers separating a script from the graph end a text upon encountering the first zero byte: the bridge between Janet and the engine, the C interface, and the names writer. A lexical form including U+0000 would be cut by each of these layers. The mapping transmits length information across every layer for lexical forms; names are not impacted, as a text containing U+0000 never becomes a name ([Names](names.md#labels-that-do-not-become-names)).

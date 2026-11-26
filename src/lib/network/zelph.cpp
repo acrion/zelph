@@ -32,9 +32,15 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include "zelph_impl.hpp"
 #include "zelph_version.hpp"
 
+#include <blake2.h>
+
 #include <algorithm>
+#include <cstdint>
+#include <cstring>
 #include <limits>
 #include <ranges>
+#include <stdexcept>
+#include <string_view>
 
 using std::ranges::all_of;
 
@@ -770,6 +776,104 @@ bool Zelph::is_template_id(Node a)
     return Network::is_template_id(a);
 }
 
+bool Zelph::is_blank(Node a)
+{
+    return Network::is_blank(a);
+}
+
+namespace
+{
+    void hash_number(blake2b_state& state, const std::uint64_t number)
+    {
+        std::uint8_t bytes[8];
+        for (std::size_t i = 0; i < sizeof(bytes); ++i)
+            bytes[i] = static_cast<std::uint8_t>(number >> (8 * i));
+        blake2b_update(&state, bytes, sizeof(bytes));
+    }
+
+    // The hash that blank_id computes, up to the tag byte: what the
+    // two overloads have in common.
+    void begin_blank_hash(blake2b_state& state, const std::string_view identity, const Zelph::BlankSource source)
+    {
+        // Only one-byte fields are set, and the reference implementation
+        // reads the block byte by byte, so the block remains identical on a
+        // machine with either byte order.
+        blake2b_param param{};
+        param.digest_length = 8;
+        param.fanout        = 1;
+        param.depth         = 1;
+
+        static constexpr char personal[] = "zelph:blank:v1";
+        static_assert(sizeof(personal) - 1 <= sizeof(param.personal));
+        std::memcpy(param.personal, personal, sizeof(personal) - 1);
+
+        blake2b_init_param(&state, &param);
+        hash_number(state, identity.size());
+        blake2b_update(&state, identity.data(), identity.size());
+
+        const std::uint8_t tag = static_cast<std::uint8_t>(source);
+        blake2b_update(&state, &tag, 1);
+    }
+
+    std::uint64_t end_blank_hash(blake2b_state& state)
+    {
+        std::uint8_t digest[8];
+        if (blake2b_final(&state, digest, sizeof(digest)) != 0) throw std::logic_error("Zelph::blank_id: BLAKE2b gave no digest");
+
+        std::uint64_t number = 0;
+        for (std::size_t i = 0; i < sizeof(digest); ++i)
+            number |= static_cast<std::uint64_t>(digest[i]) << (8 * i);
+        return number;
+    }
+}
+
+Node Zelph::blank_id(const std::string_view identity, const std::string_view label)
+{
+    blake2b_state state;
+    begin_blank_hash(state, identity, BlankSource::label);
+    hash_number(state, label.size());
+    blake2b_update(&state, label.data(), label.size());
+    return Network::blank_id(end_blank_hash(state));
+}
+
+Node Zelph::blank_id(const std::string_view identity, const BlankSource source, const std::uint64_t ordinal)
+{
+    if (source != BlankSource::anonymous && source != BlankSource::collection_cell)
+        throw std::invalid_argument("Zelph::blank_id: only an anonymous node and a collection cell are identified by an ordinal");
+
+    blake2b_state state;
+    begin_blank_hash(state, identity, source);
+    hash_number(state, ordinal);
+    return Network::blank_id(end_blank_hash(state));
+}
+
+Node Zelph::blank(const std::string_view identity, const std::string_view label)
+{
+    return blank(blank_id(identity, label));
+}
+
+Node Zelph::blank(const std::string_view identity, const BlankSource source, const std::uint64_t ordinal)
+{
+    return blank(blank_id(identity, source, ordinal));
+}
+
+Node Zelph::blank(const Node id)
+{
+    if (!Impl::is_blank(id)) throw std::invalid_argument("Zelph::blank: " + std::to_string(id) + " is not the id of a blank node");
+    return _pImpl->find_or_create(id);
+}
+
+Zelph::NodeKind Zelph::node_kind(const Node a)
+{
+    if (Network::is_var(a)) return NodeKind::variable;
+    if (Network::is_hash(a)) return NodeKind::fact;
+    if (Network::is_value_recipe(a)) return NodeKind::recipe;
+    if (Network::is_template_id(a)) return NodeKind::rule_template;
+    if (Network::is_value_set_pattern(a)) return NodeKind::set_pattern;
+    if (Network::is_blank(a)) return NodeKind::blank;
+    return NodeKind::named;
+}
+
 // When the rule names its own bucket, the node a firing writes into is the
 // bucket's term, keyed by no variable -- one node for every firing of the rule.
 Node Zelph::bucket_term_id(const Node bucket)
@@ -974,8 +1078,10 @@ Node Zelph::fact(const Node subject, const Node predicate, const adjacency_set& 
     // anchors, and the exact probe to their reading through the statement's
     // atoms wherever that predicate is involved; conditions over any other
     // predicate keep reading a statement via its own node. A pattern carries
-    // variables and states nothing, hence it does not count.
-    if (objects.size() > 1 && !_pImpl->wider_predicate_marked(predicate)
+    // variables and states nothing, hence it does not count. Neither does a
+    // statement whose predicate is a blank node: it is refused below, and
+    // the mark would remain as the sole thing it wrote.
+    if (objects.size() > 1 && !Impl::is_blank(predicate) && !_pImpl->wider_predicate_marked(predicate)
         && !Impl::is_var(subject) && !var_in_closure(subject) && !Impl::is_var(predicate) && !var_in_closure(predicate)
         && std::none_of(objects.begin(), objects.end(), [this](const Node o)
                         { return Impl::is_var(o) || var_in_closure(o); }))
@@ -1008,6 +1114,15 @@ Node Zelph::fact(const Node subject, const Node predicate, const adjacency_set& 
     }
     else
     {
+        // A blank node is a resource identified solely by the statements
+        // concerning it, and no statement is read through it as a
+        // relation: a statement having a blank node as its predicate is
+        // refused before anything is written, the declaration of the
+        // predicate included. Ordinary data pays one test of the
+        // predicate's id class for it.
+        if (Impl::is_blank(predicate))
+            throw predicate_error("fact(): " + format(predicate) + " is a blank node, and a blank node cannot be the predicate of a statement.", predicate);
+
         if (objects.count(predicate) == 1)
         {
             // 1 13 13

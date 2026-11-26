@@ -27,6 +27,7 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 
 #include "network/fact_structure.hpp"
 #include "network/reasoning.hpp"
+#include "string/node_to_string.hpp"
 
 #include <janet.h>
 
@@ -743,6 +744,119 @@ namespace zelph
         network::Node n   = s_instance->_n->node(wstr, lang);
         Janet         res = zelph_wrap_node(n);
         if (s_instance->_log_janet_functions) s_instance->log_janet_call("zelph/resolve", argc, argv, false, res);
+        return res;
+    }
+
+    // The text of a string argument, along with its length, as Janet holds
+    // it: the bytes comprising an identity or a label enter the derivation
+    // of a blank node's id exactly as they appear, including a zero byte if
+    // present.
+    static std::string_view janet_text(const Janet* const argv, const int32_t n)
+    {
+        const uint8_t* const text = janet_getstring(argv, n);
+        return {reinterpret_cast<const char*>(text), static_cast<std::size_t>(janet_string_length(text))};
+    }
+
+    // (zelph/blank identity label) and (zelph/blank-at identity ordinal): the
+    // blank node that a document of this identity designates via the label,
+    // or writes as its anonymous node of this ordinal, created when the graph
+    // does not hold it. On a thread other than the main thread the node is
+    // merely looked up, just as zelph/resolve does when processing a name.
+    Janet ScriptEngine::Impl::blank_impl(int32_t argc, Janet* argv, const char* name, const bool by_label)
+    {
+        janet_fixarity(argc, 2);
+        if (!s_instance) return janet_wrap_nil();
+        if (s_instance->_log_janet_functions) s_instance->log_janet_call(name, argc, argv, true);
+
+        const std::string_view identity = janet_text(argv, 0);
+        const network::Node    id       = by_label ? network::Zelph::blank_id(identity, janet_text(argv, 1))
+                                                   : network::Zelph::blank_id(identity, network::Zelph::BlankSource::anonymous, janet_getuinteger64(argv, 1));
+
+        if (std::this_thread::get_id() == s_instance->_main_thread_id)
+            s_instance->_n->blank(id);
+        else if (!s_instance->_n->exists(id))
+            throw std::runtime_error(std::string(name) + ": the graph does not hold the blank node " + string::blank_reference(id) + ", and creating one is main thread only.");
+
+        Janet res = zelph_wrap_node(id);
+        if (s_instance->_log_janet_functions) s_instance->log_janet_call(name, argc, argv, false, res);
+        return res;
+    }
+
+    Janet ScriptEngine::Impl::janet_cfun_zelph_blank(int32_t argc, Janet* argv)
+    {
+        return blank_impl(argc, argv, "zelph/blank", true);
+    }
+
+    Janet ScriptEngine::Impl::janet_cfun_zelph_blank_at(int32_t argc, Janet* argv)
+    {
+        return blank_impl(argc, argv, "zelph/blank-at", false);
+    }
+
+    // (zelph/blank-id hex): the blank node that the graph holds under the
+    // identifier specified by the sixteen hexadecimal digits, or nil if it
+    // holds none, as zelph/lookup answers for a name lacking a
+    // corresponding node. This is the foundation upon which "_:@" and the
+    // digits are constructed within a script, representing the format used
+    // to print a blank node: it refers to a node without creating a new
+    // one, as the digits say neither the document nor the label that a
+    // newly built node would be linked to. The script form makes an error
+    // of the nil (ScriptEngine::Impl::blank_code).
+    Janet ScriptEngine::Impl::janet_cfun_zelph_blank_id(int32_t argc, Janet* argv)
+    {
+        janet_fixarity(argc, 1);
+        if (!s_instance) return janet_wrap_nil();
+        if (s_instance->_log_janet_functions) s_instance->log_janet_call("zelph/blank-id", argc, argv, true);
+
+        const std::string_view digits = janet_text(argv, 0);
+        const network::Node    id     = string::blank_id_of_digits(digits);
+        if (id == 0)
+            throw std::runtime_error("\"" + std::string(digits) + "\" is not the id of a blank node: the sixteen hexadecimal digits that follow \"_:@\" where zelph prints one.");
+
+        Janet res = s_instance->_n->exists(id) ? zelph_wrap_node(id) : janet_wrap_nil();
+        if (s_instance->_log_janet_functions) s_instance->log_janet_call("zelph/blank-id", argc, argv, false, res);
+        return res;
+    }
+
+    // (zelph/node-kind node): the kind of node that the id refers
+    // to, expressed as a keyword. Read from the id alone
+    // (Zelph::node_kind).
+    Janet ScriptEngine::Impl::janet_cfun_zelph_node_kind(int32_t argc, Janet* argv)
+    {
+        janet_fixarity(argc, 1);
+        if (!s_instance) return janet_wrap_nil();
+        if (s_instance->_log_janet_functions) s_instance->log_janet_call("zelph/node-kind", argc, argv, true);
+
+        Janet res = janet_wrap_nil();
+        if (const network::Node n = zelph_unwrap_node(argv[0]); n != 0)
+        {
+            const char* kind = "named";
+            switch (network::Zelph::node_kind(n))
+            {
+            case network::Zelph::NodeKind::named:
+                break;
+            case network::Zelph::NodeKind::blank:
+                kind = "blank";
+                break;
+            case network::Zelph::NodeKind::fact:
+                kind = "fact";
+                break;
+            case network::Zelph::NodeKind::variable:
+                kind = "variable";
+                break;
+            case network::Zelph::NodeKind::set_pattern:
+                kind = "set-pattern";
+                break;
+            case network::Zelph::NodeKind::recipe:
+                kind = "recipe";
+                break;
+            case network::Zelph::NodeKind::rule_template:
+                kind = "template";
+                break;
+            }
+            res = janet_ckeywordv(kind);
+        }
+
+        if (s_instance->_log_janet_functions) s_instance->log_janet_call("zelph/node-kind", argc, argv, false, res);
         return res;
     }
 }

@@ -77,6 +77,10 @@ namespace zelph
             << ANKERL_UNORDERED_DENSE_VERSION_MINOR << "."
             << ANKERL_UNORDERED_DENSE_VERSION_PATCH << ") - MIT License\n";
 
+        // BLAKE2, the reference implementation, which lacks a version: the
+        // commit the build locks to (src/lib/CMakeLists.txt).
+        oss << "BLAKE2 (reference implementation, commit " << ZELPH_BLAKE2_COMMIT << ") - CC0 1.0, OpenSSL License or Apache License 2.0\n";
+
 #ifndef __EMSCRIPTEN__
         // Cap'n Proto
         oss << "Cap'n Proto (v"

@@ -159,7 +159,7 @@ String arguments are automatically resolved as node names (identical to `zelph/r
 %(zelph/fact city "~" "city")
 ```
 
-The function also accepts quoted Janet symbols (`'X`, `'_Var`) for zelph variables — single uppercase letters or underscore-prefixed identifiers. This is used when building rules and queries (see below).
+The function additionally takes quoted Janet symbols (`'X`, `'_Var`) to represent zelph variables. Each quoted symbol acts as a variable, regardless of its spelling, including `'foo` and `'_:x`, hence a blank node is expressed via `zelph/blank`, not as a symbol. This is used when building rules and queries (see below).
 
 ### Programmatic Query Results: `zelph/query`
 
@@ -455,6 +455,12 @@ A program can initiate threads independently using `ev/thread`, `ev/spawn-thread
 - **`(zelph/resolve name)`**  
   Resolve (and create if needed) the node named `name` in the current language. On any thread distinct from the main thread, this operation solely performs a lookup of the name, and a name lacking an associated node is rejected in that context.
 
+- **`(zelph/blank identity label)`**  
+  The [blank node](concepts.md#blank-nodes) that the document of `identity` names by `label`, created if the graph does not already contain it. This is what `_:label` represents in a script, where the document is the script file or the session; a Janet program names the document itself. The identifier of the node is determined solely by the two strings and by nothing else, so the same pair always produces the same node across every engine. The label is taken as given and is not held to the form a script writes. On any thread other than the main thread, the node is only looked up, and one that the graph does not hold is rejected in that context.
+
+- **`(zelph/blank-at identity ordinal)`**  
+  The blank node that the document of `identity` writes without a label, as its anonymous node number `ordinal`, counted from 0. No label gives the same node. Created and looked up as `zelph/blank` does.
+
 - **`(zelph/var &opt name)`**  
   Create a **fresh** variable node and return it. Every call yields a new variable, whatever it is named — the name is display only, and is what makes the binding readable as `(get r 'name)`; an unnamed variable still matches but contributes no column. Use it when the conditions of one pattern are built in separate blocks, where a variable *symbol* would mean a different variable each time: see [The Scope of a Variable Symbol](#the-scope-of-a-variable-symbol-one-block). Main thread only.
 
@@ -562,6 +568,12 @@ zelph-> %(each r (zelph/rules) (zelph/out (string/format "%q" r)))
 
 - **`(zelph/name node &opt lang :strict)`**  
   Return the node’s name as a string (or `nil` if unnamed). Optional `lang` selects the naming language. If no name exists in `lang`, the result defaults to a name in a different language (refer to [Node Names](#node-names-zelphname)); appending `:strict` disables this fallback, making `(zelph/name node "de" :strict)` return `nil` when the node has no German name. A core node answers with its spelling across every language.
+
+- **`(zelph/blank-id hex)`**  
+  The blank node that the graph holds under the identifier represented by the sixteen hexadecimal digits: what `_:@` and the digits constitute in a script, the form in which a blank node is printed. It refers to an existing node and does not create one: for an identifier that the graph does not contain it returns `nil`, just as `zelph/lookup` does for a name without a node, whereas digits that do not form the identifier of a blank node are an error. In a script, `_:@` with an identifier that the graph does not contain is an error. Permitted on every thread.
+
+- **`(zelph/node-kind node)`**  
+  The kind of a node as a keyword, derived solely from its id: `:named` for a node that takes its id from the node counter (a named node, a core node, a collection written as data), `:blank` for a blank node, `:fact` for a node whose id is the hash of its parts (a statement, a set constant), `:variable` for a variable, and `:set-pattern`, `:recipe`, or `:template` for the three kinds of rule text. `nil` for a value that is not a node. Permitted on every thread.
 
 - **`(zelph/lookup name &opt lang)`**  
   The node that already carries `name` in `lang` (default: the current language), or `nil`. In contrast to `zelph/resolve`, it never creates a new node, which makes it the way to ask whether a term refers to an entity. A variable that carries the name for display is not its node, and a core spelling like `"~"` gives the core node across all languages. Permitted on every thread.
@@ -712,10 +724,11 @@ The rule is in the graph from the moment it is created, but its consequence only
 
 #### Running quietly
 
-A program that translates its own language into zelph communicates the outcomes of a run in that language, whereas what the run prints – the banner, each deduction, the `!` line associated with a contradiction, the notice "Found one or more contradictions!", the note on hidden deductions, and the list of check mode – appears in zelph syntax within the program’s output. When using `:quiet` (entered as `.run quiet` at the prompt), a run prints none of it, not even `Ready.`, and instead returns the same findings as structured data, a struct `{:contradictions C :naf-final N}`:
+A program that translates its own language into zelph communicates the outcomes of a run in that language, whereas what the run prints – the banner, each deduction, the `!` line associated with a contradiction, the notice "Found one or more contradictions!", the note on hidden deductions, the note on statements whose predicate would be a blank node, and the list of check mode – appears in zelph syntax within the program’s output. When using `:quiet` (entered as `.run quiet` at the prompt), a run prints none of it, not even `Ready.`, and instead returns the same findings as structured data, a struct `{:contradictions C :naf-final N :unwritten U}`:
 
 - `C` is a tuple comprising one struct per distinct contradiction detected during the run, arranged according to initial appearance; if a contradiction arises in multiple passes, it appears only once. `:rule` refers to the rule’s `=>` node, `:conditions` lists the facts that satisfied its positive conditions, ordered by node (empty if all conditions are negations, guards, or paths), and `:conclusion` holds the core node `!` in the case of a denial, the fact that a consequence would have asserted but was refuted, or the claimed fact that a derived refutation met. `:record` says whether the run wrote the record of the contradiction (`:new`), found it already recorded (`:existing`), or failed to preserve any record (`:none`: records deactivated through `.contradiction-records off`, a rule whose conditions are exclusively negations, guards, or paths, or a fact that cannot be named). A derived refutation that meets a claimed fact counts that fact among the members of its record, hence a rule consisting solely of negations, guards, or paths is likewise recorded. `:bindings` is a table from each rule variable to its assigned value. A consequence that the engine refused to build omits `:conclusion`, and `:refused` gives the reason, as shown by a run that prints.
 - `N` is a tuple of `{:fact F :rule R}`, one for each fact that the run determined is no longer supported – such facts are those derived via `R` under a negated condition whose pattern has since come to hold, and not derived through any other means – listed in the same sequence as presented by the check. These are the same pairs returned by `(zelph/defeated)`. `N` is populated solely when negation records are preserved: during check mode (`.semi-naive check`), which then does not raise for them, and when `.negation-records` is enabled. Since `.run-once` never re-tests these records, its `N` is always empty.
+- `U` is a tuple composed of `{:rule R :predicate B}`, one for each pair of a rule and a blank node where the run left a consequence unwritten, since the blank node `B` would have served as a predicate in it ([Blank Nodes](rdf-spec/blank-nodes.md#a-firing-that-would-make-one-a-predicate)). It holds every such pair from the run, even those already named in a prior run’s note, ordered according to the rule’s text followed by the blank node’s identifier.
 
 Each error that a run that prints would raise is still thrown, save for this single case: the negation check within check mode returns its findings as `N`. A condition the engine will not evaluate, like a negated `!=` guard or a path condition where both ends are free, and the notice about a missing digit alphabet, are reported by the next run that prints. The memory of the return expands as the run meets contradictions, and a full pass meets every recorded contradiction once more.
 
@@ -733,6 +746,20 @@ zelph-> %(each e ((zelph/run :quiet) :contradictions) (zelph/out (string/format 
 ```
 
 The run wrote the record, so a later `.run` reports this contradiction as already recorded rather than printing it.
+
+A rule that meets a blank node at the point it would write a predicate leaves its pair within `U` (the struct is printed on a single line, wrapped here for reading):
+
+```
+zelph> .identity http://example.org/doc
+zelph> .auto-run
+Auto-run is now disabled.
+zelph-> (X p Y) => (X seen Y) (a Y b)
+(X p Y) => (a Y b) (X seen Y)
+zelph-> k p _:b0
+zelph-> %(each e ((zelph/run :quiet) :unwritten) (zelph/out (string/format "%q" e)))
+{:predicate <zelph/node _:@068feb5243a0018d>
+:rule <zelph/node (X p Y) => (a Y b) (X seen Y)>}
+```
 
 Using `:derived` as well (`.run quiet derived` at the prompt), the struct acquires `:derived D`, a tuple containing one struct per fact the run derived, in the order it derived them. `:fact` holds the derived fact, `:rule` refers to the `=>` node of the rule responsible for its derivation, `:premises` lists the facts that satisfied its positive conditions, ordered by node, `:absent` includes the patterns from its negated conditions that the run determined were missing, and `:bindings` captures the rule’s variables as bound during the firing, transforming those patterns into the actual tests performed. A premise is looked up, never created: when a condition matched a fact that carries more objects than the condition names, the premise is that fact. A full pass returns everything it derived, while `run-delta` returns what it derived from facts added since the last run. `:derived` without `:quiet` is refused, as a run that prints returns `nil`. The memory associated with `D` grows with each derived fact, and the call frees it upon return.
 
@@ -1688,6 +1715,7 @@ Error in line "kw John is": refused
 | :------------------------------ | :-------------------------------------------------- | :-------------------------------------------------------------------------- |
 | `Berlin`                        | `(zelph/resolve "Berlin" "en")`                     | Resolve a name to a node, with an optional language argument                |
 | `X`, `_Var`                     | `'X`, `'_Var`                                       | Variable (single uppercase letter or `_`-prefixed)                          |
+| `_:b0`                          | `(zelph/blank identity "b0")`                       | Blank node of a document (`_:` begins one and no variable)                  |
 | `sun is yellow`                 | `(zelph/fact "sun" "is" "yellow")`                  | Create a fact (triple)                                                      |
 | `(sun is yellow)`               | `(zelph/fact "sun" "is" "yellow")`                  | Nested fact (returns relation node)                                         |
 | `{ red green blue }`            | `(zelph/set "red" "green" "blue")`                  | Set constant — identified by its members, cannot be extended                |

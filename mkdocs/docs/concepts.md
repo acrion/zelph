@@ -218,7 +218,7 @@ zelph> S ok O
 
 A rule that a generator writes is refused similarly when it would extend a set constant, either within its consequence or within any of its conditions, and a typed statement that is refused retains none of the components it wrote before its own fact.
 
-A consequence that the binding turns into a fact whose predicate is one of its objects is not written: typed, such a statement is refused, and a firing skips it without notification. It produces no residue either, neither a nested statement nor a fresh witness, thus `(X p Y) => (Z Y X)` adds no node to `a p a`, regardless of how frequently it runs.
+A consequence that the binding turns into a fact whose predicate is one of its objects is not written: typed, such a statement is refused, and a firing skips it without notification. It produces no residue either, neither a nested statement nor a fresh witness, thus `(X p Y) => (Z Y X)` adds no node to `a p a`, regardless of how frequently it runs. A consequence where the binding makes a [blank node](#blank-nodes) a predicate – whether of the consequence itself, of a statement it nests, or of a rule it derives – is not written either and leaves nothing behind in the same way, so the same rule adds no node to `a p _:b0`. In contrast to the initial scenario, the run says so in a note that names the rule and the blank node, once in a session for each such pair; it issues no report of contradiction for it ([Blank Nodes](rdf-spec/blank-nodes.md#a-firing-that-would-make-one-a-predicate)).
 
 #### Collections
 
@@ -605,7 +605,7 @@ Answer: tim ~ human
 
 The inner expression `(*tim ~ human)` creates the fact `tim ~ human` and — thanks to the `*` prefix — returns the node `tim` rather than the statement node. That returned node becomes the subject of the outer `~ male` relation, so `tim ~ male` is created as well.
 
-Querying `tim _predicate _object` (where leading underscores indicate variables, equivalent to using single uppercase letters) confirms that both facts are in the graph.
+Querying `tim _predicate _object` confirms that both facts are present in the graph: a token beginning with an underscore is a variable, just as a single uppercase letter is, provided that a colon does not come after the underscore: `_:b0` is a [blank node](#blank-nodes).
 
 **Example – the explicit form of a condition set:**
 
@@ -726,6 +726,28 @@ instead — as a subject that is an arity error, and inside a multi-object
 fact the sugar would swallow the next object without a word. The colon of
 the sugar itself is not part of the name and is emitted beside it, which is
 also what lets `.run-export` report the predicate as the node it is.
+
+## Blank Nodes
+
+A blank node is a thing identified exclusively by the statements concerning it, and by nothing else – not by a name either, even when it carries one. It is the form that zelph adopts for the blank nodes of RDF ([Blank Nodes](rdf-spec/blank-nodes.md) defines it comprehensively), and it serves equally well for a resource of your own that needs no name.
+
+A token commencing with `_:` represents a blank node. Followed by a **label**, as in `_:b0`, it refers to the node of that label within the document of its line; followed by `@` and sixteen hexadecimal digits, it identifies the blank node possessing that specific identifier, with no label being involved:
+
+```
+zelph> .identity http://example.org/notes
+zelph> _:b0 knows bob
+zelph> _:b0 born 1952
+zelph> X knows bob
+Answer: _:@057f8a2add1418ab knows bob
+```
+
+- **A label is associated with a document.** Within a single document, the same label refers to the same node; blank nodes are never shared between two documents, even if both write `_:b0`. A script file constitutes a document, identified by the file IRI of its canonical path, regardless of whether it is imported or named on the command line, ensuring that the same file produces identical nodes across every run. The lines entered interactively or passed through a pipe belong to the session, whose identity is random unless `.identity <iri>` sets it: a piped script requiring consistent nodes across runs must establish this identity before its first label. In a script file, `.identity <iri>` sets the identity of the file instead, from that line to the end of the file, ensuring that labels written afterwards are independent of the file’s storage location; only a line within the session can set the identity of the session.
+- **It prints using its identifier.** A label is not stored, and it would not convey the document it belongs to. A blank node therefore prints as `_:@` followed by the sixteen hexadecimal digits of its identifier, which the engine derives from the identity of the document and the label. When typed, this form refers to the blank node the graph contains under that identifier, across any document; it does not create anything, and an identifier the graph does not hold is an error. A line whose [focus](#the-focus-operator) hands on a blank node, such as `x says *_:b0`, prints nothing, just as one that hands on a name prints nothing.
+- **A label is one that Turtle recognizes**: composed of letters, digits, `_`, `-`, and `.`, beginning with a letter, a digit, or `_`, and not ending with `.`. A token such as `_:a:b` is invalid and not considered a variable. Within quotes, `"_:b0"` is treated as a standard name, so `.name _:b0 "_:b0"` gives the blank node the name `_:b0`.
+- **It stands wherever a value stands** except when serving as a predicate: as a subject, as an object, within a list, a set, or a nested statement, and in the conditions and consequences of a rule, where it matches itself alone. A statement that uses a blank node as its predicate is refused; a rule whose firing would write such a statement results in that statement being left unwritten, and the run reports this at its conclusion, once in a session for each pair of rule and blank node ([Blank Nodes](rdf-spec/blank-nodes.md#a-firing-that-would-make-one-a-predicate)).
+- **It merges with no other node.** A blank node can acquire a name via `.name`, yet it remains printed by its identifier; a name held by another node is refused, where two named nodes would merge instead.
+
+The commands that operate on a node, such as `.node`, `.out`, and `.name`, take a blank node in either form and create none. From Janet, `(zelph/blank identity label)` takes the identity of the document as an argument ([Janet API reference](janet.md#graph-construction-mutating)).
 
 ## Creating a node graph
 

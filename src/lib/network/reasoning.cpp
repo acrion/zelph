@@ -39,12 +39,16 @@ along with zelph. If not, see <https://www.gnu.org/licenses/>.
 #include <chrono>
 #include <cmath>
 #include <functional>
+#include <iterator>
+#include <limits>
 #include <set>
 #include <sstream>
+#include <string>
 #include <thread>
 #include <tuple>
 #include <type_traits>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
 using namespace zelph::network;
@@ -73,12 +77,12 @@ Reasoning::Reasoning(const io::OutputHandler& output)
 // it is marked as invalid, and the next .run-delta is a full pass; the
 // negation records, including those from check mode, would report the defeat
 // of a conclusion the loaded graph had never drawn; and the list
-// zelph/defeated returns, the compiled nets, the nets and conditions already
-// reported, and the rules explain() read would all point to the old graph. A
-// load also takes the digit alphabet away, requiring the notice about a missing
-// one to be repeated. The settings remain unchanged, with .negation-records
-// included. _nn_pred and its siblings are re-consulted at the start of each run
-// and need nothing here.
+// zelph/defeated returns, the compiled nets, the nets, conditions and
+// unwritten pairs already reported, and the rules explain() read would all
+// point to the old graph. A load also takes the digit alphabet away, requiring
+// the notice about a missing one to be repeated. The settings remain unchanged,
+// with .negation-records included. _nn_pred and its siblings are re-consulted
+// at the start of each run and need nothing here.
 void Reasoning::forget_graph_state()
 {
     _input_captured.clear();
@@ -101,6 +105,7 @@ void Reasoning::forget_graph_state()
     _nn_reported.clear();
     _refused_conditions.clear();
     _no_digit_alphabet_reported = false;
+    _unwritten_reported.clear();
     _explain_rules.reset();
     // The noted `=>` facts would refer to the nodes from the loaded file,
     // which the caller did not produce (note_fact_rule).
@@ -398,6 +403,67 @@ std::size_t Reasoning::count_contradiction_records() const
     return count;
 }
 
+void Reasoning::note_unwritten(const Node rule, const Node predicate)
+{
+    std::lock_guard<std::mutex> lock(_mtx_output);
+    _unwritten.emplace(rule, predicate);
+}
+
+std::vector<std::pair<Node, Node>> Reasoning::unwritten() const
+{
+    return by_rule_text(_unwritten);
+}
+
+std::vector<std::pair<Node, Node>> Reasoning::by_rule_text(const std::set<std::pair<Node, Node>>& pairs) const
+{
+    // The set is arranged according to the rule's id, and an id
+    // indicates the sequence in which a session happened to create its
+    // nodes: a rule is rendered only once, and the rules are ordered by
+    // that text as a line shows it, excluding the marks that the
+    // rendering puts around a name.
+    std::vector<std::pair<std::string, Node>> rules;
+    for (auto it = pairs.begin(); it != pairs.end(); it = pairs.upper_bound({it->first, std::numeric_limits<Node>::max()}))
+    {
+        std::string text;
+        string::node_to_string(this, text, _lang, it->first, 3);
+        rules.emplace_back(string::unmark_identifiers(text), it->first);
+    }
+    std::sort(rules.begin(), rules.end());
+
+    std::vector<std::pair<Node, Node>> ordered;
+    ordered.reserve(pairs.size());
+    for (const auto& entry : rules)
+        for (auto it = pairs.lower_bound({entry.second, 0}); it != pairs.end() && it->first == entry.second; ++it)
+            ordered.push_back(*it);
+    return ordered;
+}
+
+std::string Reasoning::unwritten_note(const std::vector<std::pair<Node, Node>>& pairs) const
+{
+    constexpr std::size_t shown = 10;
+
+    std::string note = "Note: statements whose predicate would be a blank node were not written, for " + std::to_string(pairs.size())
+                     + (pairs.size() == 1 ? " pair" : " pairs") + " of rule and blank node: ";
+    for (std::size_t i = 0; i < pairs.size() && i < shown; ++i)
+    {
+        // A rule stands once, followed by its blank nodes: the pairs
+        // belonging to one rule are grouped together (by_rule_text), and
+        // its text, repeated for each, filled the line with a single rule
+        // replicated ten times.
+        if (i != 0 && pairs[i].first == pairs[i - 1].first)
+        {
+            note += ", " + format(pairs[i].second);
+            continue;
+        }
+        std::string rule;
+        string::node_to_string(this, rule, _lang, pairs[i].first, 3);
+        if (i != 0) note += "; ";
+        note += string::unmark_identifiers(rule) + " with " + format(pairs[i].second);
+    }
+    if (pairs.size() > shown) note += "; and " + std::to_string(pairs.size() - shown) + " more";
+    return note + ".";
+}
+
 // What the graph already held when this run began. Empty when there is nothing
 // to say, so the ordinary summary is unchanged; a network loaded from a file
 // that was saved after a run is the case this exists for, because there every
@@ -568,6 +634,7 @@ void Reasoning::run(const bool print_deductions, const bool export_derivations, 
     _quiet = quiet;
     _met_contradictions.clear();
     _met_keys.clear();
+    _unwritten.clear();
     _capture_derived = derived;
     _derived_facts.clear();
 
@@ -944,6 +1011,28 @@ void Reasoning::run(const bool print_deductions, const bool export_derivations, 
     {
         const std::string count = std::to_string(_skipped.load());
         out("Note: " + count + (_skipped == 1 ? " deduction was hidden." : " deductions were hidden."), true);
+    }
+
+    // What the run left unwritten because a blank node would have been a
+    // predicate (note_unwritten): nothing else says that a rule fired
+    // there, so the line gets written by every run that prints, including
+    // an auto-run and whatever .deductions shows, since it is a warning
+    // and not a deduction. It names the pairs that no run in the session
+    // has named so far and is omitted when there are none, as each pass
+    // through the graph meets the same pairs again (_unwritten_reported).
+    // A finding, because the first pass of a `?` line drops every other
+    // line: if written there as a plain line, the pairs would be counted
+    // as named without having been read. A quiet run hands its pairs to
+    // its caller instead (unwritten) and names none.
+    if (!_unwritten.empty() && !_quiet)
+    {
+        std::set<std::pair<Node, Node>> fresh;
+        std::set_difference(_unwritten.begin(), _unwritten.end(), _unwritten_reported.begin(), _unwritten_reported.end(), std::inserter(fresh, fresh.end()));
+        if (!fresh.empty())
+        {
+            out_finding(unwritten_note(by_rule_text(fresh)), true);
+            _unwritten_reported.insert(fresh.begin(), fresh.end());
+        }
     }
 
     if (_contradiction && !_quiet)
@@ -2957,6 +3046,16 @@ Node zelph::network::ground_instance(const Zelph* z, const Node pattern, const V
         objects.insert(go);
     }
     history.pop_back();
+
+    // The statement instantiate_fact would hand to Zelph::fact at this
+    // location features a blank node as its predicate, which only a
+    // binding can make it. fact() refuses that statement, so there is
+    // no instance to predict, and the prediction says which node it
+    // was. It says the one instantiate_fact meets first: that function
+    // builds a statement after its parts, so a statement within this one
+    // is refused before this one is, and the first refusal ends the
+    // instantiation.
+    if (recipe != nullptr && recipe->unwritable == 0 && Zelph::Impl::is_blank(predicate)) recipe->unwritable = predicate;
     if (!ground) return 0;
     if (keep_variables && !changed) return pattern; // what instantiate_fact returns unaltered
 
